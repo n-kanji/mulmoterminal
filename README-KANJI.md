@@ -24,10 +24,14 @@ Ctrl+C           # 停止（tmux 永続化により Claude セッション自体
    claude-peers フラグ付き起動は毎回「I am using this for local development / Exit」の
    確認で止まるため、spawn 直後の PTY 出力を監視して自動で Enter を送る。
    - オプトイン: 環境変数 `MULMOTERMINAL_AUTOCONFIRM_CHANNELS`（mterm が設定）に
-     一致するチャネルリストの時だけ発火。他のチャネルでは人間の確認待ちのまま
+     一致するチャネルリストの時だけ発火。他のチャネルでは人間の確認待ちのまま。
+     **単一チャネルリスト前提**（カンマ区切り複数は表示揺れで不発になり得る）
+   - 監視は **TUI 起動（または 30 秒）で武装解除**される。起動後にこのプロンプトの
+     文言をファイル表示しても誤 Enter は飛ばない（code-reviewer 検算の指摘で修正済み）
    - claude はこのプロンプトを単語ごとにカーソル移動で描画するため、
      エスケープ列をスペース化して照合している（詳細はソースコメントと spec 参照）
-   - テスト: `test/server/channel-consent.spec.ts`
+   - 発火時はサーバーログに `[consent] auto-confirming ...` が残る
+   - テスト: `test/server/session/channel-consent.spec.ts`
 3. 設定: `~/.mulmoterminal/config.json` にディレクトリプリセット（orosy-v2 ほか）を整備済み。
    見た目・色・通知音などは MulmoTerminal 内の claude セッションで `/mulmoterminal-config`
    と打つと対話的に設定できる。
