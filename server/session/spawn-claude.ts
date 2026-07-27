@@ -9,6 +9,7 @@ import { buildClaudeArgs } from "../agents/claude-args.js";
 import { knownSessions, launchChoices, ptys } from "./registry.js";
 import { ptySpawn, sandboxWouldRun, spawnSandboxEntry } from "./pty-spawn.js";
 import { attachDraftInjection } from "./draft-injection.js";
+import { withChannelConsent } from "./channel-consent.js";
 import { sendExitAndClose, sendFrame } from "./ws-frames.js";
 import { appendBoundedOutput } from "./terminal-replay.js";
 import { sessionExistsOnDisk } from "./session-reads.js";
@@ -120,8 +121,11 @@ export function createClaudeSpawner(deps: SpawnDeps) {
     }
 
     // The auto-run prompt / editable draft is typed into the input box once ready (see
-    // attachDraftInjection) — its scanner is fed the pty output below.
-    const scanForDraftReady = attachDraftInjection(entry, initialPrompt, draft);
+    // attachDraftInjection) — its scanner is fed the pty output below. Fork-local: the
+    // draft scanner is wrapped so an opted-in dev-channels consent chooser (see
+    // channel-consent.ts) gets its Enter first; without it a CLAUDE_BIN wrapper that
+    // loads a local channel leaves every new cell looking hung.
+    const scanForDraftReady = withChannelConsent(entry, attachDraftInjection(entry, initialPrompt, draft));
 
     // PTY -> browser (buffering a bounded tail for reattach).
     entry.term.onData((data) => {
