@@ -3,16 +3,35 @@
 fork: `n-kanji/mulmoterminal`（upstream: `receptron/mulmoterminal`）
 カスタマイズはブランチ `kanji` に載っている。main は upstream 追従用にクリーンに保つ。
 
-## 起動・停止
+## 1分クイックスタート
+
+**http://localhost:34567 を開くだけ**（launchd 常駐なので常に生きている。ログイン時自動起動・落ちても10秒で復活）。
+
+1. ツールバーの「+」→ プリセットチップ（orosy-v2 が先頭、使用実績順）の「▶」で新セッション
+2. セルの枠色 = 状態: 青=作業中/完了、琥珀=要対応（許可待ち・入力待ち）、無色=idle。要対応はチャイムも鳴る
+3. セルをズームすると左に全セッションのロースター（AI サマリー + 自分の最後のプロンプト + 返答）
+4. claude-peers は iTerm2 のペインと同一ネットワーク。確認プロンプトは自動通過する
+
+## 常駐サービスの操作
 
 ```
-mterm            # 起動して http://localhost:34567 をブラウザで開く
-mterm --no-open  # ブラウザを開かず起動
-Ctrl+C           # 停止（tmux 永続化により Claude セッション自体は生き残る）
+launchctl kickstart -k gui/501/com.kanji.mulmoterminal   # 再起動（設定変更後に）
+launchctl bootout gui/501/com.kanji.mulmoterminal        # 停止（常駐解除）
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.kanji.mulmoterminal.plist  # 再開
+tail -f ~/.mulmoterminal/server.log                       # ログ
 ```
 
-- `~/bin/mterm` … ランチャー。CLAUDE_BIN と MULMOTERMINAL_AUTOCONFIRM_CHANNELS を設定してこの checkout の `bin/mulmoterminal.js` を起動する
+- plist: `~/Library/LaunchAgents/com.kanji.mulmoterminal.plist`（PATH 明示・WorkingDirectory=$HOME 必須 — cwd=/ だと mkdir /data で死ぬ）
+- 手動で試したい時: `mterm` / `mterm --no-open`（`~/bin/mterm`）
 - `~/bin/claude-mulmo` … MulmoTerminal が spawn する claude の wrapper。iTerm2 の zsh 関数と同じく `--dangerously-load-development-channels server:claude-peers` を付ける
+
+## 野口さん環境の設定（2026-07-30 仕上げ）
+
+- **フォント**: HackGen Console NF（全角=半角×2、罫線が崩れない）— グローバル設定 `fontFamily`
+- **色分けバッジ**: 主要9プロジェクトの `.mulmoterminal.json`（orosy-v2=青 / home=グレー / team-docs=ティール / voicewriter=紫 / cc-notify=琥珀 / fleet-watch=シアン / mulmoterminal=緑 / 大阪玩具=橙 / swf-v0=ピンク）。`~/.gitignore_global` に追加済みなので各リポジトリは汚れない
+- **プリセット**: 直近7日の実利用順（orosy-v2 45セッション/週が先頭）
+- **prRepos**: spacengine/orosy-v2, team-docs, voicewriter, claudecode-notify（横断 PR/Issue ビュー対象）
+- 見た目の追加調整は MulmoTerminal 内の Claude セッションで `/mulmoterminal-config`（対話設定・keymap もこれで安全に書ける）
 
 ## この fork 独自のカスタマイズ（ブランチ kanji）
 
