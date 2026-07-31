@@ -1,5 +1,7 @@
 import { onUnmounted, watch, type Ref } from "vue";
 import { usePubSub } from "./usePubSub";
+import { paneStateOf, type WaitKind } from "../../common/paneState";
+import { isActionState } from "../../common/notifyKinds";
 
 interface ActivityMsg {
   id: string;
@@ -7,6 +9,10 @@ interface ActivityMsg {
   waiting?: boolean;
   // The session's working dir, so a beep can use that directory's custom sound.
   cwd?: string | null;
+  // Which hook set the state, and (for a Notification) what kind of wait it is — the two
+  // fields that tell a BLOCKED pane from a merely finished one, hence which chime to use.
+  event?: string | null;
+  waitKind?: WaitKind | null;
 }
 interface ActivityState {
   working: boolean;
@@ -26,6 +32,27 @@ export function needsAttention(prev: Map<string, ActivityState>, msg: ActivityMs
   const finishedTurn = was.working && !now.working;
   const becameWaiting = !was.waiting && now.waiting;
   return finishedTurn || becameWaiting;
+}
+
+// How loud a beep should be about itself (R14). Two agents needing an answer and one that
+// merely finished reading cost the operator different amounts, and thirty panes make that
+// difference audible: a grid where every event is the same rising two-note chime trains you to
+// stop hearing all of them.
+//   urgent — a pane is BLOCKED (承認待ち / 質問). The existing two-note chime, unchanged.
+//   soft   — a pane finished a turn (完了・未読). One quieter, lower note.
+export type AttentionTone = "urgent" | "soft";
+
+/** Which chime a "sessions" payload deserves, decided in the pane-state vocabulary so it can
+ *  never drift from the word the cell shows or the kind the notifier filters on. */
+export function attentionToneFor(msg: ActivityMsg): AttentionTone {
+  const state = paneStateOf({
+    working: msg.working ?? false,
+    waiting: msg.waiting ?? false,
+    event: msg.event,
+    waitKind: msg.waitKind,
+    connected: true,
+  });
+  return isActionState(state) ? "urgent" : "soft";
 }
 
 let audioCtx: AudioContext | null = null;
@@ -56,27 +83,33 @@ function armUnlock() {
   window.addEventListener("keydown", unlock);
 }
 
-// A short two-note attention chime via Web Audio (no asset).
-function playAttentionSound() {
+// The built-in chimes via Web Audio (no asset). `urgent` is the original rising two-note
+// figure, unchanged; `soft` is a single lower note at under half the gain, so a finished turn
+// registers without competing with a pane that is actually stuck.
+function playAttentionSound(tone: AttentionTone = "urgent") {
   const ctx = getCtx();
   if (!ctx) return;
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
-  const tone = (freq: number, start: number, dur: number) => {
+  const note = (freq: number, start: number, dur: number, peak: number) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
     osc.frequency.value = freq;
     const t = ctx.currentTime + start;
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.25, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(peak, t + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     osc.connect(gain).connect(ctx.destination);
     osc.start(t);
     osc.stop(t + dur + 0.02);
   };
   try {
-    tone(784, 0, 0.16); // G5
-    tone(1047, 0.14, 0.22); // C6
+    if (tone === "soft") {
+      note(587, 0, 0.2, 0.1); // D5 — one quiet note
+      return;
+    }
+    note(784, 0, 0.16, 0.25); // G5
+    note(1047, 0.14, 0.22, 0.25); // C6
   } catch {
     // no Web Audio — stay silent
   }
@@ -154,7 +187,12 @@ function loadDirSound(cwd: string): Promise<void> {
 // Play the attention sound, preferring the session directory's own sound, then the
 // user's global custom file, then the chime. A dir sound not yet decoded is loaded in
 // the background (this beep falls back), so later beeps for that dir use it.
-export function playAttentionFor(cwd: string | null, soundFile: string | null) {
+//
+// `tone` picks between the built-in chimes ONLY. A configured file — the directory's or the
+// global one — is the user naming the sound they want for that session, and re-deciding it per
+// state would silently override a choice they made explicitly (R14 keeps dir sounds working
+// exactly as before).
+export function playAttentionFor(cwd: string | null, soundFile: string | null, tone: AttentionTone = "urgent") {
   if (cwd) {
     const buf = dirBuffers.get(cwd);
     if (buf) {
@@ -163,13 +201,13 @@ export function playAttentionFor(cwd: string | null, soundFile: string | null) {
     }
     if (buf === undefined) loadDirSound(cwd);
   }
-  playAttention(soundFile);
+  playAttention(soundFile, tone);
 }
 
 // Play the attention sound: the user's custom file when configured AND already
 // loaded, otherwise the built-in chime. A newly-configured file is loaded in the
 // background, so the first beep uses the chime and later ones the custom sound.
-export function playAttention(soundFile: string | null) {
+export function playAttention(soundFile: string | null, tone: AttentionTone = "urgent") {
   if (soundFile) {
     if (customLoadedFor !== soundFile) loadCustomSound(soundFile);
     if (customBuffer && customLoadedFor === soundFile) {
@@ -177,7 +215,7 @@ export function playAttention(soundFile: string | null) {
       return;
     }
   }
-  playAttentionSound();
+  playAttentionSound(tone);
 }
 
 // Test-button variant: AWAIT the custom file's load so a just-configured sound is
@@ -204,7 +242,7 @@ export function useAttentionSound(enabled: Ref<boolean>, soundFile?: Ref<string 
   const prev = new Map<string, ActivityState>();
   const { subscribe } = usePubSub();
   const unsubscribe = subscribe("sessions", (d) => {
-    if (isActivityMsg(d) && needsAttention(prev, d) && enabled.value) playAttentionFor(d.cwd ?? null, soundFile?.value ?? null);
+    if (isActivityMsg(d) && needsAttention(prev, d) && enabled.value) playAttentionFor(d.cwd ?? null, soundFile?.value ?? null, attentionToneFor(d));
   });
   onUnmounted(unsubscribe);
 }

@@ -32,6 +32,7 @@ import {
   nextAttentionUid,
   orderGrid,
   pageSlice,
+  PAGE_SIZE,
   realCells,
   pageLabel,
   isPagePinned,
@@ -64,6 +65,7 @@ import { EMPTY_SESSION_META, isPrPhase, mergeSessionMeta, type PrPhase, type Wor
 import { useGridActivity } from "../composables/useGridActivity";
 import { registerNewTerminalHandler, type NewTerminalRequest } from "../composables/useNewTerminal";
 import { registerAgentColumnHandler } from "../composables/useAgentColumn";
+import { registerRevealSessionHandler } from "../composables/useRevealSession";
 import { usePendingScript } from "../composables/usePendingScript";
 import { reportActiveTerminals } from "../composables/useUnloadGuard";
 import { useAppConfig } from "../composables/useAppConfig";
@@ -522,6 +524,32 @@ const detachAgentColumn = () => {
 onActivated(() => (offAgentColumn = registerAgentColumnHandler(({ cwd }) => onQuickLaunch(cwd))));
 onDeactivated(detachAgentColumn);
 onBeforeUnmount(detachAgentColumn);
+
+// Fork-local (iTerm2 mode, R14): the operator clicked an OS notification, which names a
+// session; only the grid knows which cell holds it and which page that cell is on. The point
+// of the click is to arrive READY TO TYPE at the pane that called, so this ends with the
+// cursor in that terminal — the same landing `next-attention` gives the keyboard.
+function onRevealSession(sessionId: string): void {
+  const cell = state.value.cells.find((c) => c.session === sessionId);
+  if (!cell) return; // closed, or belongs to another window's workspace — nothing to reveal
+  // A zoomed grid already renders every cell, so switching pages under it would move the tab
+  // bar out from under an enlargement the operator did not ask to leave. Un-zoomed, the target
+  // may be on another page, and the index in the ORDERED list is what decides which.
+  if (expandedUid.value === null) {
+    const index = orderedCells.value.findIndex((c) => c.uid === cell.uid);
+    if (index >= 0) state.value = switchPage(state.value, Math.floor(index / PAGE_SIZE));
+  }
+  focusedCellUid.value = cell.uid;
+  void nextTick(() => conn.focus(`cell-${cell.uid}`));
+}
+let offReveal: (() => void) | null = null;
+const detachReveal = () => {
+  offReveal?.();
+  offReveal = null;
+};
+onActivated(() => (offReveal = registerRevealSessionHandler(onRevealSession)));
+onDeactivated(detachReveal);
+onBeforeUnmount(detachReveal);
 
 // Server config: the default workspace dir + the auto-recorded dir presets + sound.
 const { defaultCwd, home, presets, launchers, loadConfig, recordPreset, removePreset, savePresets } = useAppConfig();

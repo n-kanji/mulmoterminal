@@ -24,6 +24,7 @@ import { useFaviconState } from "./composables/useFaviconState";
 import { usePendingScript, type PendingCommand } from "./composables/usePendingScript";
 import { useSoundEnabled } from "./composables/useSoundEnabled";
 import { useAttentionSound } from "./composables/useAttentionSound";
+import { useAttentionNotify } from "./composables/useAttentionNotify";
 import { useUnloadGuard, reportActiveTerminals } from "./composables/useUnloadGuard";
 import { browserLocale } from "./utils/browserLocale";
 import { usePubSub } from "./composables/usePubSub";
@@ -110,8 +111,15 @@ const filter = ref<Filter>("all");
 const { enabled: soundEnabled } = useSoundEnabled();
 // soundFile is a shared singleton in useAppConfig, so the player here sees changes
 // made from either view's settings modal (and loadConfig below hydrates it).
-const { soundFile } = useAppConfig();
+const { soundFile, notifyKinds } = useAppConfig();
 useAttentionSound(soundEnabled, soundFile);
+
+// Fork-local (iTerm2 mode, R14): the OS-level half of the same signal. The chime above only
+// reaches someone looking at this tab; this reaches them when the browser is behind something
+// else, which is the case the fork exists to fix. Mounted HERE for the same reason the chime
+// is — the shell is always alive, while GridView is `v-if`d on the route — so a notification
+// still fires for a grid session while the single view is on screen.
+useAttentionNotify(notifyKinds);
 
 // Reflect session activity in the tab's favicon (idle / working / attention).
 useFaviconState(sessions);

@@ -1,14 +1,17 @@
 // Draws the favicon on a 32×32 canvas and swaps <link rel="icon"> to the result.
 // The mark is a terminal prompt — a white "❯" chevron with an accent-colored "_"
 // cursor on a dark window — so it reads as a CLI at a glance and is visibly distinct
-// from mulmoclaude's mascot/"M" favicon. The accent color is the only state signal,
-// so the caller maps its state → color.
+// from mulmoclaude's mascot/"M" favicon. The accent color is one state signal, so the caller
+// maps its state → color; it also passes how many panes are waiting on an answer, stamped on
+// as a count, because colour alone says "something is waiting" and never "how many" (R14).
 import { watch, type ComputedRef, type Ref } from "vue";
 
 const SIZE = 32;
 const RADIUS = 7;
 const WINDOW_BG = "#1a1a2e"; // the terminal window (midnight)
 const PROMPT_FG = "#e8e8f0"; // the "❯" chevron — constant terminal identity
+const BADGE_BG = "#e0453a"; // the count disc — red, a colour the accent never takes
+const BADGE_FG = "#ffffff";
 
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath();
@@ -35,7 +38,28 @@ function drawPrompt(ctx: CanvasRenderingContext2D, accent: string): void {
   ctx.fill();
 }
 
-function render(accent: string): string {
+/** The badge text for a count. Two digits is all that fits legibly at 16px, and past ten the
+ *  exact number stops changing what the operator does — so anything larger reads "9+". */
+export function badgeText(count: number): string {
+  if (!Number.isFinite(count) || count <= 0) return "";
+  return count > 9 ? "9+" : String(Math.floor(count));
+}
+
+// A filled disc in the top-right with the count on it. Drawn LAST so it sits over the window
+// border, which is what makes it survive the browser's downscale to 16px.
+function drawBadge(ctx: CanvasRenderingContext2D, text: string): void {
+  ctx.beginPath();
+  ctx.arc(22, 10, 10, 0, Math.PI * 2);
+  ctx.fillStyle = BADGE_BG;
+  ctx.fill();
+  ctx.fillStyle = BADGE_FG;
+  ctx.font = `bold ${text.length > 1 ? 12 : 15}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 22, 11);
+}
+
+function render(accent: string, count: number): string {
   const canvas = document.createElement("canvas");
   canvas.width = SIZE;
   canvas.height = SIZE;
@@ -49,6 +73,8 @@ function render(accent: string): string {
   ctx.lineWidth = 2;
   ctx.stroke();
   drawPrompt(ctx, accent);
+  const badge = badgeText(count);
+  if (badge) drawBadge(ctx, badge);
   return canvas.toDataURL("image/png");
 }
 
@@ -60,7 +86,8 @@ function applyFavicon(dataUrl: string): void {
   link.href = dataUrl;
 }
 
-// Repaint the favicon whenever the accent color changes.
-export function useDynamicFavicon(color: Ref<string> | ComputedRef<string>): void {
-  watch(color, (accent) => applyFavicon(render(accent)), { immediate: true });
+// Repaint the favicon whenever the accent color OR the waiting count changes. `count` is
+// optional so a caller that only tracks colour keeps working unchanged.
+export function useDynamicFavicon(color: Ref<string> | ComputedRef<string>, count?: Ref<number> | ComputedRef<number>): void {
+  watch([color, () => count?.value ?? 0], ([accent, waiting]) => applyFavicon(render(accent, waiting)), { immediate: true });
 }

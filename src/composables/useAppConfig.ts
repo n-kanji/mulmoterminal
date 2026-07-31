@@ -4,6 +4,7 @@ import type { Launcher } from "../components/launchers";
 import type { UserMcpServer } from "../components/userMcp";
 import type { QuickCommand } from "../../common/quickCommands";
 import type { PushKind } from "../../common/pushKinds";
+import { DEFAULT_NOTIFY_KINDS, isNotifyKind, type NotifyKind } from "../../common/notifyKinds";
 import { DEFAULT_TERMINAL_SUBMIT_MODE, isTerminalSubmitMode } from "../../common/terminalSubmit";
 import { setTerminalSubmitMode } from "./terminalSubmitMode";
 import { setGlobalFontFamily } from "./terminalFontFamily";
@@ -24,6 +25,12 @@ const pushEnabled = ref(false);
 
 // Which kinds of push the server sends (#850) — SINGLETON like the others.
 const pushKinds = ref<PushKind[]>([]);
+
+// Which pane states raise a browser notification (R14) — SINGLETON like the others. Seeded
+// with the DEFAULTS rather than empty, unlike `pushKinds` above: this one has no Settings
+// control to look wrong, and starting empty would silently drop every notification raised
+// before the first /api/config resolves — which includes the ones a page reload lands in.
+const notifyKinds = ref<NotifyKind[]>([...DEFAULT_NOTIFY_KINDS]);
 
 // Cross-repo PR list's repos — also a SINGLETON, so the settings modal (openable from
 // either view) and any future reader share one list; a save in one view is seen by the
@@ -242,6 +249,9 @@ export function useAppConfig() {
       soundFile.value = typeof c.soundFile === "string" ? c.soundFile : null;
       pushEnabled.value = c.pushEnabled === true;
       pushKinds.value = Array.isArray(c.pushKinds) ? c.pushKinds : [];
+      // An unset `notifyKinds` keeps the defaults; a set one is filtered so a kind this build
+      // doesn't know about can't reach the notifier as an unmatchable string.
+      notifyKinds.value = Array.isArray(c.notifyKinds) ? c.notifyKinds.filter(isNotifyKind) : [...DEFAULT_NOTIFY_KINDS];
       prRepos.value = Array.isArray(c.prRepos) ? c.prRepos : [];
       launchers.value = Array.isArray(c.launchers) ? c.launchers : [];
       quickCommands.value = Array.isArray(c.quickCommands) ? c.quickCommands : [];
@@ -277,6 +287,7 @@ export function useAppConfig() {
     soundFile,
     pushEnabled,
     pushKinds,
+    notifyKinds,
     saving,
     error,
     loadConfig,

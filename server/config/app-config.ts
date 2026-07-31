@@ -21,6 +21,7 @@ import {
 import { DEFAULT_TERMINAL_SUBMIT_MODE, isTerminalSubmitMode, type TerminalSubmitMode } from "../../common/terminalSubmit.js";
 import type { QuickCommand } from "../../common/quickCommands.js";
 import { DEFAULT_PUSH_KINDS, PUSH_KINDS, type PushKind } from "../../common/pushKinds.js";
+import { DEFAULT_NOTIFY_KINDS, NOTIFY_KINDS, type NotifyKind } from "../../common/notifyKinds.js";
 import { sanitizeKeymap, type Keymap } from "../../common/keymap.js";
 import { sanitizeCockpitLines, DEFAULT_COCKPIT_LINES, type CockpitLines } from "../../common/cockpitLines.js";
 import { DEFAULT_COPY_ON_SELECT, sanitizeCopyOnSelect } from "../../common/copyOnSelect.js";
@@ -55,6 +56,11 @@ export interface AppConfig {
   // user who only wants finished turns can decline the ones a blocked agent raises — which on
   // a task that asks permission repeatedly is most of them.
   pushKinds: PushKind[];
+  // Fork-local (iTerm2 mode, R14). Which pane states raise a BROWSER notification on this
+  // machine. Independent of `pushKinds`, which is the phone's: the desk and the pocket want
+  // different moments, and a tab that is already on screen suppresses its own notification
+  // client-side regardless of what is listed here.
+  notifyKinds: NotifyKind[];
   // Periodic dev-work log: a built-in scheduled task that summarizes recent work across
   // the saved working dirs into weekly wiki pages. Off by default (it spawns an LLM
   // session on each run, so it costs tokens). `worklogIntervalHours` is the cadence.
@@ -198,6 +204,15 @@ export function sanitizePushKinds(input: unknown): PushKind[] {
   return PUSH_KINDS.filter((kind) => input.includes(kind));
 }
 
+// The browser-notification kinds, on the same contract as sanitizePushKinds: a NON-ARRAY
+// (missing, or a config written before this setting existed) falls back to the defaults, and an
+// explicit `[]` is kept because it is the user's way of saying "no browser notifications" while
+// leaving the chime and the tab badge alone.
+export function sanitizeNotifyKinds(input: unknown): NotifyKind[] {
+  if (!Array.isArray(input)) return [...DEFAULT_NOTIFY_KINDS];
+  return NOTIFY_KINDS.filter((kind) => input.includes(kind));
+}
+
 // The Enter-key submit/newline byte mapping. Anything that isn't a known mode (missing,
 // typo, wrong type) falls back to the standard binding, so a bad value never changes how
 // Enter behaves.
@@ -241,6 +256,7 @@ export const emptyConfig = (): AppConfig => ({
   chips: null,
   pushEnabled: false,
   pushKinds: [...DEFAULT_PUSH_KINDS],
+  notifyKinds: [...DEFAULT_NOTIFY_KINDS],
   worklogEnabled: false,
   worklogIntervalHours: DEFAULT_WORKLOG_INTERVAL_HOURS,
   providers: [],
@@ -278,6 +294,7 @@ function sanitizeAppConfig(raw: unknown): AppConfig {
     chips: sanitizeChips(o.chips),
     pushEnabled: sanitizePushEnabled(o.pushEnabled),
     pushKinds: sanitizePushKinds(o.pushKinds),
+    notifyKinds: sanitizeNotifyKinds(o.notifyKinds),
     worklogEnabled: sanitizeWorklogEnabled(o.worklogEnabled),
     worklogIntervalHours: sanitizeWorklogIntervalHours(o.worklogIntervalHours),
     providers: sanitizeProviders(o.providers),
@@ -353,6 +370,7 @@ export function mergeConfigUpdate(base: AppConfig, body: Record<string, unknown>
     chips: updated("chips", sanitizeChips, base.chips),
     pushEnabled: updated("pushEnabled", sanitizePushEnabled, base.pushEnabled),
     pushKinds: updated("pushKinds", sanitizePushKinds, base.pushKinds),
+    notifyKinds: updated("notifyKinds", sanitizeNotifyKinds, base.notifyKinds),
     worklogEnabled: updated("worklogEnabled", sanitizeWorklogEnabled, base.worklogEnabled),
     worklogIntervalHours: updated("worklogIntervalHours", sanitizeWorklogIntervalHours, base.worklogIntervalHours),
     providers: updated("providers", sanitizeProviders, base.providers),
@@ -381,6 +399,7 @@ export function toPublicAppConfig(config: AppConfig): AppConfig {
     chips: config.chips,
     pushEnabled: config.pushEnabled,
     pushKinds: config.pushKinds,
+    notifyKinds: config.notifyKinds,
     worklogEnabled: config.worklogEnabled,
     worklogIntervalHours: config.worklogIntervalHours,
     terminalSubmit: config.terminalSubmit,

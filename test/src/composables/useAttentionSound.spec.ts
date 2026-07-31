@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { needsAttention } from "../../../src/composables/useAttentionSound";
+import { attentionToneFor, needsAttention } from "../../../src/composables/useAttentionSound";
 
 const msg = (id: string, working?: boolean, waiting?: boolean) => ({ id, working, waiting });
 
@@ -45,5 +45,25 @@ describe("needsAttention", () => {
     needsAttention(prev, msg("b", true, false));
     expect(needsAttention(prev, msg("b", false, false))).toBe(true);
     expect(needsAttention(prev, msg("a", true, false))).toBe(false);
+  });
+});
+
+// R14: a grid where every event is the same rising chime trains you to stop hearing all of
+// them, so a pane that is BLOCKED sounds different from one that merely finished.
+describe("attentionToneFor", () => {
+  it("is urgent for a pane blocked on the operator", () => {
+    expect(attentionToneFor({ id: "a", waiting: true, event: "Notification", waitKind: "approval" })).toBe("urgent");
+    expect(attentionToneFor({ id: "a", waiting: true, event: "Notification", waitKind: "question" })).toBe("urgent");
+  });
+
+  // An unclassified Notification still stops the turn — it falls to "question", which is
+  // still a pane asking for something.
+  it("is urgent for a Notification whose kind the server did not name", () => {
+    expect(attentionToneFor({ id: "a", waiting: true, event: "Notification" })).toBe("urgent");
+  });
+
+  it("is soft for a finished turn", () => {
+    expect(attentionToneFor({ id: "a", waiting: true, event: "Stop" })).toBe("soft");
+    expect(attentionToneFor({ id: "a", working: false, waiting: false, event: "Stop" })).toBe("soft");
   });
 });
