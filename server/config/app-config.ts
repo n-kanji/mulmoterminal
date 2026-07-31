@@ -23,6 +23,7 @@ import type { QuickCommand } from "../../common/quickCommands.js";
 import { DEFAULT_PUSH_KINDS, PUSH_KINDS, type PushKind } from "../../common/pushKinds.js";
 import { sanitizeKeymap, type Keymap } from "../../common/keymap.js";
 import { sanitizeCockpitLines, DEFAULT_COCKPIT_LINES, type CockpitLines } from "../../common/cockpitLines.js";
+import { DEFAULT_COPY_ON_SELECT, sanitizeCopyOnSelect } from "../../common/copyOnSelect.js";
 import { normalizeFontFamily } from "../../common/terminalFontFamily.js";
 import { readTextFile } from "../infra/read-text-file.js";
 import { writeFileAtomicSync } from "../files/atomic-write.js";
@@ -75,6 +76,9 @@ export interface AppConfig {
   // How many lines each cockpit-roster row shows before clamping (#877). Defaults keep the
   // previous 2/2/3; raising `summary` trades roster length for reading a long one in place.
   cockpitLines: CockpitLines;
+  // Fork-local (iTerm2 mode): put a terminal selection on the clipboard as soon as the drag
+  // ends (see common/copyOnSelect). ON unless explicitly disabled.
+  copyOnSelect: boolean;
   // The CSS font-family stack every terminal renders in (#864), or null for the built-in one.
   // Global rather than per-browser (unlike `fontSize`) because it names FONTS, and which fonts
   // exist is a property of the machine the browser runs on — the same answer for every client
@@ -244,6 +248,7 @@ export const emptyConfig = (): AppConfig => ({
   keymap: {},
   prWorkdirFooter: true,
   cockpitLines: { ...DEFAULT_COCKPIT_LINES },
+  copyOnSelect: DEFAULT_COPY_ON_SELECT,
   fontFamily: null,
 });
 
@@ -280,6 +285,7 @@ function sanitizeAppConfig(raw: unknown): AppConfig {
     keymap: sanitizeKeymap(o.keymap),
     prWorkdirFooter: sanitizePrWorkdirFooter(o.prWorkdirFooter),
     cockpitLines: sanitizeCockpitLines(o.cockpitLines),
+    copyOnSelect: sanitizeCopyOnSelect(o.copyOnSelect),
     fontFamily: normalizeFontFamily(o.fontFamily),
   };
 }
@@ -355,6 +361,7 @@ export function mergeConfigUpdate(base: AppConfig, body: Record<string, unknown>
     fontFamily: updated("fontFamily", normalizeFontFamily, base.fontFamily),
     prWorkdirFooter: updated("prWorkdirFooter", sanitizePrWorkdirFooter, base.prWorkdirFooter),
     cockpitLines: updated("cockpitLines", sanitizeCockpitLines, base.cockpitLines),
+    copyOnSelect: updated("copyOnSelect", sanitizeCopyOnSelect, base.copyOnSelect),
   };
 }
 
@@ -380,6 +387,7 @@ export function toPublicAppConfig(config: AppConfig): AppConfig {
     keymap: config.keymap,
     prWorkdirFooter: config.prWorkdirFooter,
     cockpitLines: config.cockpitLines,
+    copyOnSelect: config.copyOnSelect,
     fontFamily: config.fontFamily,
   };
 }

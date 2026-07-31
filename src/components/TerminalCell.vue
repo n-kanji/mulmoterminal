@@ -28,8 +28,9 @@ import { freshnessOf, type Freshness } from "./paneFreshness";
 import { connView } from "../composables/useTerminalConnections";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
-import { CELL_ACTIONS, CELL_BTN, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
+import { CELL_ACTIONS, CELL_BTN, CELL_BTN_BOX, CELL_BTN_INK, CELL_BTN_SIZE, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
 import { handoffTargets, pullLastTurn, type HandoffTarget } from "../composables/useHandoff";
+import { copyLastTurnPart, copyOutcomeLabel, type TurnPart } from "../composables/useCopyTurn";
 import { runOneExchange, liveCrossTalkDeps } from "../composables/useCrossTalk";
 import { outcomeMessage } from "../composables/exchangeRules";
 import { worktreeFailureMessage } from "./cellChromeRules";
@@ -705,6 +706,37 @@ async function askCell(target: HandoffTarget) {
   const error = await pullLastTurn(target, `cell-${props.uid}`);
   if (error) showAskMsg(error);
 }
+
+// Fork-local (iTerm2 mode): copy this pane's last reply — or the last prompt the operator
+// gave it — to the system clipboard, from the transcript rather than the screen (see
+// useCopyTurn for why that distinction is the whole feature).
+//
+// The outcome replaces the button's icon for a moment instead of raising a toast: this cell
+// is one of thirty columns, and a floating notice over a column the operator has already
+// looked away from is chrome that costs a reading line and tells them nothing.
+const COPY_LABEL_MS = 1500;
+const copyLabels = ref<Record<TurnPart, string | null>>({ reply: null, prompt: null });
+const copyTimers: Partial<Record<TurnPart, ReturnType<typeof setTimeout>>> = {};
+
+function showCopyLabel(part: TurnPart, label: string) {
+  copyLabels.value[part] = label;
+  const pending = copyTimers[part];
+  if (pending) clearTimeout(pending);
+  copyTimers[part] = setTimeout(() => {
+    copyLabels.value[part] = null;
+  }, COPY_LABEL_MS);
+}
+
+async function copyTurn(part: TurnPart) {
+  const id = sessionId.value;
+  if (!id) return;
+  const outcome = await copyLastTurnPart({ sessionId: id, cwd: cwd.value, agent: agent.value }, part);
+  showCopyLabel(part, copyOutcomeLabel(outcome, part));
+}
+
+onUnmounted(() => {
+  for (const timer of Object.values(copyTimers)) clearTimeout(timer);
+});
 
 // One automatic exchange: our turn goes out, their answer comes back, both submitted.
 // `exchangeStop` is the only way a running exchange ends early, so it is also what the
@@ -1431,6 +1463,34 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
               {{ askMsg }}
             </p>
           </span>
+          <!-- Copy the last reply / the last prompt, whole, from the transcript. The label
+               replaces the icon for a moment on click — no toast (see copyTurn). -->
+          <button
+            v-if="sessionId"
+            type="button"
+            data-testid="cell-copy-reply"
+            class="cell-btn"
+            :class="[CELL_BTN_BOX, CELL_BTN_INK, copyLabels.reply ? 'h-[26px] px-1 font-sans text-[10px]' : CELL_BTN_SIZE]"
+            title="Copy this pane's last reply, in full, from its transcript (not the wrapped screen text)"
+            aria-label="Copy the last reply"
+            @click="copyTurn('reply')"
+          >
+            <span v-if="copyLabels.reply">{{ copyLabels.reply }}</span>
+            <span v-else class="material-symbols-outlined" aria-hidden="true">content_copy</span>
+          </button>
+          <button
+            v-if="sessionId"
+            type="button"
+            data-testid="cell-copy-prompt"
+            class="cell-btn"
+            :class="[CELL_BTN_BOX, CELL_BTN_INK, copyLabels.prompt ? 'h-[26px] px-1 font-sans text-[10px]' : CELL_BTN_SIZE]"
+            title="Copy the last instruction you gave this pane"
+            aria-label="Copy the last prompt"
+            @click="copyTurn('prompt')"
+          >
+            <span v-if="copyLabels.prompt">{{ copyLabels.prompt }}</span>
+            <span v-else class="material-symbols-outlined" aria-hidden="true">format_quote</span>
+          </button>
           <button
             v-if="sessionId && agent !== 'codex'"
             class="cell-btn"

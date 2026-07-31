@@ -13,7 +13,19 @@ const mockTermState: {
   wheelHandler: (ev: FakeWheelEvent) => boolean;
   input: string[];
   bufferType: "normal" | "alternate";
-} = vi.hoisted(() => ({ options: {}, csiHandlers: [], wheelHandler: () => true, input: [], bufferType: "normal" }));
+  // The copy-on-select wiring: the listener ensure() registers, and what the terminal would
+  // report as the current selection when it fires.
+  selectionHandler: () => void;
+  selection: string;
+} = vi.hoisted(() => ({
+  options: {},
+  csiHandlers: [],
+  wheelHandler: () => true,
+  input: [],
+  bufferType: "normal",
+  selectionHandler: () => {},
+  selection: "",
+}));
 
 // Mock xterm + addons so the manager runs headless (no real DOM terminal / canvas).
 // Factories are hoisted above imports, so the fakes are declared INSIDE them.
@@ -47,6 +59,12 @@ vi.mock("@xterm/xterm", () => ({
     }
     input(data: string) {
       mockTermState.input.push(data);
+    }
+    onSelectionChange(fn: () => void) {
+      mockTermState.selectionHandler = fn;
+    }
+    getSelection() {
+      return mockTermState.selection;
     }
     write() {}
     refresh() {}
@@ -102,6 +120,7 @@ class FakeWebSocket {
 import * as conn from "../../../src/composables/useTerminalConnections";
 import { newlineSequence, submitSequence } from "../../../common/terminalSubmit";
 import { setTerminalSubmitMode } from "../../../src/composables/terminalSubmitMode";
+import { setCopyOnSelect } from "../../../src/composables/copyOnSelect";
 
 const target = (sessionId: string | null) => ({ sessionId, cwd: "/typed", devTerminal: false, command: null, launcher: null });
 
@@ -612,5 +631,67 @@ describe("setFont — a font change must reach the PTY, not just the canvas", ()
 
   it("ignores a slot that does not exist rather than throwing", () => {
     expect(() => conn.setFont("cell-not-here", { size: 20, family: "monospace" })).not.toThrow();
+  });
+});
+
+// Fork-local (iTerm2 mode): copy-on-select. The half that lives here is the wiring — a
+// selection reaches the system clipboard when the drag SETTLES, and only while the setting
+// is on. Half a year of broken copy-paste is what this replaces, so "it silently did not
+// copy" is the failure these tests exist to catch.
+describe("copy-on-select", () => {
+  const writeText = vi.fn(async () => {});
+
+  beforeEach(() => {
+    FakeWebSocket.instances.length = 0;
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    writeText.mockClear();
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    setCopyOnSelect(true);
+    mockTermState.selection = "";
+    mockTermState.selectionHandler = () => {};
+    vi.useFakeTimers();
+    conn.attach("cell-sel", target(null), { onSession: vi.fn(), onCwd: vi.fn() }, document.createElement("div"));
+  });
+
+  afterEach(() => {
+    conn.release("cell-sel");
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    setCopyOnSelect(true);
+  });
+
+  it("puts a settled selection on the clipboard", () => {
+    mockTermState.selection = "renamed the parser";
+    mockTermState.selectionHandler();
+    vi.advanceTimersByTime(200);
+    expect(writeText).toHaveBeenCalledWith("renamed the parser");
+  });
+
+  // xterm fires onSelectionChange continuously while the pointer moves. Copying each one
+  // would leave a dozen partial selections behind for one drag — the last read wins, once.
+  it("copies once per drag, with the whole selection", () => {
+    mockTermState.selection = "rena";
+    mockTermState.selectionHandler();
+    vi.advanceTimersByTime(50);
+    mockTermState.selection = "renamed the parser";
+    mockTermState.selectionHandler();
+    vi.advanceTimersByTime(200);
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith("renamed the parser");
+  });
+
+  it("writes nothing when the selection was cleared", () => {
+    mockTermState.selection = "";
+    mockTermState.selectionHandler();
+    vi.advanceTimersByTime(200);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("stays out of the clipboard when the setting is off", () => {
+    setCopyOnSelect(false);
+    mockTermState.selection = "renamed the parser";
+    mockTermState.selectionHandler();
+    vi.advanceTimersByTime(200);
+    expect(writeText).not.toHaveBeenCalled();
   });
 });

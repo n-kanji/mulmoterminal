@@ -34,6 +34,8 @@ import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard"
 import { swallowsMouseTracking } from "./mouseTrackingModes";
 import { clearResetModes, recordSwallowedModes } from "./mouseReports";
 import { guardMouseClicks, guardMouseWheel } from "./terminalMouseInput";
+import { getCopyOnSelect } from "./copyOnSelect";
+import { writeSystemClipboard } from "./systemClipboard";
 import { bufferIsShort, readBufferShape } from "./terminalBufferHealth";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import "@xterm/xterm/css/xterm.css";
@@ -193,13 +195,47 @@ const clipboardProvider: IClipboardProvider = {
   },
   async writeText(selection, text) {
     if (!isSystemClipboard(selection)) return;
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // clipboard blocked (no focus / permission) — best effort
-    }
+    await writeSystemClipboard(text); // best effort — a blocked clipboard is not an error here
   },
 };
+
+// Fork-local (iTerm2 mode): copy-on-select. A selection reaches the clipboard when the drag
+// SETTLES, not on every intermediate change — xterm fires onSelectionChange continuously
+// while the pointer moves, and writing each one would put a dozen partial selections on the
+// clipboard for one drag (and hammer a permission-gated API).
+//
+// This does NOT collide with the OSC 52 path above, which is the same clipboard written by
+// the program inside the terminal: a browser-side selection never reaches that program.
+// Selecting is a DRAG, and terminalMouseInput only reports a press+release that stayed put
+// AND left no selection behind, so the agent is never told about it and cannot answer with
+// an OSC 52 copy of its own. The two writers have disjoint triggers; there is no double copy.
+const SELECTION_SETTLE_MS = 120;
+
+// "" for a terminal xterm has since disposed: the settle timer outlives the terminal it
+// reads by up to SELECTION_SETTLE_MS, and a closing cell must not throw on the way out.
+function selectionOf(term: Terminal): string {
+  try {
+    return term.getSelection();
+  } catch {
+    return "";
+  }
+}
+
+function wireCopyOnSelect(term: Terminal): void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  term.onSelectionChange(() => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    if (!getCopyOnSelect()) return;
+    timer = setTimeout(() => {
+      timer = null;
+      // Read the selection at FIRE time, not at schedule time: the drag is still growing when
+      // the first change lands, and the last read is the whole selection.
+      const text = selectionOf(term);
+      if (text) void writeSystemClipboard(text);
+    }, SELECTION_SETTLE_MS);
+  });
+}
 
 // Which OSC 8 hyperlink targets we open on click. Restricted to http(s) so a program can't
 // emit a `javascript:`/`file:` link that runs on click — the safeguard xterm's docs call for.
@@ -297,6 +333,9 @@ function buildTerminal(swallowedMouseModes: Set<number>, font: TerminalFont): Te
     },
   });
   guardMouseTracking(term, swallowedMouseModes);
+  // Per TERMINAL, not per connection: the listener and its pending timer die with the
+  // terminal they read, so a rebuilt one (rebuildTerminal) gets its own pair.
+  wireCopyOnSelect(term);
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon());

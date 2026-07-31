@@ -87,6 +87,7 @@ nav_order: 4
 | `keymap` | ユーザ定義のキーボードショートカット。**既定は空——何も割り当てられていない**（→ [キーボードショートカット](#keymap)） |
 | `prWorkdirFooter` | 作成した PR の本文末尾に `work in <クローン名>` を書く（→ [この PR はどのクローンの作業か](#pr-workdir-footer)）。**既定 ON**、`false` で無効 |
 | `cockpitLines` | コックピットのロスター各行を何行で打ち切るか（既定 `2 / 2 / 3` → [ロスターの表示行数](#cockpit-lines)） |
+| `copyOnSelect` | ターミナルの選択をドラッグ終了と同時にクリップボードへ入れる。**既定 ON**、`false` で無効 |
 | `fontFamily` | 全ターミナルのフォント（CSS の font-family スタック）（→ [ターミナルのフォント](#font-family)） |
 
 ## 別のモデルで動かす（プロバイダ） {#providers}
