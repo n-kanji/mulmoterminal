@@ -101,7 +101,12 @@ describe("every grid cell shows the directory's badge", () => {
       },
     });
     await flushPromises();
-    expect(w.findComponent(DirBadge).text()).toBe("PROD");
+    // iTerm2 mode: TerminalCell carries the directory colour as a full-height left
+    // stripe instead of a text badge — zero vertical cost, visible even when the
+    // header truncates. The name stays reachable via the header hover title.
+    expect(w.findComponent(DirBadge).exists()).toBe(false);
+    expect(w.find(".cell").attributes("style") ?? "").toContain("border-left");
+    expect(w.find(".cell").attributes("style") ?? "").toContain("rgb(207, 34, 46)"); // #cf222e, serialized
     w.unmount();
   });
 });

@@ -42,12 +42,13 @@ describe("AppToolbar per-view buttons", () => {
     expect(labels).not.toContain("Wiki");
   });
 
-  // Fork-local (iTerm2 mode): the operator lives in the grid, so the Chat button is hidden
-  // everywhere — a stray deep link into /chat can still come home via Grid view.
-  it("keeps Grid view in both views, and hides Chat in both", async () => {
+  // Fork-local (iTerm2 mode): the operator lives in the grid — the Chat button is hidden
+  // everywhere, and Grid view shows only OUTSIDE the grid (a stray /chat deep link can
+  // still come home; inside the grid the button would only name the place you are).
+  it("hides Chat everywhere; Grid view only as the way back from the single view", async () => {
     expect(labelsOf(await mountAt("/chat"))).toEqual(expect.arrayContaining(["Grid view"]));
     expect(labelsOf(await mountAt("/chat"))).not.toContain("Chat");
-    expect(labelsOf(await mountAt("/terminals"))).toEqual(expect.arrayContaining(["Grid view"]));
+    expect(labelsOf(await mountAt("/terminals"))).not.toContain("Grid view");
     expect(labelsOf(await mountAt("/terminals"))).not.toContain("Chat");
   });
 
@@ -109,7 +110,8 @@ describe("AppToolbar per-view buttons", () => {
     await router.push("/terminals");
     await settle();
     const onGrid = mount(AppToolbar, { global: { plugins: [router], stubs: { NotificationBell: true, RemoteHostControl: true } } });
-    expect(activeLabels(onGrid)).toEqual(["Grid view"]);
+    // iTerm2 mode: on the grid no view button renders at all — nothing to highlight.
+    expect(activeLabels(onGrid)).toEqual([]);
 
     prsGotoIndex();
     await settle();

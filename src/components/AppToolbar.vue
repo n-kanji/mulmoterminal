@@ -18,6 +18,7 @@ import { parseTagQuery } from "./wikiTagFilter";
 import type { Shortcut } from "../../common/shortcuts";
 import type { StatusCounts } from "./gridTabs";
 import { gridStatusSummary } from "./gridTabs";
+import type { CwdPreset } from "./presets";
 
 // The standard header, shared by the single (App.vue) and grid (GridView.vue) views so
 // both show one identical toolbar. Every launcher button now just pushes a route — the
@@ -33,8 +34,36 @@ const props = defineProps<{
   // Grid zoom state, so the header can host the roster / strip toggle (shown only while zoomed).
   showViewToggle?: boolean;
   listMode?: boolean;
+  // Fork-local (iTerm2 mode): the preset chips live IN the toolbar — one merged 32px row
+  // instead of toolbar + strip. GridView passes the data and owns every handler.
+  presets?: CwdPreset[];
+  // blocked ("needs you") cell count per directory path, across ALL pages — so an
+  // off-screen pane waiting for approval still shows up as an amber badge on its chip.
+  presetAlerts?: Record<string, number>;
 }>();
-const emit = defineEmits<{ (e: "add-terminal" | "toggle-sort" | "toggle-view" | "settings"): void }>();
+const emit = defineEmits<{
+  (e: "add-terminal" | "toggle-sort" | "toggle-view" | "settings" | "pick-launch"): void;
+  (e: "quick-launch" | "remove-preset", path: string): void;
+  (e: "reorder-preset", fromPath: string, toPath: string): void;
+}>();
+
+// Fork-local (iTerm2 mode): chip drag & drop reorder, same custom-MIME gating as the
+// grid's cell drag (see gridTabs.CELL_DRAG_MIME rationale).
+const PRESET_DRAG_MIME = "text/x-mulmo-preset-path";
+function onPresetDragStart(e: DragEvent, path: string) {
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData(PRESET_DRAG_MIME, path);
+  e.dataTransfer.effectAllowed = "move";
+}
+function onPresetDragOver(e: DragEvent) {
+  if (e.dataTransfer?.types.includes(PRESET_DRAG_MIME)) e.preventDefault();
+}
+function onPresetDrop(e: DragEvent, targetPath: string) {
+  const src = e.dataTransfer?.getData(PRESET_DRAG_MIME);
+  if (!src || src === targetPath) return;
+  e.preventDefault();
+  emit("reorder-preset", src, targetPath);
+}
 
 const route = useRoute();
 // Grid-wide, at-a-glance tally: how many cells are blocked (need input) / done
@@ -125,12 +154,77 @@ function showPrs(): void {
 </script>
 
 <template>
-  <header class="flex h-10 flex-none items-center border-b border-border bg-panel px-4">
-    <span class="font-sans text-[14px] font-semibold tracking-[0.02em] text-fg">MulmoTerminal</span>
-    <nav class="ml-4 flex min-w-0 items-center gap-[3px] overflow-x-auto" aria-label="Views">
+  <header class="flex h-8 flex-none items-center gap-2 border-b border-border bg-panel px-2">
+    <!-- Fork-local (iTerm2 mode): mark only — the app-mode window makes the name obvious,
+         and the freed width goes to the preset chips (the row's real protagonist). -->
+    <span class="flex-none font-sans text-[12px] font-semibold tracking-[0.02em] text-muted" title="MulmoTerminal">MT</span>
+    <!-- Fork-local (iTerm2 mode): the preset chips, merged from the old second row.
+         The ONLY flex-1 in the header — chips get every spare pixel. -->
+    <div
+      v-if="inGrid && presets?.length"
+      class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+      aria-label="Quick launch presets"
+    >
+      <span
+        v-for="p in presets"
+        :key="p.path"
+        draggable="true"
+        class="group relative inline-flex h-[22px] flex-none cursor-grab items-center rounded-full border border-border bg-base leading-none text-muted hover:bg-hover hover:text-fg"
+        @dragstart="onPresetDragStart($event, p.path)"
+        @dragover="onPresetDragOver"
+        @drop="onPresetDrop($event, p.path)"
+      >
+        <button
+          type="button"
+          class="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent py-[3px] pl-2 pr-[20px] font-mono text-[11px] leading-none text-inherit"
+          :title="`Open a new column in ${p.path} — drag to reorder`"
+          :aria-label="`Quick launch ${p.label}`"
+          @click="emit('quick-launch', p.path)"
+        >
+          <span class="material-symbols-outlined text-[13px]" aria-hidden="true">play_arrow</span>{{ p.label }}
+          <!-- Off-screen "needs you": a pane of this directory is blocked on ANY page.
+               Answers the recorded pain "15+ panes — which one is waiting on me". -->
+          <span
+            v-if="presetAlerts?.[p.path]"
+            class="inline-flex h-[14px] min-w-[14px] items-center justify-center rounded-full bg-[var(--amber,#f59e0b)] px-1 font-mono text-[9px] leading-none text-black"
+            :title="`${presetAlerts[p.path]} pane(s) need you here`"
+            >{{ presetAlerts[p.path] }}</span
+          >
+        </button>
+        <!-- Remove: space reserved always (pr-[20px] above) so revealing it never shifts
+             the label; revealed only after a 250ms hover-intent delay so sweeping the
+             mouse across ten chips doesn't light ten x's. -->
+        <button
+          type="button"
+          class="absolute right-[3px] top-1/2 grid h-4 w-4 -translate-y-1/2 cursor-pointer place-items-center rounded border-0 bg-transparent text-muted opacity-0 transition-opacity delay-0 hover:bg-hover hover:text-[var(--err,#e5484d)] group-hover:opacity-100 group-hover:delay-[250ms]"
+          :title="`Remove ${p.label} from the presets`"
+          :aria-label="`Remove preset ${p.label}`"
+          @click.stop="emit('remove-preset', p.path)"
+        >
+          <span class="material-symbols-outlined text-[11px]" aria-hidden="true">close</span>
+        </button>
+      </span>
+      <button
+        type="button"
+        class="inline-flex h-[22px] flex-none cursor-pointer items-center rounded-full border border-border bg-base px-1.5 text-muted hover:bg-hover hover:text-fg"
+        title="Pick a folder and open a new column there"
+        aria-label="Pick a folder and open a new column there"
+        @click="emit('pick-launch')"
+      >
+        <span class="material-symbols-outlined text-[13px]" aria-hidden="true">add</span>
+      </button>
+    </div>
+    <nav class="flex min-w-0 items-center gap-[3px] overflow-x-auto" aria-label="Views">
       <!-- Both views: the pair that switches between them. -->
       <LauncherButton v-if="!IT2_MODE" icon="chat" title="Chat" label="Chat" :active="chatActive" @click="showChat" />
-      <LauncherButton icon="grid_view" title="Grid (multiple terminals)" label="Grid view" :active="onGridRoute" @click="showGrid" />
+      <LauncherButton
+        v-if="!IT2_MODE || !inGrid"
+        icon="grid_view"
+        title="Grid (multiple terminals)"
+        label="Grid view"
+        :active="onGridRoute"
+        @click="showGrid"
+      />
       <!-- Single view only (#886): the content surfaces. The grid is for supervising agents,
            and every one of these replaces the whole screen anyway. -->
       <LauncherButton v-if="!inGrid" icon="apps" title="Collections" label="Collections" :active="collectionsActive" @click="showCollections" />

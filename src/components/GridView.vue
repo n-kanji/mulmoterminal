@@ -339,30 +339,29 @@ function onQuickLaunch(path: string) {
   quickLaunchUid.value = next.uid;
 }
 
-// Fork-local (iTerm2 mode): the strip's own chips reorder by drag & drop, persisted to
-// the shared config (savePresets posts only cwdPresets). Its own MIME so a chip drag
-// can't be mistaken for a cell drag or a file drag.
-const PRESET_DRAG_MIME = "text/x-mulmo-preset-path";
-function onPresetDragStart(e: DragEvent, path: string) {
-  if (!e.dataTransfer) return;
-  e.dataTransfer.setData(PRESET_DRAG_MIME, path);
-  e.dataTransfer.effectAllowed = "move";
-}
-function onPresetDragOver(e: DragEvent) {
-  if (e.dataTransfer?.types.includes(PRESET_DRAG_MIME)) e.preventDefault();
-}
-function onPresetDrop(e: DragEvent, targetPath: string) {
-  const src = e.dataTransfer?.getData(PRESET_DRAG_MIME);
-  if (!src || src === targetPath) return;
-  e.preventDefault();
+// Fork-local (iTerm2 mode): chip reorder persistence — the toolbar owns the drag events
+// (the chips render there now) and reports "move src to target's slot"; the splice and
+// the config write live here with the rest of the preset handlers.
+function onReorderPreset(fromPath: string, toPath: string) {
   const list = [...presets.value];
-  const from = list.findIndex((p) => p.path === src);
-  const to = list.findIndex((p) => p.path === targetPath);
+  const from = list.findIndex((p) => p.path === fromPath);
+  const to = list.findIndex((p) => p.path === toPath);
   if (from < 0 || to < 0) return;
   const [moved] = list.splice(from, 1);
   list.splice(to, 0, moved);
   void savePresets(list);
 }
+
+// Fork-local (iTerm2 mode): blocked ("needs you") count per directory across ALL pages,
+// feeding the toolbar chip badges — an approval prompt on page 2 must still be findable.
+const presetAlerts = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = {};
+  for (const c of state.value.cells) {
+    if (!c.cwd || statusForSort.value[c.uid] !== "blocked") continue;
+    counts[c.cwd] = (counts[c.cwd] ?? 0) + 1;
+  }
+  return counts;
+});
 
 // Fork-local (iTerm2 mode): the strip's trailing "+" — the OS folder dialog, then a new
 // column straight in the picked directory (the launch auto-records it as a preset, so a
@@ -540,10 +539,16 @@ function configureAppearance() {
       :status-counts="statusCounts"
       :show-view-toggle="expandedUid !== null"
       :list-mode="listModeOn"
+      :presets="presets"
+      :preset-alerts="presetAlerts"
       @add-terminal="onAddTerminal"
       @toggle-sort="toggleSortMode"
       @toggle-view="toggleListMode"
       @settings="showSettings = true"
+      @quick-launch="onQuickLaunch"
+      @remove-preset="removePreset"
+      @reorder-preset="onReorderPreset"
+      @pick-launch="onPickAndLaunch"
     />
     <nav
       v-if="pages > 1 && expandedUid === null"
@@ -558,38 +563,6 @@ function configureAppearance() {
         @click="switchTo(p - 1)"
       >
         {{ p }}
-      </button>
-    </nav>
-    <!-- Fork-local (iTerm2 mode): the presets as a permanent strip — one click opens a
-         new full-height column already running claude in that project. -->
-    <nav
-      v-if="expandedUid === null && presets.length"
-      class="flex-none flex items-center gap-1 h-[30px] px-4 bg-panel border-b border-border overflow-x-auto"
-      aria-label="Quick launch presets"
-    >
-      <button
-        v-for="p in presets"
-        :key="p.path"
-        type="button"
-        draggable="true"
-        class="inline-flex flex-none cursor-grab items-center gap-1 rounded-full border border-border bg-base px-2 py-[3px] font-mono text-[11px] leading-none text-muted hover:bg-hover hover:text-fg"
-        :title="`Open a new column in ${p.path} — drag to reorder`"
-        :aria-label="`Quick launch ${p.label}`"
-        @click="onQuickLaunch(p.path)"
-        @dragstart="onPresetDragStart($event, p.path)"
-        @dragover="onPresetDragOver"
-        @drop="onPresetDrop($event, p.path)"
-      >
-        <span class="material-symbols-outlined text-[13px]" aria-hidden="true">play_arrow</span>{{ p.label }}
-      </button>
-      <button
-        type="button"
-        class="inline-flex flex-none cursor-pointer items-center rounded-full border border-border bg-base px-2 py-[3px] text-muted hover:bg-hover hover:text-fg"
-        title="Pick a folder and open a new column there"
-        aria-label="Pick a folder and open a new column there"
-        @click="onPickAndLaunch"
-      >
-        <span class="material-symbols-outlined text-[13px]" aria-hidden="true">add</span>
       </button>
     </nav>
     <TerminalGrid

@@ -5,11 +5,10 @@ import { usePubSub } from "../composables/usePubSub";
 import { useDirConfig } from "../composables/useDirConfig";
 import { useGitStatus } from "../composables/useGitStatus";
 import { formatCwd, worktreeLabel } from "./cwdDisplay";
-import DirBadge from "./DirBadge.vue";
 import { isCellContext, isCellUsage, type CellContext, type CellUsage } from "./cellPayload";
 import { unsavedWork } from "./unsavedWork";
 import { relativeTime as relativeTimeFrom, usageBadge } from "./cellDisplay";
-import { applyActivityPush, cellHeaderText } from "./cellActivity";
+import { applyActivityPush } from "./cellActivity";
 import { preferredLaunchDir, shouldSyncLaunchDir } from "./launchDir";
 import { headerStyleFor, cellStyleFor } from "./cellHeaderStyle";
 import GitBranchChip from "./GitBranchChip.vue";
@@ -26,7 +25,7 @@ import type { Launcher, LaunchPick } from "./launchers";
 import { activityStatus, CELL_DRAG_MIME, type CellStatus } from "./gridTabs";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
-import { CELL_ACTIONS, CELL_BTN, CELL_DOT, CELL_DOT_IDLE, CELL_DOT_WORKING, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
+import { CELL_ACTIONS, CELL_BTN, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
 import { handoffTargets, pullLastTurn, type HandoffTarget } from "../composables/useHandoff";
 import { runOneExchange, liveCrossTalkDeps } from "../composables/useCrossTalk";
 import { outcomeMessage } from "../composables/exchangeRules";
@@ -590,21 +589,6 @@ function resume(s: ResumableSession) {
 
 const relativeTime = (ms: number): string => relativeTimeFrom(ms, Date.now());
 
-// Reveal this cell's working directory in the OS file manager. The browser can't
-// open a folder, but the local server can (POST /api/open-dir).
-async function openDir() {
-  if (!cwd.value) return;
-  try {
-    await fetch("/api/open-dir", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: cwd.value }),
-    });
-  } catch {
-    // best-effort — opening a folder is non-critical
-  }
-}
-
 // The server reports where the PTY actually runs (it may have rejected the
 // requested dir). Adopt it as the truth — display and persist the effective cwd.
 function onServerCwd(c: string) {
@@ -867,27 +851,46 @@ const HEADER_STATUS = {
 } as const;
 // Every state names its own colour: a base tint plus a status tint would be two `bg-*`
 // utilities on one element, and Tailwind's output order — not this map — would pick.
-const DOT_STATUS = { idle: CELL_DOT_IDLE, working: CELL_DOT_WORKING, done: "bg-accent", blocked: "bg-amber" } as const;
 const cellStatusClass = computed(() => CELL_STATUS[status.value]);
 const headerStatusClass = computed(() => HEADER_STATUS[status.value]);
-const dotStatusClass = computed(() => DOT_STATUS[status.value]);
 const statusLabel = computed(() => STATUS_LABEL[status.value]);
 watch(status, (s) => emit("status", s), { immediate: true });
 
-const headerText = computed(() => cellHeaderText(aiTitle.value, lastPrompt.value, sessionId.value));
-
-// Fork-local (iTerm2 mode): the always-visible status strip under the header. The
-// operator triages MANY full-height columns at a glance, so "what is this pane doing"
-// cannot live only in the zoomed roster — that shows up exactly when the columns are
-// hidden. AI summary first (it names the task), then the last prompt (what was asked).
+// Fork-local (iTerm2 mode): the always-visible status strip under the header — the
+// triage row, and the only row the operator actually READS while scanning columns.
+// Vocabulary is intervention-centric (what should I do), not process-centric: 要対応
+// (answer a permission/question NOW) / 未読 (finished, review when convenient) /
+// 実行中 (nothing to do) / 待機 (reviewed, idle). AI summary is the one flexible
+// element; the last prompt only appears when the column is wide enough for it whole.
 const STRIP_STATUS = {
   working: "text-[#3b82f6]",
   blocked: "text-[#f59e0b]",
   done: "text-[#34d399]",
   idle: "text-muted",
 } as const;
+const STRIP_DOT = {
+  working: "bg-[#3b82f6]",
+  blocked: "bg-[#f59e0b]",
+  done: "bg-[#34d399]",
+  idle: "bg-[var(--text-dim)]",
+} as const;
+const STRIP_LABEL = { working: "実行中", blocked: "要対応", done: "未読", idle: "待機" } as const;
 const stripStatusClass = computed(() => STRIP_STATUS[status.value]);
-const stripText = computed(() => [aiTitle.value, lastPrompt.value ? `❯ ${lastPrompt.value}` : null].filter(Boolean).join(" · "));
+const stripDotClass = computed(() => STRIP_DOT[status.value]);
+const stripLabel = computed(() => STRIP_LABEL[status.value]);
+const stripPrompt = computed(() => (lastPrompt.value ? `❯ ${lastPrompt.value}` : ""));
+
+// Row 1 shows no path/badge/id anymore (identity lives in the left stripe + hover);
+// everything is still one hover away for debugging and resume.
+const headerTitle = computed(() => [cwd.value, sessionId.value].filter(Boolean).join(" · "));
+// The directory's color as a full-height stripe on the pane's left edge: zero vertical
+// cost, survives header truncation, and reads in peripheral vision. The 3 remaining
+// border sides keep carrying the state color.
+const stripeStyle = computed(() => (dirConfig.value.badgeColor ? { borderLeft: `3px solid ${dirConfig.value.badgeColor}` } : {}));
+// The old row 3 (Terminal.vue's header: Skill / attach / folders / voice / timeline) is
+// hidden in the tiles and summoned per-cell with the header's "…" — capability moved
+// behind one click, not removed. Zoomed cells always show it.
+const toolsOpen = ref(false);
 
 // Per-cell token usage badge: ⇡ total input (fresh + cache) · ⇣ output generated.
 const usageView = computed(() => usageBadge(usage.value));
@@ -1026,9 +1029,9 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
 
 <template>
   <div
-    class="cell relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border bg-[var(--cell-bg,var(--bg-base))]"
+    class="cell @container/pane relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border bg-[var(--cell-bg,var(--bg-base))]"
     :class="[statusClass, cellStatusClass]"
-    :style="cellStyle"
+    :style="[cellStyle, stripeStyle]"
   >
     <template v-if="launched">
       <!-- Filmstrip thumbnail: the same roster header (CockpitHeader) — the dir colour is applied
@@ -1057,9 +1060,10 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
            click-to-zoom: a click without movement never starts a drag. -->
       <div
         v-else
-        class="cell-header flex h-[34px] flex-none cursor-grab items-center gap-2 border-b px-2"
+        class="cell-header flex h-6 flex-none cursor-grab items-center gap-1.5 border-b px-1.5"
         :class="[statusClass, headerStatusClass, expanded ? '' : `is-zoomable ${CELL_HEADER_ZOOMABLE}`]"
         :style="headerStyle"
+        :title="headerTitle"
         draggable="true"
         @dragstart="onHeaderDragStart"
         @click="onHeaderClick"
@@ -1068,31 +1072,15 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
              model / tokens / custom) don't shrink, so without this they would overflow and
              push the actions past the cell's `overflow: hidden` edge — the buttons must
              stay reachable no matter how much a dir's config crams in here. -->
-        <div data-testid="cell-header-main" class="flex min-w-0 flex-auto items-center gap-2 overflow-hidden">
-          <span class="cell-dot" :class="[CELL_DOT, statusClass, dotStatusClass]" :title="statusLabel" />
-          <!-- Normal grid: the dir is a button that opens it. As a filmstrip thumbnail the
-               header's job is to zoom (switch to this terminal), so the dir is inert text
-               and a click on it falls through to the header's zoom gesture. -->
-          <button
-            v-if="headerDir && !filmstrip"
-            type="button"
-            class="cell-dir flex-initial min-w-[16ch] max-w-[60%] cursor-pointer truncate border-none bg-transparent p-0 text-left font-mono text-[11px] text-[var(--cell-header-fg,var(--text-dim))] [direction:rtl] hover:text-muted hover:underline"
-            :title="cwd ? `Open ${cwd}` : ''"
-            @click="openDir"
-          >
-            <span class="cell-dir-path [unicode-bidi:plaintext]">{{ headerDir }}</span>
-          </button>
-          <span
-            v-else-if="headerDir"
-            class="cell-dir flex-initial min-w-[16ch] max-w-[60%] cursor-pointer truncate border-none bg-transparent p-0 text-left font-mono text-[11px] text-[var(--cell-header-fg,var(--text-dim))] [direction:rtl] hover:text-muted hover:underline"
-            :title="cwd ?? ''"
-          >
-            <span class="cell-dir-path [unicode-bidi:plaintext]">{{ headerDir }}</span>
-          </span>
-          <!-- Info (dir badge / git / diff / model / tokens) is dropped on a filmstrip
+        <!-- Fork-local (iTerm2 mode): row 1 is a slim identity row. Path, badge text, dot
+             and session id are GONE from the pixels — the left stripe carries the project
+             color, the strip below carries the status, and cwd · session-id live in the
+             header's hover title. What remains: the config-driven chips (git/diff/…) and
+             the actions. -->
+        <div data-testid="cell-header-main" class="flex min-w-0 flex-auto items-center gap-1.5 overflow-hidden">
+          <!-- Info (git / diff / model / tokens) is dropped on a filmstrip
                thumbnail, leaving only dir + what it's doing + a zoom button. -->
           <template v-if="!filmstrip">
-            <DirBadge :name="dirConfig.name" :color="dirConfig.badgeColor" />
             <template v-for="chip in cellChips" :key="chip.key">
               <GitBranchChip v-if="chip.builtin === 'git'" :status="gitStatus" :hide-dirty="isWorktreeCell" />
               <button
@@ -1123,29 +1111,56 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
               >
             </template>
           </template>
-          <span
-            data-testid="cell-prompt"
-            class="min-w-0 flex-auto truncate font-sans text-[12px] text-[var(--cell-header-fg,var(--text-secondary))]"
-            :title="lastPrompt || aiTitle || ''"
-            >{{ headerText }}</span
-          >
+          <!-- The only stretch element in row 1 — empty on purpose (P0-3: one truncate
+               per row, and row 1 has nothing worth truncating). -->
+          <span class="min-w-0 flex-auto" />
         </div>
         <!-- Expand/restore + close stay on row 1 (the info row) and OUTSIDE the info
              track, so they're always pinned top-right. `.stop` so they don't trigger the
              header's click-to-zoom. -->
         <span class="cell-actions" :class="CELL_ACTIONS">
+          <button
+            v-if="!expanded"
+            type="button"
+            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
+            :class="{ 'bg-hover': toolsOpen }"
+            title="ツールバーを表示（Skill・添付・フォルダ・音声など）"
+            aria-label="Toggle the terminal tool bar"
+            :aria-pressed="toolsOpen"
+            @click.stop="toolsOpen = !toolsOpen"
+          >
+            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">more_horiz</span>
+          </button>
           <CellChromeButtons :expanded="expanded" @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
       <!-- Fork-local (iTerm2 mode): per-pane status line — status word + AI summary + last
            prompt, always visible in the tiled columns. -->
-      <div v-if="!filmstrip" data-testid="cell-status-strip" class="flex h-[22px] flex-none items-center gap-2 overflow-hidden border-b border-b-border px-2">
-        <span class="flex-none font-mono text-[10px] uppercase tracking-wide" :class="stripStatusClass">{{ statusLabel }}</span>
-        <span class="min-w-0 flex-auto truncate font-sans text-[11px] text-secondary" :title="stripText">{{ stripText || "—" }}</span>
+      <div
+        v-if="!filmstrip"
+        data-testid="cell-status-strip"
+        class="flex h-[22px] flex-none items-center gap-1.5 overflow-hidden border-b border-b-border px-1.5"
+      >
+        <span class="h-1.5 w-1.5 flex-none rounded-full" :class="stripDotClass" aria-hidden="true" />
+        <span class="flex-none font-sans text-[11px] font-medium tracking-wide" :class="stripStatusClass" :title="statusLabel">{{ stripLabel }}</span>
+        <!-- The one flexible element of the row (P0-3): the AI summary, brightest text in
+             the pane chrome — dynamic info above static (P1-4). -->
+        <span data-testid="cell-strip-summary" class="min-w-0 flex-auto truncate font-sans text-[12px] text-fg" :title="aiTitle ?? ''">{{
+          aiTitle || "—"
+        }}</span>
+        <!-- The last prompt only when the column can afford it whole — never half-truncated
+             into noise next to a half-truncated summary (P0-4). -->
+        <span
+          v-if="stripPrompt"
+          data-testid="cell-strip-prompt"
+          class="hidden max-w-[38%] flex-none truncate font-sans text-[11px] text-dim @[340px]/pane:inline"
+          :title="lastPrompt ?? ''"
+          >{{ stripPrompt }}</span
+        >
         <!-- Model + context % pinned at the strip's right edge — the header's ctx chip
              truncates first in a narrow column, and "which model is this pane on" must
              survive at every width (the operator's iTerm2 statusline showed it). -->
-        <ModelContextBadge v-if="context" class="flex-none" :agent="agent" :model="context.model" :context-tokens="context.contextTokens" />
+        <ModelContextBadge v-if="context" class="flex-none tabular-nums" :agent="agent" :model="context.model" :context-tokens="context.contextTokens" />
       </div>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TerminalView
@@ -1161,7 +1176,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         :dir-header-color="dirConfig.headerColor"
         :dir-header-text-color="dirConfig.headerTextColor"
         :dir-button-color="dirConfig.buttonColor"
-        :hide-header="filmstrip"
+        :hide-header="filmstrip || (!expanded && !toolsOpen)"
         :expanded="expanded"
         :zoomed="zoomed"
         dev-terminal
