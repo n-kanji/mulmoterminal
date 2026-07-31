@@ -37,6 +37,9 @@ import { createTranslationWorker } from "./session/translation-worker.js";
 import { createTitleManager } from "./session/session-title.js";
 import { generateHeaderTitle } from "./config/header-title.js";
 import { mountTerminalWebSockets } from "./routes/ws-routes.js";
+import { mountAgentRoutes } from "./routes/agent-routes.js";
+import { existingDir } from "./config/workspace.js";
+import { createTerminalInputSender } from "./backends/remoteHost/terminalInput.js";
 import { createConnectionHandlers } from "./session/pty-connection.js";
 import type { SpawnDeps } from "./session/spawn-deps.js";
 import { activity, aiTitles, devTerminalSessions, hiddenSessions, knownSessions, lastPrompts, ptys } from "./session/registry.js";
@@ -464,6 +467,26 @@ initRemoteHostBackend({
   // session's agent — the mapping is Claude's binding, so a shell/codex session in the
   // picker keeps plain CR (same agent lookup as canClearBox above).
   submitSequence: (sessionId) => submitSequenceForAgent(ptys.get(sessionId)?.agent, getTerminalSubmit()),
+});
+
+// Fork-local (iTerm2 mode, R8): the agent self-drive API — a Claude session on this machine
+// opening a column of its own, or speaking to the whole fleet. Mounted here rather than in
+// the app-routes table because everything it needs (the PTY table, the activity flags, the
+// typing sender the phone already uses) is composed in this file. It arrives AFTER
+// mountAppRoutes, so express.json + the same-origin gate registered there already cover it.
+const agentBroadcastSender = createTerminalInputSender({
+  writeToSession: remoteHostWriteToSession,
+  canClearBox: remoteHostCanClearBox,
+  submitSequence: (sessionId) => submitSequenceForAgent(ptys.get(sessionId)?.agent, getTerminalSubmit()),
+});
+mountAgentRoutes(app, {
+  resolveDir: existingDir,
+  subscriberCount: (channel) => pubsub?.subscriberCount(channel) ?? 0,
+  publishToOne: (channel, data) => pubsub?.publishToOne(channel, data) ?? false,
+  // Only sessions this process holds a PTY for: one that outlived a restart is viewable
+  // through tmux but there is nothing here to type into.
+  candidates: () => [...ptys.entries()].map(([id, entry]) => ({ id, cwd: entry.cwd, agent: entry.agent, working: activity.get(id)?.working })),
+  sendToSession: agentBroadcastSender,
 });
 
 // Mount per-collection fs.watchers → completion bells via the notifier. After the

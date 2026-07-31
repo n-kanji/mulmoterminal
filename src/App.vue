@@ -28,6 +28,7 @@ import { useUnloadGuard, reportActiveTerminals } from "./composables/useUnloadGu
 import { browserLocale } from "./utils/browserLocale";
 import { usePubSub } from "./composables/usePubSub";
 import { openTerminalAt } from "./composables/useNewTerminal";
+import { subscribeAgentColumns } from "./composables/useAgentColumn";
 import { LAUNCH_TERMINAL_CHANNEL, isLaunchAgent, type LaunchAgent } from "../common/launchAgent";
 import { clampTerminalWidth, maxTerminalWidth, MIN_TERMINAL, splitterKeyWidth } from "./components/splitterWidth";
 
@@ -57,6 +58,12 @@ const unsubscribeLaunch = usePubSub().subscribe(LAUNCH_TERMINAL_CHANNEL, (data) 
   if (request) openTerminalAt(request.cwd, null, request.agent);
 });
 onUnmounted(unsubscribeLaunch);
+
+// Fork-local (iTerm2 mode, R8): the same arrangement for an AGENT asking for a column of its
+// own (POST /api/workspace/column) — subscribed here for the same reason, and separate from
+// the phone's because the column arrives already running claude rather than as a launch form.
+const unsubscribeAgentColumn = subscribeAgentColumns();
+onUnmounted(unsubscribeAgentColumn);
 
 // A script picked from the terminal header's Run menu runs in the grid (command
 // cells live only there): stash it and switch to the grid, which picks it up.
