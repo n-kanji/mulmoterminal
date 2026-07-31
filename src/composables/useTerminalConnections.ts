@@ -272,6 +272,10 @@ function buildTerminal(swallowedMouseModes: Set<number>, font: TerminalFont): Te
     cursorBlink: true,
     fontSize: font.size,
     fontFamily: font.family,
+    // Fork-local: breathe like the Claude desktop app — dense CJK transcripts are
+    // unreadable at xterm's default 1.0. Box-drawing verticals get small gaps at
+    // this height; the operator reads prose all day and draws boxes never.
+    lineHeight: 1.35,
     // Treat macOS Option as Meta so Claude's Alt bindings reach the PTY — Alt+Enter
     // (newline), Alt+B/F (word nav), Alt+Backspace (delete word). The cost is Option
     // dead-key accent entry (é etc.), which a coding terminal doesn't need.
@@ -303,6 +307,9 @@ function buildTerminal(swallowedMouseModes: Set<number>, font: TerminalFont): Te
   host.style.width = "100%";
   host.style.height = "100%";
   term.open(host);
+  // Fork-local: margins around the text like the Claude desktop app. On term.element
+  // (not host) so FitAddon subtracts the padding when proposing cols/rows.
+  if (term.element) term.element.style.padding = "10px 12px";
   guardMouseClicks(term, swallowedMouseModes);
   // Render each glyph in its own cell (canvas) instead of the default DOM renderer, which flows text
   // as inline runs: a full-width CJK glyph that isn't exactly 2× the Latin cell lets a long Japanese

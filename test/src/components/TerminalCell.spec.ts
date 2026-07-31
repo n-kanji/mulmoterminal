@@ -793,7 +793,11 @@ describe("TerminalCell", () => {
     await flushPromises();
     expect(w.find('[data-testid="cell-hdr-chip"]').text()).toBe("prod"); // custom chip renders its substituted text
     expect(w.find('[data-testid="cell-usage"]').exists()).toBe(true); // usage is listed
-    expect(w.find('[data-testid="model-badge"]').exists()).toBe(false); // ctx omitted from the list → hidden despite context set
+    // ctx omitted from the chip list → hidden in the HEADER despite context set. The
+    // status STRIP's copy stays regardless (iTerm2 mode: which model a pane runs must
+    // survive at every width and every chip config).
+    expect(w.find('[data-testid="cell-header-main"] [data-testid="model-badge"]').exists()).toBe(false);
+    expect(w.find('[data-testid="cell-status-strip"] [data-testid="model-badge"]').exists()).toBe(true);
   });
 
   it("renders duplicate built-in chips without key collisions", async () => {

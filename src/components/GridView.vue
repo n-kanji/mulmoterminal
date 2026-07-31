@@ -23,6 +23,7 @@ import {
   launchInCell,
   setSortMode,
   moveCell,
+  moveCellTo,
   moveZoom,
   toggleZoom,
   nextAttention,
@@ -337,6 +338,46 @@ function onQuickLaunch(path: string) {
   state.value = next.state;
   quickLaunchUid.value = next.uid;
 }
+
+// Fork-local (iTerm2 mode): the strip's own chips reorder by drag & drop, persisted to
+// the shared config (savePresets posts only cwdPresets). Its own MIME so a chip drag
+// can't be mistaken for a cell drag or a file drag.
+const PRESET_DRAG_MIME = "text/x-mulmo-preset-path";
+function onPresetDragStart(e: DragEvent, path: string) {
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData(PRESET_DRAG_MIME, path);
+  e.dataTransfer.effectAllowed = "move";
+}
+function onPresetDragOver(e: DragEvent) {
+  if (e.dataTransfer?.types.includes(PRESET_DRAG_MIME)) e.preventDefault();
+}
+function onPresetDrop(e: DragEvent, targetPath: string) {
+  const src = e.dataTransfer?.getData(PRESET_DRAG_MIME);
+  if (!src || src === targetPath) return;
+  e.preventDefault();
+  const list = [...presets.value];
+  const from = list.findIndex((p) => p.path === src);
+  const to = list.findIndex((p) => p.path === targetPath);
+  if (from < 0 || to < 0) return;
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+  void savePresets(list);
+}
+
+// Fork-local (iTerm2 mode): the strip's trailing "+" — the OS folder dialog, then a new
+// column straight in the picked directory (the launch auto-records it as a preset, so a
+// new project earns its chip by being opened once).
+async function onPickAndLaunch() {
+  try {
+    const res = await fetch("/api/pick-file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: true }) });
+    if (!res.ok) return;
+    const data = await res.json();
+    const dir = Array.isArray(data?.paths) ? data.paths.find((p: unknown): p is string => typeof p === "string") : undefined;
+    if (dir) onQuickLaunch(dir);
+  } catch {
+    // best-effort — the native dialog is unavailable or the user canceled
+  }
+}
 const onCwd = (uid: number, cwd: string) => (state.value = setCwd(state.value, uid, cwd));
 const onAgent = (uid: number, agent: "claude" | "codex") => (state.value = setCellAgent(state.value, uid, agent));
 // Pass the on-screen order so closing the zoomed cell stays zoomed on its filmstrip
@@ -364,6 +405,13 @@ const onRunSpare = (uid: number, command: RunCommand) => (state.value = runScrip
 const onLaunch = (uid: number, pick: { index: number; label: string; cwd: string | null }) =>
   (state.value = launchInCell(state.value, uid, { index: pick.index, label: pick.label }, pick.cwd));
 const onMove = (uid: number, dir: -1 | 1) => (state.value = moveCell(state.value, uid, dir));
+// Fork-local (iTerm2 mode): header-drag reorder. Auto attention-sort would silently undo
+// a hand-placed order on the next status change, so a drop while in auto mode switches
+// to manual — dragging IS the statement "I want this order".
+const onReorder = (uid: number, targetUid: number) => {
+  const base = state.value.sortMode === "manual" ? state.value : setSortMode(state.value, "manual");
+  state.value = moveCellTo(base, uid, targetUid);
+};
 const toggleSortMode = () => (state.value = setSortMode(state.value, state.value.sortMode === "auto" ? "manual" : "auto"));
 const switchTo = (page: number) => (state.value = switchPage(state.value, page));
 
@@ -405,7 +453,7 @@ onDeactivated(detachNewTerminal);
 onBeforeUnmount(detachNewTerminal);
 
 // Server config: the default workspace dir + the auto-recorded dir presets + sound.
-const { defaultCwd, home, presets, launchers, loadConfig, recordPreset, removePreset } = useAppConfig();
+const { defaultCwd, home, presets, launchers, loadConfig, recordPreset, removePreset, savePresets } = useAppConfig();
 const showSettings = ref(false);
 onMounted(loadConfig);
 
@@ -523,12 +571,25 @@ function configureAppearance() {
         v-for="p in presets"
         :key="p.path"
         type="button"
-        class="inline-flex flex-none cursor-pointer items-center gap-1 rounded-full border border-border bg-base px-2 py-[3px] font-mono text-[11px] leading-none text-muted hover:bg-hover hover:text-fg"
-        :title="`Open a new column in ${p.path}`"
+        draggable="true"
+        class="inline-flex flex-none cursor-grab items-center gap-1 rounded-full border border-border bg-base px-2 py-[3px] font-mono text-[11px] leading-none text-muted hover:bg-hover hover:text-fg"
+        :title="`Open a new column in ${p.path} — drag to reorder`"
         :aria-label="`Quick launch ${p.label}`"
         @click="onQuickLaunch(p.path)"
+        @dragstart="onPresetDragStart($event, p.path)"
+        @dragover="onPresetDragOver"
+        @drop="onPresetDrop($event, p.path)"
       >
         <span class="material-symbols-outlined text-[13px]" aria-hidden="true">play_arrow</span>{{ p.label }}
+      </button>
+      <button
+        type="button"
+        class="inline-flex flex-none cursor-pointer items-center rounded-full border border-border bg-base px-2 py-[3px] text-muted hover:bg-hover hover:text-fg"
+        title="Pick a folder and open a new column there"
+        aria-label="Pick a folder and open a new column there"
+        @click="onPickAndLaunch"
+      >
+        <span class="material-symbols-outlined text-[13px]" aria-hidden="true">add</span>
       </button>
     </nav>
     <TerminalGrid
@@ -558,6 +619,7 @@ function configureAppearance() {
       @run-spare="onRunSpare"
       @launch="onLaunch"
       @move="onMove"
+      @reorder="onReorder"
       @status="onStatus"
     />
     <footer v-if="noRunningTerminals" class="flex-none border-t border-border bg-panel px-4 py-2 text-center">

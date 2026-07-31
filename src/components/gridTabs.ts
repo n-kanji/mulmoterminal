@@ -97,6 +97,24 @@ export function addCell(state: GridState): GridState {
   return { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded };
 }
 
+// Fork-local (iTerm2 mode): the drag payload type for column reorder. A custom MIME
+// keeps a header drag distinguishable from a FILE drag (file-onto-terminal inserts the
+// path — an upstream feature that must keep working untouched).
+export const CELL_DRAG_MIME = "text/x-mulmo-cell-uid";
+
+// Fork-local (iTerm2 mode): drag & drop reorder — move `uid` to `targetUid`'s position,
+// shifting the cells between them (a splice, not a swap: dragging a column three slots
+// left should land it THERE and push the others right, like iTerm2 pane dragging).
+export function moveCellTo(state: GridState, uid: number, targetUid: number): GridState {
+  const from = state.cells.findIndex((c) => c.uid === uid);
+  const to = state.cells.findIndex((c) => c.uid === targetUid);
+  if (from < 0 || to < 0 || from === to) return state;
+  const cells = [...state.cells];
+  const [moved] = cells.splice(from, 1);
+  cells.splice(to, 0, moved);
+  return { ...state, cells };
+}
+
 // Fork-local (iTerm2 mode): a toolbar preset chip opens a NEW COLUMN already pointed at
 // its directory — the caller then auto-launches claude in it (TerminalCell's autoLaunch),
 // so one click goes straight from chip to running pane with no launcher stop. Reuses an

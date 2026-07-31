@@ -9,7 +9,7 @@ import * as conn from "../composables/useTerminalConnections";
 import { trackStyle, layoutForCount } from "./gridLayout";
 import { cockpitLines } from "../composables/cockpitLines";
 import { flipKeyframes, flipPairs, onScreen, FLIP_MS, FLIP_EASING } from "./cellFlip";
-import { canMoveCell, type Cell, type CellStatus } from "./gridTabs";
+import { canMoveCell, CELL_DRAG_MIME, type Cell, type CellStatus } from "./gridTabs";
 import type { RunCommand } from "./runCommand";
 import type { PrPhase, WorkPhase } from "./rosterPhase";
 import type { CwdPreset } from "./presets";
@@ -65,6 +65,8 @@ const emit = defineEmits<{
   (e: "run" | "runSpare", uid: number, command: RunCommand): void;
   (e: "launch", uid: number, pick: LaunchPick): void;
   (e: "move", uid: number, dir: -1 | 1): void;
+  // Fork-local (iTerm2 mode): header-drag dropped onto another cell — move src to its slot.
+  (e: "reorder", uid: number, targetUid: number): void;
   (e: "status", uid: number, value: CellStatus): void;
   (e: "agent", uid: number, value: "claude" | "codex"): void;
   // Shared preset list events — uid-less since they mutate the one config list.
@@ -72,6 +74,25 @@ const emit = defineEmits<{
 }>();
 
 const gridStyle = computed(() => trackStyle(layoutForCount(props.cells.length)));
+
+// Fork-local (iTerm2 mode): drop handling for header-drag column reorder. Delegated on
+// the stage so every cell is a drop target. Gated on CELL_DRAG_MIME both times, so a
+// FILE drag falls through untouched to the terminal's own file-path-insert handling.
+function onCellDragOver(e: DragEvent) {
+  if (!e.dataTransfer?.types.includes(CELL_DRAG_MIME)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+}
+function onCellDrop(e: DragEvent) {
+  const raw = e.dataTransfer?.getData(CELL_DRAG_MIME);
+  if (!raw) return;
+  e.preventDefault();
+  const src = Number(raw);
+  const el = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>("[data-uid]") : null;
+  const target = el?.dataset.uid ? Number(el.dataset.uid) : NaN;
+  if (!Number.isFinite(src) || !Number.isFinite(target) || src === target) return;
+  emit("reorder", src, target);
+}
 
 // The keyboard-focused cell, so it can lift + zoom slightly in place. `focusin` bubbles from the
 // xterm textarea up to the grid, so one delegated listener suffices. It's sticky: focus moving to
@@ -200,7 +221,15 @@ watch(
 </script>
 
 <template>
-  <div ref="stage" class="stage" :class="{ zoomed, listmode: listMode, flipping: flippingUids.size > 0 }" :style="flipVars" @focusin="onFocusIn">
+  <div
+    ref="stage"
+    class="stage"
+    :class="{ zoomed, listmode: listMode, flipping: flippingUids.size > 0 }"
+    :style="flipVars"
+    @focusin="onFocusIn"
+    @dragover="onCellDragOver"
+    @drop="onCellDrop"
+  >
     <!-- Cockpit roster: a tall text row per cell (status / dir / summary / prompt / latest
          reply). Click a row to swap which terminal is enlarged. -->
     <aside

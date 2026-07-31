@@ -20,6 +20,7 @@ import {
   canMoveCell,
   setSortMode,
   moveCell,
+  moveCellTo,
   moveZoom,
   toggleZoom,
   nextAttention,
@@ -100,6 +101,21 @@ describe("addCell", () => {
     // zoomedUid treats a dangling `expanded` as not-zoomed, so a new cell must not inherit it.
     const s = addCell(make(running(2), { expanded: 99 }));
     expect(s.expanded).toBe(99); // unchanged; zoomedUid() still resolves it to null
+  });
+});
+
+describe("moveCellTo (iTerm2 mode drag & drop)", () => {
+  it("splices the dragged cell into the target's position, shifting the ones between", () => {
+    const s = moveCellTo(make(running(5)), 0, 3);
+    expect(s.cells.map((c) => c.uid)).toEqual([1, 2, 3, 0, 4]);
+    const back = moveCellTo(make(running(5)), 4, 1);
+    expect(back.cells.map((c) => c.uid)).toEqual([0, 4, 1, 2, 3]);
+  });
+  it("is a no-op onto itself or an unknown uid", () => {
+    const s = make(running(3));
+    expect(moveCellTo(s, 1, 1)).toBe(s);
+    expect(moveCellTo(s, 1, 99)).toBe(s);
+    expect(moveCellTo(s, 99, 1)).toBe(s);
   });
 });
 

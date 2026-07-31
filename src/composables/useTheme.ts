@@ -18,6 +18,36 @@ export interface Theme {
 
 export const THEMES: Theme[] = [
   {
+    // Fork-local: the Claude Code desktop app's warm charcoal, so long Japanese
+    // transcripts read the same here as in the app. ANSI 16 are muted to match its
+    // soft tone — Claude's TUI colors arrive as accents, not neon.
+    id: "claude",
+    label: "Claude",
+    swatch: { base: "#262624", panel: "#2b2a27", accent: "#d97757" },
+    term: {
+      background: "#262624",
+      foreground: "#e8e6dc",
+      cursor: "#d97757",
+      selectionBackground: "#4a463e",
+      black: "#3a3936",
+      red: "#e06c60",
+      green: "#7cb974",
+      yellow: "#d9a558",
+      blue: "#7aa2d8",
+      magenta: "#b58fd8",
+      cyan: "#72b3ac",
+      white: "#cfccc1",
+      brightBlack: "#807d73",
+      brightRed: "#ec8a7f",
+      brightGreen: "#98cb90",
+      brightYellow: "#e7bc77",
+      brightBlue: "#97b9e6",
+      brightMagenta: "#c9a9e6",
+      brightCyan: "#8fc9c2",
+      brightWhite: "#e8e6dc",
+    },
+  },
+  {
     id: "midnight",
     label: "Midnight",
     swatch: { base: "#1a1a2e", panel: "#16213e", accent: "#4a8cff" },
@@ -86,7 +116,8 @@ export const THEMES: Theme[] = [
 ];
 
 const STORAGE_KEY = "theme";
-const DEFAULT_THEME: ThemeId = "midnight";
+// Fork-local: default to the Claude-app-matched theme.
+const DEFAULT_THEME: ThemeId = "claude";
 
 // Validate against THEMES, not the id list: an id is only usable if it has a
 // theme object here. A THEME_IDS entry with no matching THEMES entry would

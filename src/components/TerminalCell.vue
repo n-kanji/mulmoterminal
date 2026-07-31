@@ -23,7 +23,7 @@ import CockpitHeader from "./CockpitHeader.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
 import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
-import { activityStatus, type CellStatus } from "./gridTabs";
+import { activityStatus, CELL_DRAG_MIME, type CellStatus } from "./gridTabs";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
 import { CELL_ACTIONS, CELL_BTN, CELL_DOT, CELL_DOT_IDLE, CELL_DOT_WORKING, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
@@ -42,6 +42,15 @@ const termRef = useTemplateRef<InstanceType<typeof TerminalView>>("termRef");
 // stays inert (restore via the restore button). Header buttons keep their action.
 function onHeaderClick(event: MouseEvent) {
   if (shouldZoomOnHeaderClick(event.target, props.expanded)) emit("toggle-expand");
+}
+
+// Fork-local (iTerm2 mode): the header doubles as the drag handle for column reorder.
+// CELL_DRAG_MIME (gridTabs) keeps this drag distinguishable from a FILE drag — dropping
+// a file onto a terminal inserts its path (an upstream feature) and must keep working.
+function onHeaderDragStart(e: DragEvent) {
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData(CELL_DRAG_MIME, String(props.uid));
+  e.dataTransfer.effectAllowed = "move";
 }
 
 // `expanded` reflects whether this cell is zoomed to fill the grid (parent owns
@@ -1043,11 +1052,16 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
       </CockpitHeader>
       <!-- Row 1 — INFO only (normal grid / expanded): dir + git + model/token + what it's doing.
            Every icon BUTTON lives on row 2 (the embedded terminal's header, via its slot). -->
+      <!-- Fork-local (iTerm2 mode): the header is the drag handle — grab it to move the
+           whole column (drop handling lives in TerminalGrid). draggable coexists with
+           click-to-zoom: a click without movement never starts a drag. -->
       <div
         v-else
-        class="cell-header flex h-[34px] flex-none items-center gap-2 border-b px-2"
+        class="cell-header flex h-[34px] flex-none cursor-grab items-center gap-2 border-b px-2"
         :class="[statusClass, headerStatusClass, expanded ? '' : `is-zoomable ${CELL_HEADER_ZOOMABLE}`]"
         :style="headerStyle"
+        draggable="true"
+        @dragstart="onHeaderDragStart"
         @click="onHeaderClick"
       >
         <!-- All the info lives in one shrinkable, clipping track. The chips (badge / git /
@@ -1128,6 +1142,10 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
       <div v-if="!filmstrip" data-testid="cell-status-strip" class="flex h-[22px] flex-none items-center gap-2 overflow-hidden border-b border-b-border px-2">
         <span class="flex-none font-mono text-[10px] uppercase tracking-wide" :class="stripStatusClass">{{ statusLabel }}</span>
         <span class="min-w-0 flex-auto truncate font-sans text-[11px] text-secondary" :title="stripText">{{ stripText || "—" }}</span>
+        <!-- Model + context % pinned at the strip's right edge — the header's ctx chip
+             truncates first in a narrow column, and "which model is this pane on" must
+             survive at every width (the operator's iTerm2 statusline showed it). -->
+        <ModelContextBadge v-if="context" class="flex-none" :agent="agent" :model="context.model" :context-tokens="context.contextTokens" />
       </div>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TerminalView

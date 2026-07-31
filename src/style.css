@@ -12,6 +12,32 @@
    the data-theme attribute on <html> recolors the whole app. The four themes
    span dark→light and cool→warm so they read as clearly different. */
 :root,
+/* Claude — fork-local: the Claude Code desktop app's warm charcoal, matched by eye
+   from the real app (bg #262624 family, warm off-white text, terracotta accent) so
+   long Japanese transcripts read the same in both windows. */
+:root[data-theme="claude"] {
+  --bg-base: #262624;
+  --bg-deep: #1f1e1c;
+  --bg-panel: #2b2a27;
+  --bg-subtle: #302f2c;
+  --bg-elevated: #343330;
+  --bg-input: #1f1e1c;
+  --bg-hover: #3a3936;
+  --bg-selected: #423f38;
+  --bg-selected-hover: #4a463e;
+  --border: #3a3936;
+  --accent: #d97757;
+  --accent-bg: #c05f3f;
+  --accent-bg-hover: #d06c4b;
+  --on-accent: #ffffff;
+  --text: #e8e6dc;
+  --text-secondary: #cfccc1;
+  --text-muted: #a09d92;
+  --text-dim: #807d73;
+  --term-fg: #e8e6dc;
+  --term-selection: #4a463e;
+}
+
 :root[data-theme="midnight"] {
   --bg-base: #1a1a2e;
   --bg-deep: #11162a;
