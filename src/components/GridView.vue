@@ -24,19 +24,28 @@ import {
   setSortMode,
   moveCell,
   moveCellTo,
+  canMoveCell,
+  isSealed,
   moveZoom,
   toggleZoom,
   nextAttention,
   nextAttentionUid,
-  orderCells,
+  orderGrid,
   pageSlice,
+  realCells,
+  pageLabel,
+  isPagePinned,
+  setPageLabel,
+  togglePagePin,
+  workspaceFromSearch,
+  stateKeyFor,
+  MAX_PAGE_LABEL,
   activityStatus,
   countByStatus,
   cancelableLaunchUid,
   pageCount,
   zoomedUid,
   runningCount,
-  STATE_KEY,
   LEGACY_KEY,
   type GridState,
   type CellStatus,
@@ -69,9 +78,17 @@ import type { LaunchAgent } from "../../common/launchAgent";
 // cell reflows the list so terminals flow across page boundaries. Only the active
 // page is mounted — other pages' terminals live on as background PTYs and
 // reconnect when their page is shown again.
-const init = initialState(localStorage.getItem(STATE_KEY), localStorage.getItem(LEGACY_KEY));
+//
+// Fork-local (iTerm2 mode, R1): `?ws=<name>` gives this browser window its OWN saved grid
+// (`grid_v2:<name>`), so a second window is a second workspace rather than a second view of
+// the same one. Sessions live on the server and are untouched by this — only which columns
+// this window remembers. A window without `?ws` keeps the original key, and the pre-#883
+// migration is only offered there: a named workspace starts empty on purpose.
+const workspace = workspaceFromSearch(window.location.search);
+const stateKey = stateKeyFor(workspace);
+const init = initialState(localStorage.getItem(stateKey), workspace ? null : localStorage.getItem(LEGACY_KEY));
 const state = ref<GridState>(init.state);
-const persist = () => localStorage.setItem(STATE_KEY, JSON.stringify(state.value));
+const persist = () => localStorage.setItem(stateKey, JSON.stringify(state.value));
 // Write the migrated state before dropping the legacy key, so a reload between
 // migration and the first change can't lose the sessions.
 if (init.migrated) {
@@ -118,10 +135,14 @@ const statusCounts = computed(() => countByStatus(state.value.cells, statusForSo
 const reorderable = computed(() => state.value.sortMode === "manual");
 // In "auto" mode the whole list is attention-sorted; "manual" keeps the hand-arranged order.
 // The ONE ordering both the grid and the cockpit roster read, so the two can't drift (#720).
-const orderedCells = computed(() => orderCells(state.value.cells, statusForSort.value, state.value.sortMode));
+const orderedCells = computed(() => orderGrid(state.value, statusForSort.value));
 // The grid: while a cell is zoomed, render EVERY cell (the filmstrip lines up all tabs' terminals,
 // live); otherwise just the active page's slice. A waiting cell from any page floats to the front.
 const displayCells = computed(() => (zoomedUid(state.value) !== null ? orderedCells.value : pageSlice(orderedCells.value, state.value.page)));
+// What actually gets rendered. A pinned page holds its width open with reserved slots (R1);
+// they are page structure, not terminals, so they stay in `orderedCells` — where every page
+// calculation reads their index — and are dropped here, letting the surviving columns widen.
+const renderCells = computed(() => realCells(displayCells.value));
 const expandedUid = computed(() => zoomedUid(state.value));
 
 // The zoomed grid's cockpit roster: a text row per cell — status + dir + AI summary +
@@ -284,7 +305,7 @@ onBeforeUnmount(stopPoll);
 // A cell with no session/prompt yet still gets a human label from what it IS running.
 const fallbackLabel = (c: Cell): string | null => c.command?.label ?? c.launcher?.label ?? (c.session ? "starting…" : "empty");
 const listRows = computed(() =>
-  orderedCells.value.map((c) => {
+  realCells(orderedCells.value).map((c) => {
     const meta = c.session ? sessionMeta.get(c.session) : undefined;
     return {
       uid: c.uid,
@@ -299,6 +320,10 @@ const listRows = computed(() =>
       workPhase: meta?.workPhase ?? null,
       headerColor: (c.cwd ? chromeByCwd.get(c.cwd)?.headerColor : null) ?? null,
       headerTextColor: (c.cwd ? chromeByCwd.get(c.cwd)?.headerTextColor : null) ?? null,
+      // Decided here, against the same list `onMove` mutates. The roster renders the
+      // hole-filtered cells, so asking it would enable a move the transform then refuses.
+      canUp: canMoveCell(state.value.cells, c.uid, -1, isSealed(state.value)),
+      canDown: canMoveCell(state.value.cells, c.uid, 1, isSealed(state.value)),
     };
   }),
 );
@@ -385,7 +410,7 @@ const onClose = (uid: number) =>
   (state.value = closeCell(
     state.value,
     uid,
-    displayCells.value.map((c) => c.uid),
+    renderCells.value.map((c) => c.uid),
   ));
 // Pass the on-screen order so releasing the zoom lands on the page holding the cell that was
 // enlarged — including when the user got there by clicking a roster row or filmstrip thumbnail,
@@ -413,6 +438,32 @@ const onReorder = (uid: number, targetUid: number) => {
 };
 const toggleSortMode = () => (state.value = setSortMode(state.value, state.value.sortMode === "auto" ? "manual" : "auto"));
 const switchTo = (page: number) => (state.value = switchPage(state.value, page));
+
+// Fork-local (iTerm2 mode, R1): the tab row is the WHOLE workspace UI. Naming and pinning are
+// folded into the buttons that were already there — double-click to rename, right-click to pin
+// — because a second toolbar row costs every column its most valuable resource, readable lines.
+// The tooltip carries the two gestures so they are not folklore.
+const tabTitle = (page: number) =>
+  `${pageLabel(state.value, page)} — click to switch, double-click to rename, right-click to ${isPagePinned(state.value, page) ? "unpin" : "pin (hold this page's columns)"}`;
+const renamingPage = ref<number | null>(null);
+const renameDraft = ref("");
+// A function ref, not a string one: the input lives inside the tabs' v-for, where Vue collects
+// string refs into an array even though only one input is ever rendered.
+const renameInput = ref<HTMLInputElement | null>(null);
+const bindRenameInput = (el: unknown) => (renameInput.value = el instanceof HTMLInputElement ? el : null);
+function startRename(page: number) {
+  renamingPage.value = page;
+  renameDraft.value = state.value.pages?.[page]?.label ?? "";
+  void nextTick(() => renameInput.value?.select());
+}
+function commitRename() {
+  const page = renamingPage.value;
+  if (page === null) return;
+  renamingPage.value = null;
+  state.value = setPageLabel(state.value, page, renameDraft.value);
+}
+const cancelRename = () => (renamingPage.value = null);
+const togglePin = (page: number) => (state.value = togglePagePin(state.value, page));
 
 // A script the single view's terminal-header Run menu handed off: run it in a spare
 // cell now that the grid (where command cells live) is mounted.
@@ -555,19 +606,35 @@ function configureAppearance() {
       class="flex-none flex items-center gap-1 h-[30px] px-4 bg-panel border-b border-border"
       aria-label="Grid tabs"
     >
-      <button
-        v-for="p in pages"
-        :key="p"
-        class="border border-border bg-base text-muted font-mono text-xs min-w-[28px] py-[3px] px-2 rounded-md cursor-pointer hover:bg-hover hover:text-fg aria-pressed:bg-hover aria-pressed:text-fg aria-pressed:border-accent"
-        :aria-pressed="p - 1 === state.page"
-        @click="switchTo(p - 1)"
-      >
-        {{ p }}
-      </button>
+      <template v-for="p in pages" :key="p">
+        <input
+          v-if="renamingPage === p - 1"
+          :ref="bindRenameInput"
+          v-model="renameDraft"
+          class="border border-accent bg-base text-fg font-mono text-xs w-[104px] py-[3px] px-2 rounded-md outline-none"
+          :maxlength="MAX_PAGE_LABEL"
+          aria-label="Page name"
+          @keydown.enter.prevent="commitRename"
+          @keydown.esc.prevent="cancelRename"
+          @blur="commitRename"
+        />
+        <button
+          v-else
+          class="grid-tab border border-border bg-base text-muted font-mono text-xs min-w-[28px] py-[3px] px-2 rounded-md cursor-pointer inline-flex items-center gap-1 hover:bg-hover hover:text-fg aria-pressed:bg-hover aria-pressed:text-fg aria-pressed:border-accent"
+          :aria-pressed="p - 1 === state.page"
+          :title="tabTitle(p - 1)"
+          @click="switchTo(p - 1)"
+          @dblclick="startRename(p - 1)"
+          @contextmenu.prevent="togglePin(p - 1)"
+        >
+          <span v-if="isPagePinned(state, p - 1)" class="material-symbols-outlined text-[13px] leading-none">keep</span>
+          {{ pageLabel(state, p - 1) }}
+        </button>
+      </template>
     </nav>
     <TerminalGrid
       class="flex-1 min-h-0 min-w-0"
-      :cells="displayCells"
+      :cells="renderCells"
       :expanded-uid="expandedUid"
       :auto-launch-uid="quickLaunchUid"
       :list-rows="listRows"
