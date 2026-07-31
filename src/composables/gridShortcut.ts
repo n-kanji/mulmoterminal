@@ -2,12 +2,13 @@
 // unit-testable on their own (same shape as `enterKeyOverride` in common/terminalSubmit.ts).
 //
 // The key->action mapping itself is the user's, from `keymap` in config.json — see
-// common/keymap.ts. Nothing is bound by default, so an unconfigured install never takes a
-// key away from the terminal.
+// common/keymap.ts. Fork-local (R3): with no `keymap` written, DEFAULT_KEYMAP applies, so an
+// unconfigured install of THIS fork does claim its Alt chords; one explicit entry replaces the
+// lot.
 //
-// Scope for now: moving the zoom between terminals. That is deliberately the only action a
-// key can reach, because the zoomed cell is the ONLY "which terminal is the user on" state
-// the grid actually has — an un-zoomed grid has no selection to act on.
+// Upstream's scope was moving the zoom between terminals, because the zoomed cell was the only
+// "which terminal is the user on" state the grid had. R3 adds the un-zoomed half: the FOCUSED
+// cell is that state in a plain grid, so column moves and paging need no zoom to act on.
 import { actionForKey, type Keymap, type KeymapAction } from "../../common/keymap";
 
 export type GridShortcut = KeymapAction;
@@ -21,6 +22,9 @@ export interface ShortcutKeyEvent {
   altKey: boolean;
   ctrlKey: boolean;
   metaKey: boolean;
+  // The PHYSICAL key. Optional so a test object can leave it out, and read only for Alt
+  // bindings — macOS turns Option+j into "∆" on `key`, so a letter binding needs it (R3).
+  code?: string;
   isComposing?: boolean;
 }
 
@@ -31,6 +35,11 @@ export interface ShortcutKeyEvent {
 //
 // `zoom-toggle` and `next-attention` are exempt alongside `terminal-new`: they choose the cell
 // to enlarge themselves, which is exactly what makes them the keyboard's way INTO the zoom.
+//
+// Fork-local (R3): the four column/page actions are exempt too, and for a different reason —
+// they do not act on a terminal at all. `focus-*-column` moves the CURSOR (un-zoomed the grid
+// does have a selection: the focused cell) and `page-*` moves the view. Listing them here would
+// make them dead in the plain grid, which is the only place they mean anything.
 const NEEDS_A_CURRENT_TERMINAL: readonly GridShortcut[] = ["zoom-next", "zoom-prev", "terminal-new-adjacent", "terminal-close"];
 
 export function gridShortcutFor(keymap: Keymap, e: ShortcutKeyEvent, zoomed: boolean): GridShortcut | null {

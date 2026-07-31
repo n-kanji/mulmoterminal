@@ -30,6 +30,8 @@ import {
   toggleZoom,
   nextAttention,
   nextAttentionUid,
+  focusStepUid,
+  stepPage,
   orderGrid,
   pageSlice,
   PAGE_SIZE,
@@ -574,9 +576,49 @@ function onShortcutKey(e: KeyboardEvent) {
   runShortcut(shortcut);
 }
 
+// Put the cursor where an action just sent the user. Nothing else in a plain grid shows WHICH
+// cell was picked, and the next thing typed has to reach the terminal that was moved to.
+const focusCell = (uid: number | null) => {
+  if (uid !== null) void nextTick(() => conn.focus(`cell-${uid}`));
+};
+
+// Keep the cursor on the same terminal through BOTH directions: enlarging focuses the cell that
+// was selected, collapsing focuses the one that WAS enlarged, so the grid selection is where the
+// user just was instead of wherever focus happened to be before.
+function runZoomToggle(order: readonly number[]) {
+  const wasZoomed = expandedUid.value;
+  state.value = toggleZoom(state.value, order, focusedCellUid.value);
+  focusCell(expandedUid.value ?? wasZoomed);
+}
+
+function runNextAttention(order: readonly number[]) {
+  // Read the destination BEFORE moving: un-zoomed `nextAttention` only changes the page, so the
+  // uid is the only thing that says which terminal the user is being sent to.
+  const target = nextAttentionUid(state.value, order, statusForSort.value, focusedCellUid.value);
+  state.value = nextAttention(state.value, order, statusForSort.value, focusedCellUid.value);
+  focusCell(target);
+}
+
+// Fork-local (iTerm2 mode, R3). Zoomed there are no columns to walk — one terminal fills the
+// stage — so the key moves the enlargement, the same gesture one level up. Un-zoomed it moves
+// the CURSOR within the page on screen (`renderCells`, not `order`: this is a column move, and
+// reaching another page is what `page-next` / `next-attention` are for). Nothing is stored —
+// the focus the grid reports back is the one selection (zoom invariant 4).
+function runColumnStep(order: readonly number[], dir: -1 | 1) {
+  if (expandedUid.value !== null) {
+    state.value = moveZoom(state.value, order, dir);
+    return;
+  }
+  focusCell(focusStepUid(renderCells.value, focusedCellUid.value, dir));
+}
+
 // gridShortcutFor has already refused the actions that need a terminal to act ON while
-// un-zoomed. The ones that reach here un-zoomed are the ways IN: `terminal-new`, plus
-// `zoom-toggle` / `next-attention`, which pick the cell to enlarge themselves.
+// un-zoomed. The ones that reach here un-zoomed are the ways IN (`terminal-new`, plus
+// `zoom-toggle` / `next-attention`, which pick the cell to enlarge themselves) and the
+// fork-local column / page moves, which act on the focused cell or the view instead.
+//
+// A table rather than a chain: every action is one line, so adding one cannot quietly change
+// what a neighbouring branch does.
 function runShortcut(shortcut: GridShortcut) {
   // The FULL ordered list, not `displayCells` — which un-zoomed is only the current page.
   // Both matter: these helpers derive `page` from the index, so a page slice would send an
@@ -584,30 +626,24 @@ function runShortcut(shortcut: GridShortcut) {
   // calling from another page even though the toolbar counts those.
   const order = orderedCells.value.map((c) => c.uid);
   const uid = expandedUid.value;
-  if (shortcut === "zoom-next" || shortcut === "zoom-prev") {
-    state.value = moveZoom(state.value, order, shortcut === "zoom-next" ? 1 : -1);
-  } else if (shortcut === "zoom-toggle") {
-    const wasZoomed = expandedUid.value;
-    state.value = toggleZoom(state.value, order, focusedCellUid.value);
-    // Keep the cursor on the same terminal through both directions: enlarging focuses the cell
-    // that was selected, collapsing focuses the one that WAS enlarged, so the grid selection is
-    // where the user just was instead of wherever focus happened to be before.
-    const target = expandedUid.value ?? wasZoomed;
-    if (target !== null) void nextTick(() => conn.focus(`cell-${target}`));
-  } else if (shortcut === "next-attention") {
-    // Focus the terminal it moves to, not just the state. In a plain grid nothing else shows
-    // WHICH cell was picked — the focused cell lifts, and the cursor lands where the user is
-    // being sent, so the next thing they type goes to the terminal that called them.
-    const target = nextAttentionUid(state.value, order, statusForSort.value, focusedCellUid.value);
-    state.value = nextAttention(state.value, order, statusForSort.value, focusedCellUid.value);
-    if (target !== null) void nextTick(() => conn.focus(`cell-${target}`));
-  } else if (shortcut === "terminal-new") {
-    onAddTerminal();
-  } else if (shortcut === "terminal-new-adjacent" && uid !== null) {
-    state.value = insertCellAfter(state.value, uid, shellCell(adjacentCwd(uid)));
-  } else if (shortcut === "terminal-close" && uid !== null) {
-    onClose(uid);
-  }
+  const run: Record<GridShortcut, () => void> = {
+    "zoom-next": () => (state.value = moveZoom(state.value, order, 1)),
+    "zoom-prev": () => (state.value = moveZoom(state.value, order, -1)),
+    "zoom-toggle": () => runZoomToggle(order),
+    "next-attention": () => runNextAttention(order),
+    "terminal-new": onAddTerminal,
+    "terminal-new-adjacent": () => {
+      if (uid !== null) state.value = insertCellAfter(state.value, uid, shellCell(adjacentCwd(uid)));
+    },
+    "terminal-close": () => {
+      if (uid !== null) onClose(uid);
+    },
+    "focus-next-column": () => runColumnStep(order, 1),
+    "focus-prev-column": () => runColumnStep(order, -1),
+    "page-next": () => (state.value = stepPage(state.value, 1)),
+    "page-prev": () => (state.value = stepPage(state.value, -1)),
+  };
+  run[shortcut]();
 }
 
 // The dir a new adjacent terminal opens in: the one the current terminal is running in, which

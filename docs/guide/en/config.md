@@ -84,7 +84,7 @@ Open it from the ⚙ in the toolbar.
 | `pushKinds` | Which moments push: `"finished"` (a turn ended) and/or `"waiting"` (the agent stopped to ask). Omit to keep both; `[]` for none (→ [Which moments push](notifications.html#kinds)) |
 | `worklogEnabled` / `worklogIntervalHours` | The periodic dev-work log (default off / 6 hours) |
 | `terminalSubmit` | Which bytes mean **submit** vs **newline** — `"cr"` (default) or `"esc-cr"` (→ [Enter — submit vs. newline](#terminal-submit)) |
-| `keymap` | User-defined keyboard shortcuts. **Empty by default — nothing is bound** (→ [Keyboard shortcuts](#keymap)) |
+| `keymap` | User-defined keyboard shortcuts. **This fork ships defaults; writing any entry replaces all of them** (→ [Keyboard shortcuts](#keymap)) |
 | `prWorkdirFooter` | End a created PR's body with `work in <clone>` (→ [Which clone made this PR](#pr-workdir-footer)). **On by default**; `false` opts out |
 | `cockpitLines` | How many lines each cockpit-roster row shows before clamping (default `2 / 2 / 3` → [Cockpit roster line counts](#cockpit-lines)) |
 | `copyOnSelect` | Put a terminal selection on the clipboard as soon as the drag ends. **On by default**; `false` opts out |
@@ -279,9 +279,27 @@ An invalid value (a typo, or anything other than `"cr"` / `"esc-cr"`) is ignored
 
 ## Keyboard shortcuts (`keymap`) {#keymap}
 
-Keyboard shortcuts are **opt-in**. There are no defaults: with no `keymap` in `config.json`, nothing is
-bound and no key is intercepted. That is deliberate — **every key you bind is a key the program inside the
-terminal stops receiving**, and only you know whether that trade is worth it for your workflow.
+**This fork ships defaults** (upstream MulmoTerminal binds nothing). With no `keymap` in `config.json`
+you get the set below, which mirrors iTerm2 + tmux muscle memory: `Option`+`j`/`l` to move between
+columns, `Option`+`u`/`h` between pages.
+
+```json
+{
+  "zoom-toggle": "Alt+Z",
+  "next-attention": "Alt+A",
+  "terminal-new-adjacent": "Alt+N",
+  "terminal-close": "Alt+W",
+  "focus-next-column": "Alt+L",
+  "focus-prev-column": "Alt+J",
+  "page-next": "Alt+H",
+  "page-prev": "Alt+U"
+}
+```
+
+**Writing a `keymap` replaces all of them** — it is all-or-nothing, not a merge, so a config of your own
+is never quietly joined by eight bindings you did not write. That keeps upstream's reason for shipping
+nothing: **every key bound is a key the program inside the terminal stops receiving**, and only you know
+whether that trade is worth it. To turn the lot off, bind one action to a key you will never press.
 
 ```json
 {
@@ -303,12 +321,19 @@ terminal stops receiving**, and only you know whether that trade is worth it for
 | `terminal-new` | Add a terminal at the **end** (same as the toolbar's `New terminal ＋`) | no |
 | `terminal-new-adjacent` | Add a terminal **right after the current one**, inheriting its working directory — the closest thing to "split this terminal" | yes |
 | `terminal-close` | **Close** the current terminal (same as its `✕`) | yes |
+| `focus-next-column` | Move the **cursor** one column right. Zoomed, it moves the enlargement instead (same as `zoom-next`). **Stops at the last column** | no |
+| `focus-prev-column` | Same, one column left | no |
+| `page-next` | Show the **next page** of columns. Stops at the last page, and **does nothing while zoomed** — page and zoom are separate, and a key that collapsed the layout would be unpredictable | no |
+| `page-prev` | Same, the previous page | no |
 
 Most actions need a terminal to act *on*, and the zoomed cell is the only one the grid can name — an
-un-zoomed grid has no "current terminal", so those do nothing rather than guessing. **Bind at least one
-of `zoom-toggle` / `next-attention`**: without a way in, every "needs a zoomed cell" action stays out of
-reach until you click `⤢` with the mouse. The zoom moves **stop at
-both ends** instead of wrapping. See [Basics → switching the enlarged terminal](basics.html#keyboard-zoom-switch).
+un-zoomed grid has no "current terminal", so those do nothing rather than guessing. The exceptions are
+the four above: `focus-*-column` acts on the **focused** cell (which a plain grid does have) and `page-*`
+acts on the view, so both work without a zoom. **Bind at least one of `zoom-toggle` / `next-attention`**:
+without a way in, every "needs a zoomed cell" action stays out of reach until you click `⤢` with the
+mouse. Zoom, column and page moves all **stop at both ends** instead of wrapping; only `next-attention`
+cycles, because it is a round of cells that are calling rather than a list with ends.
+See [Basics → switching the enlarged terminal](basics.html#keyboard-zoom-switch).
 
 {: .warning }
 > **`terminal-close` closes immediately, with no confirmation** — the same as clicking the cell's `✕`, which
@@ -316,8 +341,8 @@ both ends** instead of wrapping. See [Basics → switching the enlarged terminal
 
 ### Ready-made keymaps
 
-Nothing is bound by default, so start from whichever of these matches the muscle memory you
-already have and edit from there. Every key below is checked against the traps in
+Writing any of these replaces the shipped defaults entirely, so start from whichever matches the
+muscle memory you already have and edit from there. Every key below is checked against the traps in
 [Combinations that cannot be bound](#macos-keys).
 
 **Minimal — just get into the zoom and back**
@@ -345,9 +370,10 @@ away from tmux itself. These use `Alt` instead, which tmux leaves alone.
 }
 ```
 
-{: .warning }
-> On **macOS** `Alt`+letter does not work — `Option` types an alternate character, so the letter
-> never arrives (see [above](#macos-keys)). Mac users want the arrows version below.
+{: .note }
+> `Alt`+letter **does** work on macOS in this fork — an `Alt` binding is matched against the physical
+> key as well, so `Option`+`n` still fires a binding written `"Alt+n"` even though it types `˜`
+> (see [below](#macos-keys)). Upstream matches the character only, where this set is dead on a Mac.
 
 **iTerm2-flavoured** — closest to `Cmd`+`D` splitting a pane. `terminal-new-adjacent` opens the
 new terminal next to the current one, inheriting its directory, which is the nearest thing the
@@ -397,7 +423,8 @@ awaiting input first, then finished-and-unreviewed, then idle, skipping whatever
 
 - **Modifiers**: `Shift`, `Ctrl` (`Control`), `Alt` (`Option`), `Cmd` (`Command`, `Meta`). Case-insensitive.
 - **Key**: exactly as the browser reports it — `PageDown`, `Home`, `F5`, `ArrowUp`, `a`. Printable letters
-  are **case-sensitive** (`A` implies Shift is held).
+  are **case-sensitive** (`A` implies Shift is held) — except in an `Alt` binding, which also matches the
+  physical key, so `"Alt+j"` and `"Alt+J"` are one binding (→ [On a Mac](#macos-keys)).
 - **Modifiers match exactly.** Binding `PageDown` does *not* fire for `Shift+PageDown`; that keystroke stays
   with the terminal. This is how you keep `Shift`+`Page Up`/`Page Down` for xterm's scrollback.
 - A malformed binding (unknown modifier, a lone `Shift`, a trailing `+`) makes MulmoTerminal **refuse to
@@ -438,14 +465,24 @@ Which system feature each key controls depends on the keyboard and macOS version
 publishes no fixed per-key table — so if one key stays dead after the change, assume the system
 still owns it and pick another. The console check below tells you which case you are in.
 
-**`Option`+letter is a poor choice on macOS.** Bindings are matched against `KeyboardEvent.key`,
-which per [MDN](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key) reports *the
-character the keystroke would actually input*, after the modifiers and keyboard layout are applied
-— and it is the literal string `"Dead"` for a dead key. Since macOS uses `Option` to type alternate
-characters and accents, `Option`+letter generally arrives as that character rather than the letter,
-so a binding like `"Alt+n"` will not match. Prefer `Option` with a **non-printing** key
-(`Alt+ArrowDown`, `Alt+PageUp`), which is unaffected. Check your own layout with the snippet below
-before committing to one.
+**`Option`+letter works here, and the reason it needs saying.** Bindings are matched against
+`KeyboardEvent.key`, which per [MDN](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key)
+reports *the character the keystroke would actually input*, after the modifiers and keyboard layout are
+applied — and it is the literal string `"Dead"` for a dead key. Since macOS uses `Option` to type
+alternate characters and accents, `Option`+letter arrives as that character rather than the letter, so
+on upstream MulmoTerminal a binding like `"Alt+n"` never matches.
+
+This fork adds a second test **for `Alt` bindings only**: the physical key (`KeyboardEvent.code`), so
+`"Alt+n"` matches `Option`+`n` whatever character it typed. It is deliberately not applied to unmodified
+or `Ctrl`/`Cmd` bindings — `code` is a QWERTY *position*, so on a Dvorak layout it would name a different
+key than the one you wrote, and there the character is already correct. Two consequences worth knowing:
+
+- Only **letters and digits** are translated. `Alt`+`ArrowDown`, `Alt`+`PageUp` and the function keys were
+  never affected and still match on the character.
+- The letter's **case is irrelevant** for an `Alt` binding, since one physical key covers both:
+  `"Alt+j"` and `"Alt+J"` are the same binding. Add `Shift` explicitly if you mean the shifted chord.
+
+Check your own layout with the snippet below if a key still misbehaves.
 
 {: .note }
 > Not sure what a key actually sends? Paste this in the browser devtools console and press it. **If
@@ -457,8 +494,9 @@ before committing to one.
 > ```
 {: .note }
 > An **unknown action name only warns** and the app still starts — that is what a config written for a newer
-> MulmoTerminal looks like, and downgrading must not brick it. Further actions (reordering, page switching,
-> navigation) are tracked in [issue #829](https://github.com/receptron/mulmoterminal/issues/829).
+> MulmoTerminal looks like, and downgrading must not brick it. Page switching and column navigation ship
+> in this fork (`page-next` / `focus-next-column` and their pairs); the rest of the wishlist — reordering
+> especially — is tracked in [issue #829](https://github.com/receptron/mulmoterminal/issues/829).
 
 ## Cockpit roster line counts (`cockpitLines`) {#cockpit-lines}
 

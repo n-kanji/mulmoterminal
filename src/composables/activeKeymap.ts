@@ -1,11 +1,12 @@
 import { computed, ref, type ComputedRef } from "vue";
-import { sanitizeKeymap, type Keymap } from "../../common/keymap";
+import { keymapWithDefaults, sanitizeKeymap, type Keymap } from "../../common/keymap";
 
 // The active keyboard shortcut map, hydrated from /api/config and read by the grid's key
 // handler at keydown time.
 //
-// Starts EMPTY, and stays empty when config.json has no `keymap` — the shortcuts are opt-in,
-// so an unconfigured install must never claim a key from the terminal.
+// Starts EMPTY and only fills in once /api/config has answered. Fork-local (R3): a config with
+// no `keymap` then lands on DEFAULT_KEYMAP, but not before — hydration is async, and claiming
+// the default Alt chords during it would take keys away from a user whose config replaces them.
 //
 // A ref rather than a plain module value (unlike terminalSubmitMode, which nothing displays):
 // hydration is ASYNC, and the settings screen renders this map. Opening settings before
@@ -20,5 +21,5 @@ export const activeKeymap: ComputedRef<Keymap> = computed(() => current.value);
 export const getActiveKeymap = (): Keymap => current.value;
 
 export const setActiveKeymap = (keymap: unknown): void => {
-  current.value = sanitizeKeymap(keymap);
+  current.value = keymapWithDefaults(sanitizeKeymap(keymap));
 };

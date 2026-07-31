@@ -1,8 +1,9 @@
 // The user-defined keyboard shortcuts, in `~/.mulmoterminal/config.json` under `keymap`.
 //
-// There are NO defaults: an absent or empty `keymap` means the shortcuts are OFF. Every
-// binding is something the user opted into, because any key this claims is a key the
-// terminal underneath stops receiving — that trade is the user's to make, not ours.
+// Upstream ships NO defaults: an absent or empty `keymap` means the shortcuts are OFF, because
+// any key this claims is a key the terminal underneath stops receiving — a trade upstream leaves
+// to the user. This fork ships DEFAULT_KEYMAP instead (see below); the reasoning is kept, not
+// discarded, in the rule that a single explicit binding turns the whole default set off.
 //
 // The server sanitizes and persists it; the browser matches keydowns against it. One
 // definition here so the accepted syntax can't drift between the two.
@@ -10,13 +11,66 @@
 //   "keymap": { "zoom-next": "PageDown", "zoom-prev": "Shift+PageUp" }
 
 // Actions a key can be bound to. Adding one here is all it takes for the config to accept it.
-export const KEYMAP_ACTIONS = ["zoom-toggle", "zoom-next", "zoom-prev", "next-attention", "terminal-new", "terminal-new-adjacent", "terminal-close"] as const;
+//
+// The ORDER is the dispatch order (`actionForKey` returns the first match, and
+// `duplicateWarnings` names the winner from it), so new actions are appended rather than
+// slotted in beside their relatives — inserting one would silently change which action wins
+// for anyone who has two bound to the same keystroke.
+export const KEYMAP_ACTIONS = [
+  "zoom-toggle",
+  "zoom-next",
+  "zoom-prev",
+  "next-attention",
+  "terminal-new",
+  "terminal-new-adjacent",
+  "terminal-close",
+  // Fork-local (iTerm2 mode, R3): moving the CURSOR between columns, and paging, without
+  // entering the zoom. Upstream's actions all act on the zoomed cell; these are what an
+  // un-zoomed 9-column grid needs to be driven from the keyboard at all.
+  "focus-next-column",
+  "focus-prev-column",
+  "page-next",
+  "page-prev",
+] as const;
 export type KeymapAction = (typeof KEYMAP_ACTIONS)[number];
 
 export const isKeymapAction = (value: unknown): value is KeymapAction => typeof value === "string" && (KEYMAP_ACTIONS as readonly string[]).includes(value);
 
 // action -> binding string. Absent action = unbound = that shortcut does nothing.
 export type Keymap = Partial<Record<KeymapAction, string>>;
+
+// Fork-local (iTerm2 mode, R3): what this fork binds when the user has bound nothing.
+//
+// The operator drives ~30 panes a day on iTerm2 + tmux, where Option+i/j/k/l moves between
+// panes and Option+u/h moves between windows. Shipping an unbound grid means re-learning that
+// by hand on every machine, and an operator who has to reach for the mouse to change column
+// has not actually moved off iTerm2. So the muscle memory is the default here.
+//
+// Alt (Option) only, and nothing on a bare key: an Alt chord is the range a terminal program is
+// least likely to want, and it is the range tmux/iTerm2 already trained. `terminal-new` is left
+// unbound — `terminal-new-adjacent` is the one the operator uses, and a second new-terminal key
+// would only be another key taken from the terminal.
+export const DEFAULT_KEYMAP: Readonly<Keymap> = {
+  "zoom-toggle": "Alt+Z",
+  "next-attention": "Alt+A",
+  "terminal-new-adjacent": "Alt+N",
+  "terminal-close": "Alt+W",
+  "focus-next-column": "Alt+L", // iTerm2's Option+l — one column right
+  "focus-prev-column": "Alt+J", // Option+j — one column left
+  "page-next": "Alt+H", // tmux's M-h — next window
+  "page-prev": "Alt+U", // tmux's M-u — previous window
+};
+
+// The keymap actually in force. Upstream's reasoning — a bound key is a key the terminal stops
+// receiving, so the user decides — is kept as an ALL-OR-NOTHING rule: write one `keymap` entry
+// and the defaults are gone entirely, rather than the user's binding landing in a set of eight
+// they never asked for and cannot see. Clearing the lot is then one entry away, and a config
+// written for a keyboard this fork never guessed at is never half-overridden.
+//
+// Decided from the SANITIZED map, so "the user bound something" means something that actually
+// works. An entry too malformed to survive sanitizing does not reach here anyway: the server
+// refuses to start on one (see server/config/keymap-check.ts).
+export const keymapWithDefaults = (keymap: Keymap): Keymap => (Object.keys(keymap).length === 0 ? { ...DEFAULT_KEYMAP } : keymap);
 
 // A parsed binding. `key` is matched against `KeyboardEvent.key` exactly as the browser
 // reports it, so it is case-sensitive for printable characters ("a" and "A" differ, the
@@ -62,19 +116,48 @@ export function parseKeyBinding(input: string): KeyBinding | null {
 
 // The structural shape of a keydown a binding is matched against. A real KeyboardEvent
 // satisfies it, and so does a plain test object — no DOM dependency.
+//
+// `code` is optional so every existing caller and test object still satisfies this; it is the
+// PHYSICAL key, and only Alt bindings consult it (see below).
 export interface KeymapKeyEvent {
   key: string;
   shiftKey: boolean;
   altKey: boolean;
   ctrlKey: boolean;
   metaKey: boolean;
+  code?: string;
 }
+
+// The physical key a printable binding sits on: "j" -> "KeyJ", "7" -> "Digit7". null for a named
+// key (PageDown, F8), which needs no translation — the browser reports those on `key` unharmed.
+const codeFor = (key: string): string | null => {
+  if (key.length !== 1) return null;
+  if (/[a-z]/i.test(key)) return `Key${key.toUpperCase()}`;
+  if (/\d/.test(key)) return `Digit${key}`;
+  return null;
+};
+
+// macOS rewrites Option+letter into a different CHARACTER — Option+j arrives as `key: "∆"`,
+// Option+l as "¬" — so an Alt binding written the obvious way ("Alt+J") would never fire there,
+// which is exactly the range this fork's defaults live in. Fall back to the physical key.
+//
+// Deliberately narrowed to ALT bindings. `code` is a QWERTY position, so a Dvorak user who binds
+// "a" means their `a`, not the key where QWERTY keeps one; consulting `code` for every binding
+// would quietly hijack the wrong key for them. Under Option there is no `key` left to honour,
+// so the trade only applies where it buys something.
+const matchesByCode = (binding: KeyBinding, e: KeymapKeyEvent): boolean => {
+  if (!binding.alt || !e.code) return false;
+  const code = codeFor(binding.key);
+  return code !== null && e.code === code;
+};
 
 // Every modifier must match exactly, so a binding on "PageDown" does NOT fire for
 // Shift+PageDown — that keystroke stays with the terminal (xterm's scrollback) unless the
 // user binds it too.
-export const matchesBinding = (binding: KeyBinding, e: KeymapKeyEvent): boolean =>
-  e.key === binding.key && e.shiftKey === binding.shift && e.altKey === binding.alt && e.ctrlKey === binding.ctrl && e.metaKey === binding.meta;
+export const matchesBinding = (binding: KeyBinding, e: KeymapKeyEvent): boolean => {
+  if (e.shiftKey !== binding.shift || e.altKey !== binding.alt || e.ctrlKey !== binding.ctrl || e.metaKey !== binding.meta) return false;
+  return e.key === binding.key || matchesByCode(binding, e);
+};
 
 // The action this keydown is bound to, or null. Bindings that fail to parse are skipped.
 export function actionForKey(keymap: Keymap, e: KeymapKeyEvent): KeymapAction | null {

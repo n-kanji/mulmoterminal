@@ -216,6 +216,14 @@ const press = async (key: string) => {
   await flushPromises();
 };
 
+// An Option chord as macOS really delivers it: the CHARACTER Option produced on `key`, the
+// physical key on `code`. Every default this fork ships is one of these, so a matcher that
+// only looked at `key` would leave all of them dead on the operator's actual machine (R3).
+const pressAlt = async (code: string, char: string) => {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: char, code, altKey: true, bubbles: true }));
+  await flushPromises();
+};
+
 const DEFAULT_KEYMAP = { "zoom-toggle": "F8", "next-attention": "F9", "zoom-next": "PageDown", "zoom-prev": "PageUp" };
 
 /** Mount a grid of `count` running cells, all on the first page unless `page` says otherwise.
@@ -247,12 +255,16 @@ describe("GridView keyboard shortcuts (#829)", () => {
     focused.length = 0;
   });
 
-  it("does nothing at all when no keymap is configured — shortcuts are opt-in", async () => {
+  // Fork-local (R3): a config with no `keymap` no longer means "no shortcuts" — it means this
+  // fork's Alt defaults. What stays true is that an unbound key is still the terminal's.
+  it("falls back to this fork's defaults when no keymap is configured", async () => {
     // `null`, not `undefined` — passing undefined to a defaulted parameter selects the default.
     const w = await mountShortcutGrid(4, {}, null);
-    await press("F8");
+    await press("F8"); // not part of the defaults
     expect(gridOf(w).props("expandedUid")).toBeNull();
     expect(focused).toEqual([]);
+    await pressAlt("KeyZ", "Ω"); // the default zoom-toggle
+    expect(gridOf(w).props("expandedUid")).not.toBeNull();
     w.unmount();
   });
 
@@ -359,6 +371,146 @@ describe("GridView keyboard shortcuts (#829)", () => {
     await press("F7");
     expect(gridOf(w).props("expandedUid")).toBeNull();
     expect(focused).toEqual([]);
+    w.unmount();
+  });
+});
+
+// --- Column and page keys (R3) --------------------------------------------------------
+//
+// The half of the keyboard the plain grid needed: upstream's actions all act on the ZOOMED
+// cell, so an un-zoomed 9-column grid could only be driven with the mouse. The pure transforms
+// are in gridTabs.spec.ts; what is wired HERE is which list each key is given, that a column
+// key moves the CURSOR rather than the layout, and that a page key cannot collapse the zoom.
+const R3_KEYMAP = {
+  "zoom-toggle": "F8",
+  "focus-next-column": "F5",
+  "focus-prev-column": "F4",
+  "page-next": "F6",
+  "page-prev": "F7",
+};
+
+// The real grid reports focus back up on `focusin`; the stub cannot, so echo it by hand.
+const echoFocus = async (w: ReturnType<typeof mount>) => {
+  const uid = Number(focused.at(-1)?.replace("cell-", ""));
+  gridOf(w).vm.$emit("focus-cell", uid);
+  await flushPromises();
+};
+
+describe("GridView column and page keys (R3)", () => {
+  beforeEach(() => {
+    focused.length = 0;
+  });
+
+  it("moves the cursor one column at a time, and stops at the last one", async () => {
+    const w = await mountShortcutGrid(3, {}, R3_KEYMAP);
+    gridOf(w).vm.$emit("focus-cell", 0);
+    await flushPromises();
+
+    await press("F5");
+    expect(focused.at(-1)).toBe("cell-1");
+    await echoFocus(w);
+    await press("F5");
+    expect(focused.at(-1)).toBe("cell-2");
+    await echoFocus(w);
+
+    focused.length = 0;
+    await press("F5"); // last column — nothing to move to
+    expect(focused).toEqual([]);
+    w.unmount();
+  });
+
+  it("moves the cursor back, and stops at the first column", async () => {
+    const w = await mountShortcutGrid(3, {}, R3_KEYMAP);
+    gridOf(w).vm.$emit("focus-cell", 1);
+    await flushPromises();
+    await press("F4");
+    expect(focused.at(-1)).toBe("cell-0");
+    await echoFocus(w);
+
+    focused.length = 0;
+    await press("F4");
+    expect(focused).toEqual([]);
+    w.unmount();
+  });
+
+  // Zoom invariant 1: a key that only claims to move the cursor must not rearrange the layout.
+  it("NEVER enlarges or collapses — it only moves the cursor", async () => {
+    const w = await mountShortcutGrid(3, {}, R3_KEYMAP);
+    gridOf(w).vm.$emit("focus-cell", 0);
+    await flushPromises();
+    await press("F5");
+    expect(gridOf(w).props("expandedUid")).toBeNull();
+    w.unmount();
+  });
+
+  // Zoomed there are no columns on screen to walk — one terminal fills the stage — so the key
+  // does the same gesture one level up and moves the enlargement.
+  it("moves the ENLARGEMENT while zoomed, without leaving the zoom", async () => {
+    const w = await mountShortcutGrid(3, {}, R3_KEYMAP);
+    gridOf(w).vm.$emit("focus-cell", 0);
+    await flushPromises();
+    await press("F8");
+    expect(gridOf(w).props("expandedUid")).toBe(0);
+    await press("F5");
+    expect(gridOf(w).props("expandedUid")).toBe(1);
+    await press("F4");
+    expect(gridOf(w).props("expandedUid")).toBe(0);
+    await press("F4"); // at the front — stays, and stays zoomed
+    expect(gridOf(w).props("expandedUid")).toBe(0);
+    w.unmount();
+  });
+
+  it("pages forward and back, stopping at both ends", async () => {
+    const w = await mountShortcutGrid(PAGE_SIZE + 3, { page: 0 }, R3_KEYMAP);
+    const uids = () =>
+      gridOf(w)
+        .props("cells")
+        .map((c: { uid: number }) => c.uid);
+    expect(uids()).toContain(0);
+
+    await press("F6");
+    expect(uids()).toContain(PAGE_SIZE); // page 2
+    expect(uids()).not.toContain(0);
+
+    await press("F6"); // last page — stays
+    expect(uids()).toContain(PAGE_SIZE);
+
+    await press("F7");
+    expect(uids()).toContain(0);
+    await press("F7"); // first page — stays
+    expect(uids()).toContain(0);
+    w.unmount();
+  });
+
+  // switchPage clears the zoom, so a page key that acted while zoomed would collapse the whole
+  // layout — the exact unpredictability zoom invariant 1 exists to prevent.
+  it("does nothing while zoomed, so it can never collapse the zoom", async () => {
+    const w = await mountShortcutGrid(PAGE_SIZE + 3, { page: 0 }, R3_KEYMAP);
+    gridOf(w).vm.$emit("focus-cell", 0);
+    await flushPromises();
+    await press("F8");
+    expect(gridOf(w).props("expandedUid")).toBe(0);
+    await press("F6");
+    expect(gridOf(w).props("expandedUid")).toBe(0);
+    w.unmount();
+  });
+
+  // The end-to-end reason `code` matching exists: on the operator's Mac, Option+l arrives as
+  // "¬". Matched on `key` alone, every default this fork ships would be dead on arrival.
+  it("runs the shipped defaults from the characters macOS actually sends", async () => {
+    const w = await mountShortcutGrid(3, {}, null); // no config keymap -> DEFAULT_KEYMAP
+    gridOf(w).vm.$emit("focus-cell", 0);
+    await flushPromises();
+
+    await pressAlt("KeyL", "¬"); // focus-next-column
+    expect(focused.at(-1)).toBe("cell-1");
+    await echoFocus(w);
+    await pressAlt("KeyJ", "∆"); // focus-prev-column
+    expect(focused.at(-1)).toBe("cell-0");
+    await echoFocus(w);
+
+    await pressAlt("KeyZ", "Ω"); // zoom-toggle
+    expect(gridOf(w).props("expandedUid")).toBe(0);
     w.unmount();
   });
 });
