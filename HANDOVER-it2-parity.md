@@ -1,6 +1,6 @@
 # HANDOVER — iTerm2 完全代替プロジェクト（kanji-it2-parity）
 
-**最終更新:** 2026-08-01 01:15 頃（無人夜間運転中 / Layer 1 = Fable 5 セッション）
+**最終更新:** 2026-08-01 01:50 — 夜間実装完了。朝ブリーフ = plans/kanji-it2-parity/11-gate1-brief.md
 **CEO 指示:** 「私寝るので、このまま実装完了まで進めてください」（2026-07-31 夜）。要判断 3 件は全て推奨案で承認扱い
 
 ## 正本ドキュメント
@@ -16,7 +16,9 @@
   - 既定キー: Alt+J/L=列移動, Alt+U/H=ページ, Alt+A=next-attention, Alt+Z=zoom, Alt+N=新規隣接, Alt+W=閉じる（ユーザーが keymap を 1 つでも書くと既定は全部無効）
   - 通知: approval/question で OS 通知+favicon バッジ+title (N)。可視+フォーカス時は抑制。5 分クールダウン
   - 教訓: マージコンフリクト解消後のテスト修正がステージ漏れで kanji が一時 red に（507c100c で修復）。以後 status 確認をゲートに組み込み済み
-- Wave 3: **実行中** — w3-leftovers（I-7 積み残し 5 件+確認 1 件）/ w3-fork-scroll（I-9 Fork ボタン + I-10 scrollback 10000）
+- Wave 3: **完走**（I-7 / I-9+I-10 マージ済み。最終 89c7d63b+brief。テスト 5,027 件 green）
+- **本番反映済み**: yarn build → launchctl kickstart 実施。HTTP 200・既存 7 セッション再アタッチ・実画面スクショ・新 API 生存確認まで完了（2026-08-01 01:45）
+- 次: CEO の Gate 1 ドッグフーディング（手順は 11-gate1-brief.md）。push は CEO 承認待ち
 - Wave 4（P2）: Gate 2 通過まで着手しない（計画通り）
 
 ## このセッションが死んだ場合の再開手順
