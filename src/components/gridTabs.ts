@@ -31,6 +31,11 @@ export interface Cell {
   launcher?: CellLauncher | null;
   // The agent this cell runs. "codex" reconnects via /ws/codex; absent = Claude (the default).
   agent?: "codex";
+  // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button and
+  // starts as a BRANCH of that session (`--resume <id> --fork-session`). One-shot: cleared
+  // by setSession the moment the branch has an id of its own, so it can never fork twice.
+  // Never persisted — a cell with no session isn't saved at all (parseGridState).
+  fork?: string | null;
   // Fork-local (iTerm2 mode, R1): a RESERVED SLOT, not a terminal. Holes exist only to hold a
   // pinned page's width open — see the "workspaces" section below. They are never rendered,
   // never occupied, and never somewhere to send anyone.
@@ -106,10 +111,15 @@ export const stateKeyFor = (workspace: string | null): string => (workspace ? `$
 
 export const pageCount = (cellCount: number) => Math.max(1, Math.ceil(cellCount / PAGE_SIZE));
 export const pageSlice = <T>(cells: T[], page: number) => cells.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
-// A cell occupies a slot when it runs a Claude session, a command, OR a launcher; only
-// those count toward the cap. A launch cell is empty: no session, command, or launcher.
-const isOccupied = (c: Cell) => !isHole(c) && (c.session !== null || c.command != null || c.launcher != null);
-const isLaunchCell = (c: Cell | undefined) => !!c && !isHole(c) && c.session === null && c.command == null && c.launcher == null;
+// A cell occupies a slot when it runs a Claude session, a command, OR a launcher; only those
+// count toward the cap. R12 adds a fourth: a pending fork is a column the operator opened and
+// is waiting on — it has no session id YET (the server mints it), but treating it as an empty
+// launch cell would let a tab click drop it (switchPage), a preset chip rewrite it
+// (addCellWithCwd) or "+ Terminal" cancel it — including in the case where its fork was
+// refused and the pane is holding the error message meant to be read.
+// A launch cell is what is left: nothing running and nothing asked for.
+const isOccupied = (c: Cell) => !isHole(c) && (c.session !== null || c.command != null || c.launcher != null || c.fork != null);
+const isLaunchCell = (c: Cell | undefined) => !!c && !isHole(c) && !isOccupied(c);
 export const runningCount = (cells: Cell[]) => cells.filter(isOccupied).length;
 
 // =========================================================================================
@@ -330,7 +340,9 @@ export function cancelableLaunchUid(state: GridState): number | null {
 }
 
 export function setSession(state: GridState, uid: number, id: string | null): GridState {
-  const cells = state.cells.map((c) => (c.uid === uid ? { ...c, session: id } : c));
+  // R12: an id means the fork request was served — spend it, so a later reconnect of this
+  // cell resumes the branch rather than forking the source a second time.
+  const cells = state.cells.map((c) => (c.uid === uid ? { ...c, session: id, fork: id === null ? c.fork : null } : c));
   const expanded = id === null && state.expanded === uid ? null : state.expanded;
   return { ...state, cells, expanded };
 }
@@ -376,6 +388,20 @@ export function insertCellAfter(state: GridState, afterUid: number, cell: Omit<C
   if (placed) return { ...state, cells: placed, nextUid: state.nextUid + 1, page: pageOfIndex(at), expanded };
   const cells = [...state.cells, { ...cell, uid }];
   return { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded };
+}
+
+// Fork-local (iTerm2 mode, R12): branch the cell's conversation into the column right beside
+// it — the operator's own `claude --resume <id> --fork-session`, as one click. Same directory,
+// because a fork of a conversation about THIS project belongs in this project. Returns the new
+// uid so the caller can auto-launch it (there is nothing to ask a launch form about); -1 when
+// there is nothing to fork (no session yet) or no room left in the grid.
+export function forkCell(state: GridState, uid: number): { state: GridState; uid: number } {
+  const source = state.cells.find((c) => c.uid === uid);
+  if (!source || isHole(source) || !source.session) return { state, uid: -1 };
+  const uidNext = state.nextUid;
+  const next = insertCellAfter(state, uid, { session: null, cwd: source.cwd, fork: source.session });
+  // insertCellAfter returns the SAME state when the grid is full — no cell, so no uid.
+  return next === state ? { state, uid: -1 } : { state: next, uid: uidNext };
 }
 
 // The Run button opened a script in a spare cell next to the cell that triggered it.

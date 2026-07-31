@@ -22,12 +22,13 @@ import { launchChoiceFromParams } from "../session/launch-choice.js";
 import { codexSessionsRoot } from "../agents/codex-session.js";
 import { codexRolloutExists } from "../agents/codex-sessions.js";
 import { codexRolloutIds, markDevTerminalSession, ptys } from "../session/registry.js";
+import { ForkNotResumableError } from "../agents/claude-args.js";
 import { sandboxWouldRun } from "../session/pty-spawn.js";
 import { handleCommandFrame } from "../session/pty-connection.js";
 import { closeWithError } from "../session/ws-frames.js";
 import { ProviderRefusedError } from "../session/provider-env.js";
 import { sessionExistsOnDisk } from "../session/session-reads.js";
-import { canStartLauncher, resolveReattachableId, resolveSession, type SessionResolution } from "../session/session-resolve.js";
+import { canStartLauncher, resolveFork, resolveReattachableId, resolveSession, type ForkPlan, type SessionResolution } from "../session/session-resolve.js";
 import type { PtyEntry } from "../session/types.js";
 import type { SpawnClaudePty, SpawnCodexPty, SpawnCommandPty, SpawnLauncherPty, ResolveLauncher } from "../session/spawners.js";
 import { takeAgentPrompt } from "../session/agent-prompt-queue.js";
@@ -69,11 +70,50 @@ function queuedFirstTurn(resume: string | null, attachGuiMcp: boolean, cwd: stri
   return resume || attachGuiMcp ? undefined : takeAgentPrompt(cwd);
 }
 
+// Fork-local (iTerm2 mode, R12): `?fork=<session id>` — the cell's Fork button opened this
+// column to BRANCH that conversation. Only a genuinely fresh connection can fork (a reattach
+// or a resume already has a conversation of its own), and the source must have a transcript
+// on disk, because `--fork-session` is a mode of `--resume`.
+function resolveClaudeFork(url: URL, cwd: string, fresh: boolean): ForkPlan {
+  const raw = url.searchParams.get("fork");
+  const from = raw && SESSION_ID_RE.test(raw) ? raw : null;
+  return resolveFork(from, raw !== null, { fresh, sourceOnDisk: !!from && sessionExistsOnDisk(from, cwd) });
+}
+
 function resolveClaudeSession(requested: string | null, cwd: string): SessionResolution {
   const hasLivePty = !!requested && ptys.has(requested);
   const tmuxAlive = !hasLivePty && !!requested && tmuxHasSession(requested);
   const onDisk = !hasLivePty && !!requested && sessionExistsOnDisk(requested, cwd);
   return resolveSession(requested, { hasLivePty, tmuxAlive, onDisk }, randomUUID);
+}
+
+// What a /ws connection will do, decided before anything is sent or spawned: the session
+// resolution above, plus the fork request folded into it. `resume` is what claude is pointed
+// at either way — a plain resume, or the source of a fork, which `fork` distinguishes.
+// A refusable fork comes back as an `error` for the caller to put in the terminal; it is
+// never quietly turned into a plain new session (see resolveFork).
+type ClaudePlan = { error: string } | (SessionResolution & { fork: boolean });
+
+const FORK_UNAVAILABLE = "Cannot fork this session: it has no transcript to resume (a session that was cleared or never sent a prompt cannot be forked).";
+
+function planClaudeConnection(url: URL, requested: string | null, cwd: string): ClaudePlan {
+  const { reattachId, resume, sessionId } = resolveClaudeSession(requested, cwd);
+  const plan = resolveClaudeFork(url, cwd, !reattachId && !resume);
+  if (plan.kind === "unavailable") {
+    console.warn(`[ws] refusing fork of ${JSON.stringify(plan.from)} — no transcript to resume in ${cwd}`);
+    return { error: FORK_UNAVAILABLE };
+  }
+  if (plan.kind === "fork") return { reattachId, resume: plan.from, sessionId, fork: true };
+  return { reattachId, resume, sessionId, fork: false };
+}
+
+// What the terminal is told when a claude spawn throws. The two typed refusals name the actual
+// problem — a directory's provider config (#579), or a fork whose source cannot be resumed
+// (R12) — and the PATH hint is the fallback, not the thing that buries them.
+function claudeSpawnFailure(err: unknown): string {
+  if (err instanceof ProviderRefusedError) return err.message;
+  if (err instanceof ForkNotResumableError) return FORK_UNAVAILABLE;
+  return "Failed to start Claude. Is the `claude` CLI installed and on your PATH?";
 }
 
 // The params every terminal WebSocket reads: the request URL, the validated
@@ -237,7 +277,12 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
   // exits with "session id already in use" if we retry `--session-id <same>`.
   // So mint a fresh id; the browser adopts it from this `session` message and
   // re-persists, so the reload just reopens a working terminal seamlessly.
-  const { reattachId, resume, sessionId } = resolveClaudeSession(requested, cwd);
+  // R12: a refusable fork stops here, and says so IN THE TERMINAL. `closeWithError` is a
+  // terminal frame on the client (no reconnect), so the operator reads one message in the
+  // column they just opened instead of watching a blank pane that is silently a new session.
+  const plan = planClaudeConnection(url, requested, cwd);
+  if ("error" in plan) return closeWithError(ws, plan.error);
+  const { reattachId, resume, sessionId, fork } = plan;
   const live = reattachId ? ptys.get(reattachId) : undefined;
 
   // A dev terminal (gui=0) is a multi-terminal GRID cell: remember its session id so
@@ -273,17 +318,15 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     // file. On reconnect, re-sync it from the (now-refreshed) Keychain so a token that
     // rotated since spawn doesn't leave the reattached session stuck at "Not logged in".
     if (live?.sandbox) writeSandboxCredentials(sessionId);
+    // `resume` is the fork's SOURCE when this is a fork, so a branch carries a conversation of
+    // its own and is no more a home for a queued first turn than a plain `--resume` is.
     const initialPrompt = live ? undefined : queuedFirstTurn(resume, attachGuiMcp, cwd); // a reattach must not consume one — nothing spawns to run it
-    entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt });
+    entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork });
   } catch (err) {
     // A failed spawn (claude missing, or node-pty's spawn-helper not executable)
     // must close just this connection — never crash the whole server.
     console.error(`[ws] failed to start session ${sessionId}: ${messageOf(err)}`);
-    // A provider refusal already says exactly what is wrong with the directory's config
-    // (#579); the generic hint below would bury it.
-    if (err instanceof ProviderRefusedError) return closeWithError(ws, err.message);
-    closeWithError(ws, "Failed to start Claude. Is the `claude` CLI installed and on your PATH?");
-    return;
+    return closeWithError(ws, claudeSpawnFailure(err));
   }
 
   // Single view (gui) = the attached session IS the actively-viewed pane, so mark it

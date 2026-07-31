@@ -36,6 +36,36 @@ export function resolveSession(requested: string | null, facts: SessionFacts, mi
   return { reattachId, resume, sessionId };
 }
 
+// ── forking a conversation into a second column (fork-local, iTerm2 mode, R12) ──
+
+// What a `?fork=<id>` connection should do.
+//   none        — no fork asked for, or this connection already has a session of its own
+//   fork        — spawn `--resume <from> --fork-session` under a freshly minted id
+//   unavailable — a fork WAS asked for and cannot be served; the caller must say so in the
+//                 terminal. Never degraded into `none`: a pane that quietly comes up as a
+//                 brand-new session looks like the fork worked and loses the conversation
+//                 the operator meant to branch (e.g. a source that ran /clear, so claude
+//                 wrote no transcript to resume).
+export type ForkPlan = { kind: "none" } | { kind: "fork"; from: string } | { kind: "unavailable"; from: string | null };
+
+export interface ForkFacts {
+  // This connection is starting a genuinely new session: nothing to reattach, nothing to
+  // resume. A reconnect of the FORKED pane arrives with its own id and lands here as false,
+  // which is what stops the browser's retry from forking a second time.
+  fresh: boolean;
+  // The source has an on-disk transcript in this workspace — the only thing `--resume` reads.
+  sourceOnDisk: boolean;
+}
+
+// `from` is the already-shape-validated source id, or null when the request carried a fork
+// param that is not a session id at all — still a failed fork, not a silent plain session.
+export function resolveFork(from: string | null, asked: boolean, facts: ForkFacts): ForkPlan {
+  if (!asked) return { kind: "none" };
+  if (!facts.fresh) return { kind: "none" };
+  if (!from || !facts.sourceOnDisk) return { kind: "unavailable", from };
+  return { kind: "fork", from };
+}
+
 // ── the same decision for the two non-claude terminals ─────────────────────────
 
 /** Which id a launcher or codex connection runs as. A live pty in this process always

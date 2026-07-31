@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveSession, type SessionFacts, resolveReattachableId, canStartLauncher } from "../../../server/session/session-resolve.js";
+import { resolveSession, type SessionFacts, resolveFork, resolveReattachableId, canStartLauncher } from "../../../server/session/session-resolve.js";
 
 const FIXED = "fresh-minted-id";
 const mint = () => FIXED;
@@ -96,5 +96,37 @@ describe("canStartLauncher", () => {
 
   it("allows the shell button, which has no configured index", () => {
     expect(canStartLauncher(facts({ isShell: true }))).toBe(true);
+  });
+});
+
+// R12 (fork-local, iTerm2 mode): `?fork=<id>` — the Fork button opened this column to branch
+// that conversation. Two rules carry the whole feature: a fork only applies to a connection
+// with no session of its own, and a fork that cannot be served is an ERROR, never a plain new
+// session (a blank pane that looks like the branch worked is the failure the button exists to
+// avoid).
+describe("resolveFork", () => {
+  const SOURCE = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+  it("forks when a fresh connection names a source with a transcript", () => {
+    expect(resolveFork(SOURCE, true, { fresh: true, sourceOnDisk: true })).toEqual({ kind: "fork", from: SOURCE });
+  });
+
+  it("does nothing when no fork was asked for", () => {
+    expect(resolveFork(null, false, { fresh: true, sourceOnDisk: true })).toEqual({ kind: "none" });
+  });
+
+  // The reconnect guard. Once the branch has an id, the browser's retries arrive with it — a
+  // fork param still on the URL must not open the source's conversation a second time.
+  it("ignores the param once this connection has a session of its own", () => {
+    expect(resolveFork(SOURCE, true, { fresh: false, sourceOnDisk: true })).toEqual({ kind: "none" });
+  });
+
+  it("reports unavailable — not a fresh session — when the source has no transcript", () => {
+    // The source was cleared, or never sent a prompt: claude has no transcript to --resume.
+    expect(resolveFork(SOURCE, true, { fresh: true, sourceOnDisk: false })).toEqual({ kind: "unavailable", from: SOURCE });
+  });
+
+  it("reports unavailable when the param is not a session id at all", () => {
+    expect(resolveFork(null, true, { fresh: true, sourceOnDisk: false })).toEqual({ kind: "unavailable", from: null });
   });
 });

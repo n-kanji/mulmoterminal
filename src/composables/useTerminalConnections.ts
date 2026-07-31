@@ -47,6 +47,7 @@ import { messageEffect } from "./serverMessage";
 import { enterKeyOverride, submitSequence, DEFAULT_TERMINAL_SUBMIT_MODE, type EnterKeyEvent, type TerminalSubmitMode } from "../../common/terminalSubmit";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../../common/terminalFontSize";
 import { TERMINAL_FONT_FAMILY_DEFAULT } from "../../common/terminalFontFamily";
+import { TERMINAL_SCROLLBACK_DEFAULT } from "../../common/terminalScrollback";
 import { getTerminalSubmitMode } from "./terminalSubmitMode";
 import { createFilePathLinkProvider } from "./terminalFilePathLinkProvider";
 import { filesGotoFile } from "./useFilesView";
@@ -92,6 +93,9 @@ export interface ConnTarget {
   // The provider/model the launch form picked for this session (#584). Claude only —
   // it rides the /ws query and overrides the directory's default.
   launch?: LaunchChoice | null;
+  // Fork-local (iTerm2 mode, R12): the session this cell branches from, until the server
+  // names the branch. Claude only, and dropped from the URL once `sessionId` is known.
+  fork?: string | null;
 }
 
 // The `terminalSubmit` mapping describes the user's CLAUDE binding, so it only applies to
@@ -308,6 +312,11 @@ function buildTerminal(swallowedMouseModes: Set<number>, font: TerminalFont): Te
     cursorBlink: true,
     fontSize: font.size,
     fontFamily: font.family,
+    // Fork-local (iTerm2 mode, R13): the operator's iTerm2 history, carried over. xterm's
+    // default 1000 loses the start of a long turn; this keeps a day's work scrollable — and
+    // re-wrapped, because xterm reflows the NORMAL buffer on resize, which is exactly the
+    // narrow-column pain iTerm2 could never fix (it wraps at write time).
+    scrollback: TERMINAL_SCROLLBACK_DEFAULT,
     // Fork-local: breathe like the Claude desktop app — dense CJK transcripts are
     // unreadable at xterm's default 1.0. Box-drawing verticals get small gaps at
     // this height; the operator reads prose all day and draws boxes never.

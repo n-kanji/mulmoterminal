@@ -9,6 +9,7 @@ import {
   planMsOverride,
   MS_OVERRIDE_ENTRY,
 } from "../../../server/infra/tmux";
+import { TERMINAL_SCROLLBACK_DEFAULT } from "../../../common/terminalScrollback";
 
 describe("tmuxSessionName", () => {
   it("prefixes the session id", () => {
@@ -48,6 +49,17 @@ describe("TMUX_CONF_LINES", () => {
   it("forwards OSC 52 to the outer terminal (Claude's auto-copy → browser clipboard)", () => {
     expect(TMUX_CONF_LINES).toContain("set -g set-clipboard on");
     expect(TMUX_CONF_LINES.some((l) => l.includes("terminal-overrides") && l.includes("Ms="))).toBe(true);
+  });
+
+  // R13 (fork-local, iTerm2 mode): the two histories are in series, and only ONE of them
+  // survives a reattach. A tmux session outlives the browser, so after a reload xterm is empty
+  // and everything on screen came out of the tmux pane — a history-limit below the browser's
+  // scrollback silently caps how far back a reattached column can ever be read, with nothing on
+  // either side to explain the missing lines.
+  it("keeps at least as much history as the browser's terminals do", () => {
+    const line = TMUX_CONF_LINES.find((l) => l.includes("history-limit"));
+    const limit = Number(line?.match(/history-limit\s+(\d+)/)?.[1]);
+    expect(limit).toBeGreaterThanOrEqual(TERMINAL_SCROLLBACK_DEFAULT);
   });
 
   // #783: tmux strips OSC 8 hyperlinks (Claude's statusline `PR #NNNN`) unless told the outer

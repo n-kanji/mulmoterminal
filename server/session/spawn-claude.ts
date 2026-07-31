@@ -33,6 +33,36 @@ export interface SpawnClaudeOptions {
   // as a PAIR: a provider from one source with a model from the other is a combination
   // neither of them asked for. Absent — the usual case — means "use the directory's".
   launch?: DirModelChoice;
+  // Fork-local (iTerm2 mode, R12): `resume` is the session to BRANCH, not to continue —
+  // this pane runs as `sessionId` with a copy of that conversation, and the source keeps
+  // running untouched wherever it is.
+  fork?: boolean;
+}
+
+// The provider/model a spawn continues on, when it continues one at all (#584). A fork is the
+// only spawn whose id this server has never seen a choice for: it is a NEW session carrying an
+// OLD conversation, so the source's choice is the only defensible answer — a branch that lands
+// on a different backend than the pane it came from is the silent wrong-backend that contract
+// exists to prevent.
+function rememberedChoice(sessionId: string, resume: string | null, fork: boolean): DirModelChoice | undefined {
+  const own = launchChoices.get(sessionId);
+  if (own || !fork || !resume) return own;
+  return launchChoices.get(resume);
+}
+
+// Brand-new (or restarted-idle) session: surface it in the sidebar before it's persisted. A
+// spawned session (an initialPrompt or a draft) gets its title from that text, so it is
+// recognizable in the sidebar before anyone opens it.
+function announceNewSession(deps: SpawnDeps, sessionId: string, seed: string | undefined): void {
+  const title = seed ? seed.replace(/\s+/g, " ").trim().slice(0, 60) || "New session" : "New session";
+  knownSessions.set(sessionId, { createdAt: Date.now(), title });
+  deps.publishSessionCreated(sessionId);
+}
+
+// What the connection log calls this spawn. Named so the log line stays one expression.
+function spawnKind(fork: boolean, canResume: boolean, resume: string | null): string {
+  if (fork) return `fork of ${resume}`;
+  return canResume ? "resume" : "new";
 }
 
 export function createClaudeSpawner(deps: SpawnDeps) {
@@ -41,7 +71,7 @@ export function createClaudeSpawner(deps: SpawnDeps) {
   // a viewer yet (e.g. spawnBackgroundChat) — output just buffers until a client
   // reattaches.
   function spawnClaudePty(sessionId: string, resume: string | null, ws: WebSocket | null, options: SpawnClaudeOptions = {}): PtyEntry {
-    const { initialPrompt, cwd = CLAUDE_CWD, attachGuiMcp = true, draft, launch } = options;
+    const { initialPrompt, cwd = CLAUDE_CWD, attachGuiMcp = true, draft, launch, fork = false } = options;
     // attachGuiMcp picks the MCP mode (see buildClaudeArgs): the single view (default)
     // attaches the GUI MCP + --strict-mcp-config (main's classic behavior); the grid's
     // dev terminals attach neither, so the user's + project's MCP servers load normally.
@@ -61,7 +91,7 @@ export function createClaudeSpawner(deps: SpawnDeps) {
     const dir = loadDirConfig(cwd);
     const choice = effectiveChoice({
       launch,
-      remembered: launchChoices.get(sessionId),
+      remembered: rememberedChoice(sessionId, resume, fork),
       dir: { provider: dir.provider, model: dir.model },
       resuming: canResume,
     });
@@ -91,9 +121,10 @@ export function createClaudeSpawner(deps: SpawnDeps) {
       // their tools don't trip a permission prompt on every call.
       guiMcpTools: [deps.guiMcpTools, ...getUserMcpServers().map((s) => `mcp__${s.id}`)].join(","),
       addDirs: dir.addDirs,
+      fork,
     });
 
-    console.log(`[ws] client connected (${canResume ? "resume" : "new"} ${sessionId})`);
+    console.log(`[ws] client connected (${spawnKind(fork, canResume, resume)} ${sessionId})`);
 
     // Sandbox → run claude inside a fresh container (no tmux). Otherwise the host path:
     // a live tmux session for this id (survived a restart) reattaches; else create it.
@@ -110,15 +141,9 @@ export function createClaudeSpawner(deps: SpawnDeps) {
     }
     ptys.set(sessionId, entry);
 
-    if (!canResume) {
-      // Brand-new (or restarted-idle) session: surface it in the sidebar before
-      // it's persisted. A spawned session (initialPrompt or a draft) gets a title from
-      // that text so it's recognizable in the sidebar before anyone opens it.
-      const seed = initialPrompt ?? draft;
-      const title = seed ? seed.replace(/\s+/g, " ").trim().slice(0, 60) || "New session" : "New session";
-      knownSessions.set(sessionId, { createdAt: Date.now(), title });
-      deps.publishSessionCreated(sessionId);
-    }
+    // A fork resumes a transcript but IS new (its own id, its own future), so it needs the
+    // sidebar row every other new session gets — `canResume` alone would skip it.
+    if (!canResume || fork) announceNewSession(deps, sessionId, initialPrompt ?? draft);
 
     // The auto-run prompt / editable draft is typed into the input box once ready (see
     // attachDraftInjection) — its scanner is fed the pty output below. Fork-local: the
