@@ -7,7 +7,9 @@ import security from "eslint-plugin-security";
 import prettierRecommended from "eslint-plugin-prettier/recommended";
 
 export default [
-  { ignores: ["dist/", "node_modules/"] },
+  // .claude/ holds agent worktrees (full checkouts); linting into them reports
+  // phantom parsing errors from a tree that is not this one.
+  { ignores: ["dist/", "node_modules/", ".claude/"] },
   js.configs.recommended,
   ...tseslint.configs.strict,
   ...pluginVue.configs["flat/recommended"],
