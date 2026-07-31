@@ -153,9 +153,13 @@ const ACTIVITY_STATE_FILE = path.join(MULMOTERMINAL_HOME, "activity-state.json")
 export const activityStateHydrated: Promise<void> = (async () => {
   try {
     const parsed = JSON.parse(await fs.readFile(ACTIVITY_STATE_FILE, "utf8"));
-    for (const { id, working, waiting, event } of parseActivityState(parsed, (x) => SESSION_ID_RE.test(x))) {
+    for (const { id, working, waiting, event, waitKind, at } of parseActivityState(parsed, (x) => SESSION_ID_RE.test(x))) {
       // Don't clobber a live update that already landed while hydration was in flight.
-      if (!activity.has(id)) activity.set(id, { working, waiting, event, at: Date.now() });
+      // `at` is restored rather than stamped with now(): the pane's freshness colour is read
+      // from it, and resetting every restored session to "just now" would tell the operator
+      // that a pane nobody has touched since this morning is fresh. A file written before
+      // this field existed has no `at`, which reads as "unknown age" (i.e. fresh), not stale.
+      if (!activity.has(id)) activity.set(id, { working, waiting, event, waitKind, at: at ?? Date.now() });
     }
   } catch {
     // no file yet / unreadable => nothing to restore
@@ -175,7 +179,7 @@ export function claimActivityOwnership(id: string): void {
 async function readPersistedActivity(): Promise<Record<string, PersistedActivity>> {
   try {
     const parsed = parseActivityState(JSON.parse(await fs.readFile(ACTIVITY_STATE_FILE, "utf8")), (x) => SESSION_ID_RE.test(x));
-    return Object.fromEntries(parsed.map(({ id, working, waiting, event }) => [id, { working, waiting, event }]));
+    return Object.fromEntries(parsed.map(({ id, ...rest }) => [id, rest]));
   } catch {
     return {}; // no file yet / unreadable => nothing to preserve
   }

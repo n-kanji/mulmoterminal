@@ -63,8 +63,13 @@ const { config: dirConfig } = useDirConfig(toRef(props, "cwd"));
 const dirDisplay = computed(() => formatCwd(props.cwd, props.home));
 const target = computed(() => (isShellLauncher(props.launcher) ? { shell: true as const } : { index: props.launcher.index }));
 
-// Running counts as "working"; once the process exits it's idle (never "waiting").
-watch(finished, (done) => emit("status", done ? "idle" : "working"), { immediate: true });
+// A launcher pane has its own two states in the shared vocabulary and neither is an agent
+// state: while the program runs it is a "shell" (a terminal the operator drives — it never
+// asks for anyone, so the auto sort keeps it out of the way), and once the program exits the
+// PTY is gone, which is the same thing to the operator as a dropped socket: "disconnected",
+// with the relaunch button next to it. It is never "working" — that word now means an agent
+// is mid-turn — and never "waiting".
+watch(finished, (done) => emit("status", done ? "disconnected" : "shell"), { immediate: true });
 
 function onSession(id: string) {
   emit("session", id);

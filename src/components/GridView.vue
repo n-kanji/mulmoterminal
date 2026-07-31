@@ -109,7 +109,10 @@ const onStatus = (uid: number, s: CellStatus) => (statusByUid[uid] = s);
 const focusedCellUid = ref<number | null>(null);
 const sessionStatus = computed(() => {
   const m = new Map<string, CellStatus>();
-  for (const [id, a] of gridActivity) m.set(id, activityStatus(a.working, a.waiting, a.event));
+  // `connected`/`shell` are left at their defaults here: this map is what the SERVER knows
+  // about a session, and a cell that is disconnected or running a shell reports that itself
+  // (resolveCellStatus lets those two win over this).
+  for (const [id, a] of gridActivity) m.set(id, activityStatus(a.working, a.waiting, a.event, a.waitKind));
   return m;
 });
 const statusForSort = computed<Record<number, CellStatus>>(() => resolveCellStatus(state.value.cells, sessionStatus.value, statusByUid));
@@ -352,12 +355,15 @@ function onReorderPreset(fromPath: string, toPath: string) {
   void savePresets(list);
 }
 
-// Fork-local (iTerm2 mode): blocked ("needs you") count per directory across ALL pages,
-// feeding the toolbar chip badges — an approval prompt on page 2 must still be findable.
+// Fork-local (iTerm2 mode): "needs you" count per directory across ALL pages, feeding the
+// toolbar chip badges — an approval prompt on page 2 must still be findable. Both blocked
+// states count: the badge answers "is anything in this project stuck on me", and an approval
+// and a question are equally stuck.
+const BLOCKED_STATES: ReadonlySet<CellStatus> = new Set<CellStatus>(["approval", "question"]);
 const presetAlerts = computed<Record<string, number>>(() => {
   const counts: Record<string, number> = {};
   for (const c of state.value.cells) {
-    if (!c.cwd || statusForSort.value[c.uid] !== "blocked") continue;
+    if (!c.cwd || !BLOCKED_STATES.has(statusForSort.value[c.uid])) continue;
     counts[c.cwd] = (counts[c.cwd] ?? 0) + 1;
   }
   return counts;

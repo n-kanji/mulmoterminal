@@ -18,8 +18,11 @@ import {
   devTerminalSessionsHydrated,
   lastPrompts,
   lastResponses,
+  ptys,
   translationWorkerIds,
 } from "../session/registry.js";
+import { missionOf, missionsHydrated, normalizeMission, setMission } from "../session/mission-store.js";
+import { resolveAliasedSessionId } from "../session/session-alias.js";
 import {
   collectOnDiskSessionStats,
   collectPendingSessions,
@@ -46,6 +49,9 @@ const ACTIVITY_IDS_LIMIT = 200;
 export interface SessionRouteDeps {
   /** Kick off a re-title for a session the roster just showed, when it has moved on enough. */
   freshenRosterTitle: (sessionId: string, cwd: string, currentUserTurns: number) => void;
+  /** Fan a session's row out to subscribers, so a mission written by curl reaches every open
+   *  grid without the client polling for it. */
+  publishActivity: (id: string) => void;
 }
 
 // GRID-ONLY (dev_tool): initial per-session status + last prompt, so a grid cell
@@ -58,11 +64,12 @@ async function sessionDetail(req: Request<{ id: string }>, res: Response, freshe
   if (!SESSION_ID_RE.test(id)) return res.status(400).json({ error: "invalid session id" });
   const cwd = resolveWorkspace(typeof req.query.cwd === "string" ? req.query.cwd : null);
   await activityStateHydrated; // a reconnect re-fetch must see the restored working/waiting, not idle
+  await missionsHydrated; // ditto for the mission: a cell seeding at boot must not read "none"
   const { lastPrompt: transcriptPrompt, lastResponse: transcriptResponse, userTurns, usage, context, workPhase } = await readSessionSummary(cwd, id);
   // If we haven't titled it yet, kick off a summary; sessionDetailView falls back meanwhile.
   freshenRosterTitle(id, cwd, userTurns);
   const view = sessionDetailView(
-    { lastPrompt: lastPrompts.get(id), lastResponse: lastResponses.get(id), aiTitle: aiTitles.get(id) },
+    { lastPrompt: lastPrompts.get(id), lastResponse: lastResponses.get(id), aiTitle: aiTitles.get(id), mission: missionOf(id) },
     { lastPrompt: transcriptPrompt, lastResponse: transcriptResponse },
     activity.get(id) ?? {},
   );
@@ -75,13 +82,48 @@ async function sessionDetail(req: Request<{ id: string }>, res: Response, freshe
 // only the in-memory activity map (no disk), so it's cheap to call per grid render.
 async function activitySnapshot(req: Request, res: Response) {
   await activityStateHydrated; // the grid re-seeds this on reconnect — must not race hydration back to idle
+  await missionsHydrated;
   const ids = parseActivityIds(req.query.ids, (id) => SESSION_ID_RE.test(id), ACTIVITY_IDS_LIMIT);
-  const out: Record<string, { working: boolean; waiting: boolean; event: string | null }> = {};
-  for (const id of ids) {
-    const a = activity.get(id) || {};
-    out[id] = { working: a.working ?? false, waiting: a.waiting ?? false, event: a.event ?? null };
-  }
+  // Same fields as the "sessions" push, because the grid feeds both into one status map: an
+  // off-page cell seeded here and then updated by the channel must not change shape halfway.
+  const out: Record<string, ReturnType<typeof activityRow>> = {};
+  for (const id of ids) out[id] = activityRow(id);
   res.json(out);
+}
+
+function activityRow(id: string) {
+  const a = activity.get(id) || {};
+  return {
+    working: a.working ?? false,
+    waiting: a.waiting ?? false,
+    event: a.event ?? null,
+    waitKind: a.waitKind ?? null,
+    lastActivityAt: a.at ?? null,
+    mission: missionOf(id),
+  };
+}
+
+// Set (or clear) a pane's mission: why this column exists. A PUT rather than a hook, so the
+// agent running in the pane can write its own with one curl — see mission-store.ts for the
+// exact command and for why this is not the AI summary. An empty/blank value clears it.
+//
+// The same-origin gate already covers this (it is a PUT), and a local curl sends no Origin,
+// which is exactly the non-browser caller that gate allows.
+async function putMission(req: Request<{ id: string }>, res: Response, publishActivity: SessionRouteDeps["publishActivity"]) {
+  // The caller is usually the agent INSIDE the pane, which knows only its own session id —
+  // and after a /clear that is no longer the id the grid cell is keyed by. Translate, or the
+  // write lands on a key nothing reads and looks like nothing happened (session-alias.ts).
+  const id = resolveAliasedSessionId(req.params.id);
+  if (!SESSION_ID_RE.test(id)) return res.status(400).json({ error: "invalid session id" });
+  const body: unknown = req.body;
+  const raw = body && typeof body === "object" ? (body as Record<string, unknown>).mission : undefined;
+  // Reject a wrong TYPE rather than silently clearing: a caller sending {mission: 123} has a
+  // bug, and answering 200 to it would hide the bug behind an erased mission.
+  if (raw !== undefined && raw !== null && typeof raw !== "string") return res.status(400).json({ error: "mission must be a string" });
+  await missionsHydrated; // or a write at boot is undone when hydration lands after it
+  const mission = setMission(id, normalizeMission(raw), (sessionId) => ptys.has(sessionId));
+  publishActivity(id); // every open grid re-renders the strip without polling
+  res.json({ id, mission });
 }
 
 // The tool-activity timeline for a session (what the agent ran, newest last), so a
@@ -183,6 +225,7 @@ async function codexSessionList(req: Request, res: Response) {
 
 export function mountSessionRoutes(app: Express, deps: SessionRouteDeps): void {
   app.get("/api/session/:id", (req, res) => sessionDetail(req, res, deps.freshenRosterTitle));
+  app.put("/api/session/:id/mission", (req, res) => putMission(req, res, deps.publishActivity));
   app.get("/api/activity", activitySnapshot);
   app.get("/api/transcript/timeline", toolTimeline);
   app.get("/api/transcript/last-turn", lastTurn);
