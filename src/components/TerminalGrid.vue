@@ -9,7 +9,7 @@ import * as conn from "../composables/useTerminalConnections";
 import { trackStyle, layoutForCount } from "./gridLayout";
 import { cockpitLines } from "../composables/cockpitLines";
 import { flipKeyframes, flipPairs, onScreen, FLIP_MS, FLIP_EASING } from "./cellFlip";
-import { canMoveCell, CELL_DRAG_MIME, type Cell, type CellStatus } from "./gridTabs";
+import { CELL_DRAG_MIME, type Cell, type CellStatus } from "./gridTabs";
 import type { RunCommand } from "./runCommand";
 import type { PrPhase, WorkPhase } from "./rosterPhase";
 import type { CwdPreset } from "./presets";
@@ -37,6 +37,11 @@ export interface CockpitRow {
   workPhase: WorkPhase | null; // planning vs editing while working; null when unknown / not working
   headerColor: string | null; // the directory's configured header background, tinting the row
   headerTextColor: string | null; // and its text colour, so the row stays legible on that tint
+  // Whether the roster's up/down items act. Decided by GridView against the FULL cell list —
+  // the same one `move` mutates — because `cells` here has the pinned pages' reserved slots
+  // filtered out, and a check against it would enable a button that then does nothing.
+  canUp: boolean;
+  canDown: boolean;
 }
 const props = defineProps<{
   cells: Cell[];
@@ -265,12 +270,7 @@ watch(
           :work-phase="row.workPhase"
           :phase="row.phase"
         >
-          <CockpitRowMenu
-            v-if="reorderable"
-            :can-up="canMoveCell(cells, row.uid, -1)"
-            :can-down="canMoveCell(cells, row.uid, 1)"
-            @move="(dir) => emit('move', row.uid, dir)"
-          />
+          <CockpitRowMenu v-if="reorderable" :can-up="row.canUp" :can-down="row.canDown" @move="(dir) => emit('move', row.uid, dir)" />
         </CockpitHeader>
         <!-- The clamp is a runtime value, so the utility reads a CSS variable each line sets for
              itself — `line-clamp-N` only exists for the literals Tailwind found in the source.

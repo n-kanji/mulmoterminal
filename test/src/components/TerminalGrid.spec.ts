@@ -67,6 +67,10 @@ const rosterRow = (uid: number, over: Partial<CockpitRow> = {}): CockpitRow => (
   workPhase: null,
   headerColor: null,
   headerTextColor: null,
+  // GridView decides these against the full cell list (pinned pages' reserved slots are
+  // filtered out of `cells`), so the roster just renders what it is told.
+  canUp: true,
+  canDown: true,
   ...over,
 });
 const mountCockpit = (cells: Cell[], expandedUid: number, listRows: CockpitRow[], reorderable = false, listMode = true) =>

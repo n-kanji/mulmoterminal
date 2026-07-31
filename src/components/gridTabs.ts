@@ -30,6 +30,10 @@ export interface Cell {
   launcher?: CellLauncher | null;
   // The agent this cell runs. "codex" reconnects via /ws/codex; absent = Claude (the default).
   agent?: "codex";
+  // Fork-local (iTerm2 mode, R1): a RESERVED SLOT, not a terminal. Holes exist only to hold a
+  // pinned page's width open — see the "workspaces" section below. They are never rendered,
+  // never occupied, and never somewhere to send anyone.
+  hole?: true;
 }
 // How the grid orders its cells. "manual": the user's hand-arranged order (the move buttons);
 // "auto": attention-first, recomputed from each cell's live status.
@@ -49,51 +53,219 @@ export function activityStatus(working: boolean, waiting: boolean, event: string
   return "idle";
 }
 
+// Fork-local (iTerm2 mode, R1): what a page is besides a number. `label` names it ("orosy");
+// `pinned` seals it so cells neither flow in nor out. Absent = a plain, elastic page, which is
+// what every page was before this existed — so a state with no `pages` behaves exactly as it did.
+export interface PageMeta {
+  label?: string;
+  pinned?: boolean;
+}
+
 export interface GridState {
   cells: Cell[];
   expanded: number | null; // uid of the zoomed cell, or null
   page: number;
   nextUid: number;
   sortMode: SortMode;
+  // Index-aligned with the page number. Sparse and optional: `pages` may be shorter than the
+  // grid has pages, and any missing entry means "plain, elastic".
+  pages?: PageMeta[];
 }
 
 // Fork-local (iTerm2 mode): a page holds MAX_CELLS full-height columns (see
 // gridLayout.ts) — 8, not the stacked grid's 9.
 export const PAGE_SIZE = MAX_CELLS;
 export const MAX_TERMINALS = 64; // 8 pages
+// The array can hold more entries than terminals: a pinned page keeps its width with reserved
+// slots (see the workspaces section), so a fully reserved grid is MAX_TERMINALS slots on top of
+// the terminals. Only used to bound what a persisted blob may claim.
+const MAX_SLOTS = MAX_TERMINALS * 2;
 export const STATE_KEY = "grid_v2";
 export const LEGACY_KEY = "grid_state_v1";
+// A page name is a tab label on a 30px row — long enough for "workspace-1", short enough that
+// eight of them still fit without the row wrapping.
+export const MAX_PAGE_LABEL = 20;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Fork-local (iTerm2 mode, R1): a second browser window runs a SECOND workspace by opening
+// `?ws=<name>`. Same server and the same live sessions — only the saved grid is separate, so
+// two windows are two workspaces instead of two views fighting over one localStorage key.
+// No `ws` keeps the original key, so an existing window is untouched.
+const WS_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+export function workspaceFromSearch(search: string): string | null {
+  const raw = new URLSearchParams(search).get("ws");
+  return raw && WS_NAME_RE.test(raw) ? raw : null;
+}
+export const stateKeyFor = (workspace: string | null): string => (workspace ? `${STATE_KEY}:${workspace}` : STATE_KEY);
 
 export const pageCount = (cellCount: number) => Math.max(1, Math.ceil(cellCount / PAGE_SIZE));
 export const pageSlice = <T>(cells: T[], page: number) => cells.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 // A cell occupies a slot when it runs a Claude session, a command, OR a launcher; only
 // those count toward the cap. A launch cell is empty: no session, command, or launcher.
-const isOccupied = (c: Cell) => c.session !== null || c.command != null || c.launcher != null;
-const isLaunchCell = (c: Cell | undefined) => !!c && c.session === null && c.command == null && c.launcher == null;
+const isOccupied = (c: Cell) => !isHole(c) && (c.session !== null || c.command != null || c.launcher != null);
+const isLaunchCell = (c: Cell | undefined) => !!c && !isHole(c) && c.session === null && c.command == null && c.launcher == null;
 export const runningCount = (cells: Cell[]) => cells.filter(isOccupied).length;
+
+// =========================================================================================
+// WORKSPACES (R1). A page can be NAMED and PINNED, so "workspace-1" and "workspace-2" are
+// two pages rather than two apps. Pinned means the page is SEALED: closing a column on it
+// must not suck a terminal in from the next page, and its own columns must not drain into
+// an earlier one. Everything else about a page is unchanged.
+//
+// The whole grid is still ONE flat array sliced at PAGE_SIZE, and that is deliberate: every
+// page number in this file is `Math.floor(index / PAGE_SIZE)`, including the three the zoom
+// invariants below depend on. Variable-length pages would make each of those a different
+// question, so instead a sealed page keeps its width by holding RESERVED SLOTS (`hole`
+// cells) where its closed terminals were. The renderer drops holes, so the surviving columns
+// still widen to fill the page; only the page BOUNDARY is held still.
+//
+// Reserving is transitive backwards: page p's boundary is only fixed if everything before it
+// is too, so every page up to the last pinned one is padded to PAGE_SIZE. Pages after it are
+// untouched and reflow across each other exactly as they always have — and with nothing
+// pinned there are no holes at all, which is the pre-workspace grid, unchanged.
+// =========================================================================================
+
+export const isHole = (c: Cell): boolean => c.hole === true;
+const holeCell = (uid: number): Cell => ({ uid, session: null, cwd: null, hole: true });
+export const realCells = (cells: readonly Cell[]): Cell[] => cells.filter((c) => !isHole(c));
+
+export const isPagePinned = (state: GridState, page: number): boolean => state.pages?.[page]?.pinned === true;
+// What the tab shows: the page's name, or its number when it has none.
+export const pageLabel = (state: GridState, page: number): string => state.pages?.[page]?.label?.trim() || String(page + 1);
+// The highest pinned page, or -1. Every page at or before it holds its slots.
+const lastPinnedPage = (state: GridState): number => (state.pages ?? []).reduce((last, meta, p) => (meta?.pinned ? p : last), -1);
+const isReservedPage = (state: GridState, page: number): boolean => page <= lastPinnedPage(state);
+const pageOfIndex = (at: number): number => Math.floor(at / PAGE_SIZE);
+
+const withPageMeta = (state: GridState, page: number, patch: PageMeta): GridState => {
+  const pages = [...(state.pages ?? [])];
+  while (pages.length <= page) pages.push({});
+  pages[page] = { ...pages[page], ...patch };
+  return { ...state, pages };
+};
+
+// Rename a page. An empty (or blank) name clears it, so the tab goes back to its number
+// rather than showing nothing.
+export function setPageLabel(state: GridState, page: number, label: string): GridState {
+  const trimmed = label.trim().slice(0, MAX_PAGE_LABEL);
+  return withPageMeta(state, page, { label: trimmed || undefined });
+}
+
+// Seal or unseal a page. Pinning pads every page up to it; unpinning drops the padding it no
+// longer needs and lets those pages pack forward again, which is the pre-workspace behaviour.
+export function togglePagePin(state: GridState, page: number): GridState {
+  // Clamped because un-pinning is the one action that can REMOVE pages: dropping the padding
+  // packs the list forward, and an un-pin done from a later tab would otherwise leave `page`
+  // past the end — a blank grid with no tab row left to click back from.
+  return clampPage(reserveSlots(withPageMeta(state, page, { pinned: !isPagePinned(state, page) })));
+}
+
+// Restore the invariant "every page up to the last pinned one owns exactly PAGE_SIZE slots,
+// terminals first and holes last". Idempotent, and a no-op shape-wise when nothing is pinned
+// (it just drops any stale holes, packing the list forward as it always did).
+export function reserveSlots(state: GridState): GridState {
+  const last = lastPinnedPage(state);
+  const out: Cell[] = [];
+  let nextUid = state.nextUid;
+  // Re-use the uids of the slots already there before minting new ones — this runs on every
+  // parse and every pin, and a fresh uid each time would ratchet nextUid up for no reason.
+  const spare = state.cells.filter(isHole).map((c) => c.uid);
+  const slot = (): Cell => holeCell(spare.length > 0 ? (spare.shift() as number) : nextUid++);
+  for (let p = 0; p <= last; p++) {
+    out.push(...realCells(pageSlice(state.cells, p)));
+    while (out.length < (p + 1) * PAGE_SIZE) out.push(slot());
+  }
+  // Everything past the reserved pages is one elastic run again: concatenated, it re-pages
+  // itself when sliced, which is how closing a cell has always pulled the next one forward.
+  out.push(...realCells(state.cells.slice((last + 1) * PAGE_SIZE)));
+  return { ...state, cells: out, nextUid };
+}
+
+// Drop the cell at `at`. On a reserved page the slot stays with the page — a hole takes its
+// place at the page's end — so the pages after it do not slide back over the boundary.
+// Anywhere else the list packs forward, unchanged.
+//
+// The replacement hole takes a FRESH uid rather than the closed cell's: `expanded` still
+// points at that uid for one more step, and re-using it would leave the grid "zoomed" on a
+// reserved slot.
+function removeAt(state: GridState, at: number): { cells: Cell[]; nextUid: number } {
+  const cells = state.cells.slice();
+  cells.splice(at, 1);
+  if (!isReservedPage(state, pageOfIndex(at))) return { cells, nextUid: state.nextUid };
+  cells.splice(pageOfIndex(at) * PAGE_SIZE + PAGE_SIZE - 1, 0, holeCell(state.nextUid));
+  return { cells, nextUid: state.nextUid + 1 };
+}
+
+// Put `cell` at `at`. On a reserved page it consumes that page's trailing hole instead of
+// pushing the page's last terminal onto the next one; null means the page has no room left
+// and the caller should fall back to appending.
+function insertAt(state: GridState, at: number, cell: Cell): Cell[] | null {
+  const cells = state.cells.slice();
+  cells.splice(at, 0, cell);
+  const page = pageOfIndex(at);
+  if (!isReservedPage(state, page)) return cells;
+  const pushedOut = page * PAGE_SIZE + PAGE_SIZE; // the slot the insert shoved off this page
+  if (!isHole(cells[pushedOut])) return null;
+  cells.splice(pushedOut, 1);
+  return cells;
+}
+
+// Where a new column goes on `page`: its first reserved hole, or the end of the page when it
+// still has room. -1 when the page is full. With nothing pinned this is the end of the LAST
+// page and nowhere else, which is where "+ Terminal" has always appended.
+function freeSlot(state: GridState, page: number): number {
+  const start = page * PAGE_SIZE;
+  const slots = pageSlice(state.cells, page);
+  const hole = slots.findIndex(isHole);
+  if (hole >= 0) return start + hole;
+  return slots.length < PAGE_SIZE ? start + slots.length : -1;
+}
+
+// The trailing OPEN launch cell (the one "+ Terminal" cancels), ignoring reserved holes, or
+// -1 when the last real cell is a running terminal.
+function trailingLaunchIndex(state: GridState): number {
+  for (let i = state.cells.length - 1; i >= 0; i--) {
+    if (isHole(state.cells[i])) continue;
+    return isLaunchCell(state.cells[i]) ? i : -1;
+  }
+  return -1;
+}
 
 const clampPage = (s: GridState): GridState => ({ ...s, page: Math.min(Math.max(0, Math.floor(s.page)), pageCount(s.cells.length) - 1) });
 
-// Always keep at least one cell — the entry launch cell on an otherwise empty grid.
-const ensureEntry = (s: GridState): GridState =>
-  s.cells.length > 0 ? s : { ...s, cells: [{ uid: s.nextUid, session: null, cwd: null }], nextUid: s.nextUid + 1 };
+// Always keep at least one cell — the entry launch cell on an otherwise empty grid. On a
+// grid that is nothing but reserved slots, the first of them becomes that entry cell rather
+// than a ninth column being appended past the pinned pages.
+const ensureEntry = (s: GridState): GridState => {
+  if (s.cells.some((c) => !isHole(c))) return s;
+  const at = s.cells.findIndex(isHole);
+  if (at < 0) return { ...s, cells: [{ uid: s.nextUid, session: null, cwd: null }], nextUid: s.nextUid + 1 };
+  const cells = s.cells.slice();
+  cells[at] = { uid: cells[at].uid, session: null, cwd: null };
+  return { ...s, cells };
+};
 
 // "+ Terminal": append a launch cell (overflowing into a new page when full), or
 // cancel an already-open launch cell. The sole entry cell is never removed.
 export function addCell(state: GridState): GridState {
-  const last = state.cells[state.cells.length - 1];
-  if (isLaunchCell(last)) {
-    if (state.cells.length <= 1) return state; // the entry cell — nothing to add or cancel
-    return clampPage({ ...state, cells: state.cells.slice(0, -1) }); // cancel the open launch cell
+  const open = trailingLaunchIndex(state);
+  if (open >= 0) {
+    if (realCells(state.cells).length <= 1) return state; // the entry cell — nothing to add or cancel
+    return clampPage({ ...state, ...removeAt(state, open) }); // cancel the open launch cell
   }
   if (runningCount(state.cells) >= MAX_TERMINALS) return state;
   const uid = state.nextUid;
-  const cells = [...state.cells, { uid, session: null, cwd: null }];
   // Fork-local (iTerm2 mode): adding a cell UN-zooms instead of promoting the new
   // cell into the enlarged view. The operator's model is "columns grow sideways";
   // promoting kept them trapped fullscreen and hid where the new pane landed.
   const expanded = zoomedUid(state) !== null ? null : state.expanded;
+  // R1: the new column joins the page being LOOKED AT, not the end of the whole grid — a
+  // pinned page must be able to refill itself without the view jumping to the last tab.
+  // Un-pinned, the only page with room is the last one, so this is the old append.
+  const slot = freeSlot(state, state.page);
+  const filled = slot >= 0 ? insertAt(state, slot, { uid, session: null, cwd: null }) : null;
+  if (filled) return { ...state, cells: filled, nextUid: state.nextUid + 1, page: pageOfIndex(slot), expanded };
+  const cells = [...state.cells, { uid, session: null, cwd: null }];
   return { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded };
 }
 
@@ -109,6 +281,11 @@ export function moveCellTo(state: GridState, uid: number, targetUid: number): Gr
   const from = state.cells.findIndex((c) => c.uid === uid);
   const to = state.cells.findIndex((c) => c.uid === targetUid);
   if (from < 0 || to < 0 || from === to) return state;
+  if (isHole(state.cells[from]) || isHole(state.cells[to])) return state; // reserved slots are not drop targets
+  // R1: a drag only ever happens within the page on screen. Refuse a cross-page splice while
+  // any page is sealed — it would move a column into another workspace and change both pages'
+  // slot counts, which is exactly what pinning promises will not happen.
+  if (pageOfIndex(from) !== pageOfIndex(to) && lastPinnedPage(state) >= 0) return state;
   const cells = [...state.cells];
   const [moved] = cells.splice(from, 1);
   cells.splice(to, 0, moved);
@@ -121,16 +298,20 @@ export function moveCellTo(state: GridState, uid: number, targetUid: number): Gr
 // already-open trailing launch cell rather than stacking a second one. Returns the cell's
 // uid so the caller can target the auto-launch; -1 means "full, nothing added".
 export function addCellWithCwd(state: GridState, cwd: string): { state: GridState; uid: number } {
-  const last = state.cells[state.cells.length - 1];
-  if (isLaunchCell(last)) {
-    const cells = state.cells.map((c) => (c.uid === last.uid ? { ...c, cwd } : c));
-    const expanded = zoomedUid(state) !== null ? null : state.expanded;
-    return { state: { ...state, cells, expanded, page: pageCount(cells.length) - 1 }, uid: last.uid };
+  const expanded = zoomedUid(state) !== null ? null : state.expanded;
+  const open = trailingLaunchIndex(state);
+  if (open >= 0) {
+    const reuse = state.cells[open];
+    const cells = state.cells.map((c) => (c.uid === reuse.uid ? { ...c, cwd } : c));
+    return { state: { ...state, cells, expanded, page: pageOfIndex(open) }, uid: reuse.uid };
   }
   if (runningCount(state.cells) >= MAX_TERMINALS) return { state, uid: -1 };
   const uid = state.nextUid;
+  // Same rule as addCell: the chip opens its column on the page in front of the operator.
+  const slot = freeSlot(state, state.page);
+  const filled = slot >= 0 ? insertAt(state, slot, { uid, session: null, cwd }) : null;
+  if (filled) return { state: { ...state, cells: filled, nextUid: state.nextUid + 1, page: pageOfIndex(slot), expanded }, uid };
   const cells = [...state.cells, { uid, session: null, cwd }];
-  const expanded = zoomedUid(state) !== null ? null : state.expanded;
   return { state: { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded }, uid };
 }
 
@@ -138,8 +319,8 @@ export function addCellWithCwd(state: GridState, cwd: string): { state: GridStat
 // cancels, or null when there's nothing to cancel. The sole entry cell is never
 // cancelable, so it's excluded.
 export function cancelableLaunchUid(state: GridState): number | null {
-  const last = state.cells[state.cells.length - 1];
-  return state.cells.length > 1 && isLaunchCell(last) ? last.uid : null;
+  const open = trailingLaunchIndex(state);
+  return open >= 0 && realCells(state.cells).length > 1 ? state.cells[open].uid : null;
 }
 
 export function setSession(state: GridState, uid: number, id: string | null): GridState {
@@ -180,10 +361,15 @@ export function insertCellAfter(state: GridState, afterUid: number, cell: Omit<C
   const idx = state.cells.findIndex((c) => c.uid === afterUid);
   const at = idx >= 0 ? idx + 1 : state.cells.length;
   const uid = state.nextUid;
-  const cells = [...state.cells.slice(0, at), { ...cell, uid }, ...state.cells.slice(at)];
   // Fork-local (iTerm2 mode): same un-zoom-on-add rule as addCell above.
   const expanded = zoomedUid(state) !== null ? null : state.expanded;
-  return { ...state, cells, nextUid: state.nextUid + 1, page: Math.floor(at / PAGE_SIZE), expanded };
+  // R1: on a sealed page the neighbour lands in that page's reserved slot. A sealed page with
+  // no slot left has nowhere to put it, so it falls back to the end of the grid rather than
+  // shunting the page's last column onto the next workspace.
+  const placed = insertAt(state, at, { ...cell, uid });
+  if (placed) return { ...state, cells: placed, nextUid: state.nextUid + 1, page: pageOfIndex(at), expanded };
+  const cells = [...state.cells, { ...cell, uid }];
+  return { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded };
 }
 
 // The Run button opened a script in a spare cell next to the cell that triggered it.
@@ -198,9 +384,12 @@ export function runScriptInNewCell(state: GridState, afterUid: number, command: 
 // filmstrip instead of collapsing to the grid. Falls back to un-zooming when there's
 // no surviving neighbour (the last cell) or no `order` is supplied.
 export function closeCell(state: GridState, uid: number, order?: number[]): GridState {
-  const cells = state.cells.filter((c) => c.uid !== uid);
+  const at = state.cells.findIndex((c) => c.uid === uid);
+  // R1: on a pinned page the slot stays with the page (removeAt leaves a hole), so the reflow
+  // stops at the workspace boundary instead of dragging the next one's terminals back.
+  const { cells, nextUid } = at < 0 ? { cells: state.cells, nextUid: state.nextUid } : removeAt(state, at);
   const expanded = state.expanded === uid ? expandNeighbour(order, uid, cells) : state.expanded;
-  return ensureEntry(clampPage({ ...state, cells, expanded }));
+  return ensureEntry(clampPage({ ...state, cells, nextUid, expanded }));
 }
 
 // The uid to keep zoomed after closing the zoomed `uid`: the cell before it in the
@@ -226,10 +415,12 @@ export function moveZoom(state: GridState, order: readonly number[], dir: -1 | 1
   if (uid === null) return state;
   const from = order.indexOf(uid);
   if (from < 0) return state; // not on screen — without this, -1 + 1 would jump to the front
-  const at = from + dir;
-  const next = at >= 0 ? order[at] : undefined;
-  if (next === undefined || !state.cells.some((c) => c.uid === next)) return state;
-  return { ...state, expanded: next };
+  // Step OVER reserved slots: the filmstrip does not render them, so stopping on one would
+  // read as the key having died halfway along a pinned page.
+  for (let at = from + dir; at >= 0 && at < order.length; at += dir) {
+    if (state.cells.some((c) => c.uid === order[at] && !isHole(c))) return { ...state, expanded: order[at] };
+  }
+  return state;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -266,7 +457,9 @@ export function moveZoom(state: GridState, order: readonly number[], dir: -1 | 1
 function zoomAt(state: GridState, order: readonly number[], at: number): GridState {
   const uid = order[at];
   if (uid === undefined || runningCount(state.cells) < 2) return state;
-  if (!state.cells.some((c) => c.uid === uid)) return state;
+  // A reserved slot is not a terminal, so it is never what the key enlarges. (Holes sit at the
+  // END of their page, so the page-first entry index below still lands on a real column.)
+  if (!state.cells.some((c) => c.uid === uid && !isHole(c))) return state;
   return { ...state, expanded: uid };
 }
 
@@ -377,17 +570,25 @@ export function setSortMode(state: GridState, sortMode: SortMode): GridState {
 // Whether moveCell would actually reorder: not off either end, and never swapping a cell past
 // the trailing launch cell (it stays last so "+ Terminal"/cancel keep working on it). Drives the
 // enabled/disabled state of the roster's up/down menu items.
-export function canMoveCell(cells: Cell[], uid: number, dir: -1 | 1): boolean {
+// `sealed` (any page pinned) applies the same rule the drag does: a swap across a page boundary
+// would move a column into another workspace, which is what pinning promises will not happen.
+export function canMoveCell(cells: Cell[], uid: number, dir: -1 | 1, sealed = false): boolean {
   const i = cells.findIndex((c) => c.uid === uid);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= cells.length) return false;
+  // A reserved slot is not a neighbour to trade places with — swapping into one would move a
+  // terminal out of its page's used run and leave a hole in the middle of the columns.
+  if (isHole(cells[i]) || isHole(cells[j])) return false;
+  if (sealed && pageOfIndex(i) !== pageOfIndex(j)) return false;
   return !(isLaunchCell(cells[j]) && j === cells.length - 1);
 }
+// Whether this grid's reorders are confined to a page, for callers that only hold the cells.
+export const isSealed = (state: GridState): boolean => lastPinnedPage(state) >= 0;
 
 // Manual reorder: swap a cell with its neighbour (dir -1 = left/up, +1 = right/down) in the
 // flat list. A no-op wherever canMoveCell says the swap isn't allowed.
 export function moveCell(state: GridState, uid: number, dir: -1 | 1): GridState {
-  if (!canMoveCell(state.cells, uid, dir)) return state;
+  if (!canMoveCell(state.cells, uid, dir, isSealed(state))) return state;
   const i = state.cells.findIndex((c) => c.uid === uid);
   const cells = state.cells.slice();
   [cells[i], cells[i + dir]] = [cells[i + dir], cells[i]];
@@ -397,14 +598,18 @@ export function moveCell(state: GridState, uid: number, dir: -1 | 1): GridState 
 // The zoomed cell's uid, or null when nothing is zoomed (or `expanded` is stale —
 // points at a cell no longer in the list).
 export const zoomedUid = (state: GridState): number | null =>
-  state.expanded !== null && state.cells.some((c) => c.uid === state.expanded) ? state.expanded : null;
+  state.expanded !== null && state.cells.some((c) => c.uid === state.expanded && !isHole(c)) ? state.expanded : null;
 
 // Attention-first rank for the "auto" order: blocked (needs input now) first, then
 // done (finished, review it), then idle, then working, with empty launch cells last.
 // Lower sorts earlier.
 const RANK: Record<CellStatus, number> = { blocked: 0, done: 1, idle: 2, working: 3 };
 const LAUNCH_RANK = 4;
-const cellRank = (c: Cell, statusByUid: Record<number, CellStatus>): number => (isLaunchCell(c) ? LAUNCH_RANK : RANK[statusByUid[c.uid] ?? "idle"]);
+const HOLE_RANK = 5; // a reserved slot is not even a launcher — it sorts behind everything
+const cellRank = (c: Cell, statusByUid: Record<number, CellStatus>): number => {
+  if (isHole(c)) return HOLE_RANK;
+  return isLaunchCell(c) ? LAUNCH_RANK : RANK[statusByUid[c.uid] ?? "idle"];
+};
 
 // Display order. "manual": the hand-arranged list as-is. "auto": a STABLE sort by
 // attention rank — equal-rank cells keep their manual order, so a status change
@@ -427,8 +632,23 @@ export const visibleCells = (state: GridState): Cell[] => (zoomedUid(state) !== 
 // covers EVERY cell (incl. unmounted pages), or a status change on an off-screen page
 // would (mis)read as idle; GridView feeds it the server's full session status. While
 // zoomed the whole ordered list is shown (the filmstrip).
+// The whole grid in display order.
+//
+// R1: un-pinned this is one attention sort across EVERY page — a blocked cell on page 3 floats
+// onto page 1, which is the entire point of auto mode. A pinned page is a promise that its
+// columns stay where they were put, and that float would break it, so once any page is pinned
+// the sort runs INSIDE each page instead. Both are "attention first"; they differ only in how
+// far a cell is allowed to travel to get there.
+export function orderGrid(state: GridState, statusByUid: Record<number, CellStatus>): Cell[] {
+  if (state.sortMode !== "auto") return state.cells;
+  if (lastPinnedPage(state) < 0) return orderCells(state.cells, statusByUid, "auto");
+  const out: Cell[] = [];
+  for (let p = 0; p < pageCount(state.cells.length); p++) out.push(...orderCells(pageSlice(state.cells, p), statusByUid, "auto"));
+  return out;
+}
+
 export const visibleOrdered = (state: GridState, statusByUid: Record<number, CellStatus>): Cell[] => {
-  const ordered = orderCells(state.cells, statusByUid, state.sortMode);
+  const ordered = orderGrid(state, statusByUid);
   return zoomedUid(state) !== null ? ordered : pageSlice(ordered, state.page);
 };
 
@@ -439,7 +659,7 @@ export type StatusCounts = Record<CellStatus, number>;
 export function countByStatus(cells: Cell[], statusByUid: Record<number, CellStatus>): StatusCounts {
   const counts: StatusCounts = { blocked: 0, done: 0, working: 0, idle: 0 };
   for (const c of cells) {
-    if (isLaunchCell(c)) continue;
+    if (isLaunchCell(c) || isHole(c)) continue;
     counts[statusByUid[c.uid] ?? "idle"]++;
   }
   return counts;
@@ -450,9 +670,9 @@ export function countByStatus(cells: Cell[], statusByUid: Record<number, CellSta
 // doesn't discard the open launch cell or zoom.
 export function switchPage(state: GridState, page: number): GridState {
   if (page === state.page) return state;
-  const last = state.cells[state.cells.length - 1];
-  const cells = isLaunchCell(last) && state.cells.length > 1 ? state.cells.slice(0, -1) : state.cells;
-  return clampPage({ ...state, cells, expanded: null, page });
+  const open = trailingLaunchIndex(state);
+  const dropped = open >= 0 && realCells(state.cells).length > 1 ? removeAt(state, open) : { cells: state.cells, nextUid: state.nextUid };
+  return clampPage({ ...state, ...dropped, expanded: null, page });
 }
 
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID_RE.test(s);
@@ -471,6 +691,18 @@ const isCell = (c: unknown): c is Cell => {
   return !!o && (o.session === null || isUuid(o.session)) && (o.cwd === null || typeof o.cwd === "string");
 };
 
+// Persisted page metadata. Unknown or malformed entries collapse to a plain page rather than
+// failing the whole parse: a grid full of live sessions must never be lost over a tab name.
+const asPages = (v: unknown): PageMeta[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const pages = v.slice(0, MAX_TERMINALS / PAGE_SIZE).map((entry): PageMeta => {
+    if (!isRecord(entry)) return {};
+    const label = typeof entry.label === "string" ? entry.label.trim().slice(0, MAX_PAGE_LABEL) : "";
+    return { label: label || undefined, pinned: entry.pinned === true || undefined };
+  });
+  return pages.some((p) => p.label || p.pinned) ? pages : undefined;
+};
+
 export function parseGridState(raw: string | null): GridState | null {
   try {
     const parsed = JSON.parse(raw ?? "");
@@ -480,21 +712,40 @@ export function parseGridState(raw: string | null): GridState | null {
     // v-for keys, and a near-MAX_SAFE_INTEGER value would overflow the nextUid
     // counter. uid is internal identity only, so a clean 0..n-1 space (nextUid =
     // count) is always safe and in range.
+    // Reserved slots are kept alongside the running cells: they carry no session, but they ARE
+    // the pinned pages' shape, and dropping them would silently un-pin every workspace on the
+    // next reload.
+    //
+    // The two caps are separate on purpose. MAX_TERMINALS bounds TERMINALS — that is what it
+    // means everywhere else in this file, where it is checked through runningCount, which has
+    // never counted an empty slot. Applying it to the array would drop the tail, and the tail
+    // is real sessions: a grid padded out by pinned pages would lose its last columns on
+    // reload, silently. MAX_SLOTS is the separate bound on a hand-written blob's length;
+    // reserveSlots re-derives the padding from `pages` below, so surplus holes cost nothing.
+    let terminals = 0;
     const running = parsed.cells
       .filter(isCell)
-      .filter((c: Cell) => c.session !== null)
-      .slice(0, MAX_TERMINALS);
-    const cells: Cell[] = running.map((c: Cell, i: number) => ({
-      uid: i,
-      session: c.session,
-      cwd: c.cwd,
-      launcher: asLauncher(c.launcher),
-      agent: c.agent === "codex" ? "codex" : undefined,
-    }));
+      .filter((c: Cell) => c.session !== null || c.hole === true)
+      .filter((c: Cell) => c.hole === true || ++terminals <= MAX_TERMINALS)
+      .slice(0, MAX_SLOTS);
+    const cells: Cell[] = running.map((c: Cell, i: number) =>
+      c.hole === true
+        ? holeCell(i)
+        : {
+            uid: i,
+            session: c.session,
+            cwd: c.cwd,
+            launcher: asLauncher(c.launcher),
+            agent: c.agent === "codex" ? "codex" : undefined,
+          },
+    );
     const expandedIdx = running.findIndex((c: Cell) => c.uid === parsed.expanded);
     const expanded = typeof parsed.expanded === "number" && expandedIdx >= 0 ? expandedIdx : null;
     const page = Number.isSafeInteger(parsed.page) && parsed.page >= 0 ? parsed.page : 0;
-    return clampPage(ensureEntry({ cells, expanded, page, nextUid: cells.length, sortMode: asSortMode(parsed.sortMode) }));
+    const pages = asPages(parsed.pages);
+    // reserveSlots re-derives the padding from `pages`, so a hand-edited or half-written blob
+    // (holes without pins, pins without holes) still comes back as a consistent grid.
+    return clampPage(ensureEntry(reserveSlots({ cells, expanded, page, nextUid: cells.length, sortMode: asSortMode(parsed.sortMode), pages })));
   } catch {
     return null;
   }

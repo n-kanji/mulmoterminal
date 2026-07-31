@@ -38,7 +38,21 @@ import {
   type CellStatus,
   type GridState,
   type Cell,
+  type PageMeta,
   gridStatusSummary,
+  isHole,
+  realCells,
+  reserveSlots,
+  pageLabel,
+  isPagePinned,
+  setPageLabel,
+  togglePagePin,
+  orderGrid,
+  isSealed,
+  workspaceFromSearch,
+  stateKeyFor,
+  MAX_PAGE_LABEL,
+  STATE_KEY,
 } from "../../../src/components/gridTabs.js";
 
 const U = (n: number) => `${String(n % 10).repeat(8)}-aaaa-aaaa-aaaa-aaaaaaaaaaaa`;
@@ -994,5 +1008,265 @@ describe("zoom invariants (#829)", () => {
     const lonely = make([cell(0, U(0))], { expanded: 0 });
     expect(toggleZoom(lonely, [0], 0).expanded).toBeNull();
     expect(toggleExpand(lonely, 0, [0]).expanded).toBeNull();
+  });
+});
+
+// R1 (workspaces). The operator runs two named workspaces of columns, not eight anonymous
+// pages of one list, so a page can be NAMED and PINNED. Pinned means sealed: closing a column
+// must not pull a terminal in from the next page, and the page's own columns must not drain
+// into an earlier one. Everything below also pins the other half of the promise — with nothing
+// pinned, the grid is the flat, reflowing list it always was.
+describe("named pages", () => {
+  const withPages = (cells: Cell[], pages: PageMeta[], extra: Partial<GridState> = {}) => make(cells, { pages, ...extra });
+
+  it("shows the page number until the page is named", () => {
+    const s = make(running(12));
+    expect(pageLabel(s, 0)).toBe("1");
+    expect(pageLabel(s, 1)).toBe("2");
+    expect(pageLabel(setPageLabel(s, 1, "orosy"), 1)).toBe("orosy");
+  });
+
+  it("clears a name back to the number when it is blanked", () => {
+    const named = setPageLabel(make(running(12)), 0, "tools");
+    expect(pageLabel(setPageLabel(named, 0, "   "), 0)).toBe("1");
+  });
+
+  it("caps a name at MAX_PAGE_LABEL so eight tabs still fit one row", () => {
+    const s = setPageLabel(make(running(2)), 0, "x".repeat(MAX_PAGE_LABEL + 10));
+    expect(pageLabel(s, 0)).toHaveLength(MAX_PAGE_LABEL);
+  });
+
+  it("names a page that does not exist yet without disturbing the ones that do", () => {
+    const s = setPageLabel(withPages(running(2), [{ label: "a" }]), 3, "later");
+    expect(pageLabel(s, 0)).toBe("a");
+    expect(pageLabel(s, 3)).toBe("later");
+  });
+});
+
+describe("pinned pages (sealed workspaces)", () => {
+  const pin = (cells: Cell[], page: number, extra: Partial<GridState> = {}) => togglePagePin(make(cells, extra), page);
+  const uidsOnPage = (s: GridState, p: number) => realCells(pageSlice(s.cells, p)).map((c) => c.uid);
+
+  it("pinning holds the page's width open with reserved slots, adding no terminals", () => {
+    const s = pin(running(5), 0);
+    expect(isPagePinned(s, 0)).toBe(true);
+    expect(s.cells).toHaveLength(8); // one page's worth of slots
+    expect(realCells(s.cells).map((c) => c.uid)).toEqual([0, 1, 2, 3, 4]);
+    expect(s.cells.filter(isHole)).toHaveLength(3);
+    expect(runningCount(s.cells)).toBe(5); // a reserved slot is not a terminal
+  });
+
+  it("closing a column on a pinned page does NOT pull the next page's terminal in", () => {
+    const s = pin(running(12), 0); // page 0 pinned and already full, page 1 holds 8..11
+    const after = closeCell(s, 0);
+    expect(uidsOnPage(after, 0)).toEqual([1, 2, 3, 4, 5, 6, 7]); // uid 8 stayed put
+    expect(uidsOnPage(after, 1)).toEqual([8, 9, 10, 11]);
+    expect(pageSlice(after.cells, 0)).toHaveLength(8); // the slot stayed with the page
+  });
+
+  it("closes the middle of a pinned page without leaving a gap between the columns", () => {
+    const after = closeCell(pin(running(12), 0), 3);
+    expect(uidsOnPage(after, 0)).toEqual([0, 1, 2, 4, 5, 6, 7]);
+    expect(pageSlice(after.cells, 0).map(isHole)).toEqual([false, false, false, false, false, false, false, true]);
+  });
+
+  it("keeps a pinned page's terminals off an EARLIER page when that one loses a column", () => {
+    // Page 0 is the elastic one, page 1 is the workspace being protected.
+    const s = pin(running(12), 1);
+    const after = closeCell(s, 0);
+    expect(uidsOnPage(after, 1)).toEqual([8, 9, 10, 11]); // nothing drained backwards
+    expect(uidsOnPage(after, 0)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("still reflows across pages that are NOT pinned (the pre-workspace behaviour)", () => {
+    const after = closeCell(make(running(12)), 0);
+    expect(uidsOnPage(after, 0)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]); // uid 8 flowed back
+    expect(after.cells.some(isHole)).toBe(false); // and no slot was reserved
+  });
+
+  it("un-pinning drops the reserved slots and lets the list pack forward again", () => {
+    const closed = closeCell(pin(running(12), 0), 0);
+    const loose = togglePagePin(closed, 0);
+    expect(loose.cells.some(isHole)).toBe(false);
+    expect(uidsOnPage(loose, 0)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  // Un-pinning is the only action that REMOVES pages, so it is the only one that can strand the
+  // active tab past the end — and a stranded page shows an empty grid with no tab row left to
+  // click back from, which persists.
+  it("un-pinning from a later tab does not strand the view on a page that no longer exists", () => {
+    let s = pin(running(9), 0); // page 0 pinned + full, one terminal on page 1
+    for (const uid of [0, 1, 2, 3, 4, 5, 6]) s = closeCell(s, uid);
+    s = switchPage(s, 1);
+    expect(s.page).toBe(1);
+    const loose = togglePagePin(s, 0);
+    expect(loose.page).toBeLessThan(pageCount(loose.cells.length));
+  });
+
+  it("adds a new column to the page being LOOKED AT, not the end of the grid", () => {
+    const s = closeCell(pin(running(12), 0), 0); // page 0: 7 columns + 1 reserved slot
+    const after = addCell({ ...s, page: 0 });
+    expect(after.page).toBe(0);
+    expect(uidsOnPage(after, 0)).toHaveLength(8); // the slot was refilled
+    expect(uidsOnPage(after, 1)).toEqual([8, 9, 10, 11]); // page 1 untouched
+  });
+
+  it("falls back to a new page when the active pinned page is full", () => {
+    const s = { ...pin(running(12), 0), page: 0 };
+    const after = addCell(s);
+    expect(uidsOnPage(after, 0)).toHaveLength(8);
+    expect(after.cells).toHaveLength(13);
+    expect(after.page).toBe(1);
+  });
+
+  it("puts an adjacent terminal in its own page's slot instead of shoving a column onto the next", () => {
+    const s = closeCell(pin(running(12), 0), 7); // page 0 has a slot free at the end
+    const after = insertCellAfter(s, 0, { session: null, cwd: "/x" });
+    expect(uidsOnPage(after, 0)).toHaveLength(8);
+    expect(after.cells[1].cwd).toBe("/x"); // the new column sits next to uid 0
+    expect(uidsOnPage(after, 1)).toEqual([8, 9, 10, 11]); // and page 1 is untouched
+  });
+
+  it("keeps an entry cell by reusing a reserved slot rather than growing past the workspaces", () => {
+    const emptied = closeCell(pin([cell(0, U(0))], 0), 0);
+    expect(emptied.cells).toHaveLength(8);
+    expect(realCells(emptied.cells)).toHaveLength(1);
+    expect(realCells(emptied.cells)[0].session).toBeNull();
+  });
+
+  it("never counts, zooms, orders or navigates to a reserved slot", () => {
+    const s = closeCell(pin(running(12), 0), 7);
+    const holeUid = s.cells.filter(isHole)[0].uid;
+    const order = s.cells.map((c) => c.uid);
+    expect(countByStatus(s.cells, {})).toEqual({ blocked: 0, done: 0, working: 0, idle: 11 });
+    expect(nextAttentionUid(s, order, {}, 6)).toBe(8); // steps over the slot at index 7
+    expect(zoomedUid({ ...s, expanded: holeUid })).toBeNull();
+    expect(moveZoom({ ...s, expanded: 6 }, order, 1).expanded).toBe(8);
+    expect(cancelableLaunchUid(s)).toBeNull(); // a slot is not an open launcher
+  });
+
+  it("refuses to drag a column into another workspace, or onto a reserved slot", () => {
+    const s = closeCell(pin(running(12), 0), 7);
+    const holeUid = s.cells.filter(isHole)[0].uid;
+    expect(moveCellTo(s, 0, 8)).toBe(s); // page 0 -> page 1
+    expect(moveCellTo(s, 0, holeUid)).toBe(s);
+    expect(canMoveCell(s.cells, 6, 1, true)).toBe(false); // the next slot is reserved
+    const within = moveCellTo(s, 0, 3).cells.map((c) => c.uid);
+    expect(within.slice(0, 4)).toEqual([1, 2, 3, 0]); // within the page is fine
+  });
+
+  // The roster's up/down items are the same reorder affordance as the drag, so they answer to
+  // the same rule. Without this a FULL pinned page has no reserved slot to block the swap, and
+  // its last column trades places with the next workspace's first.
+  it("refuses the roster's move across a page boundary while any workspace is pinned", () => {
+    const s = pin(running(12), 0); // page 0 pinned AND full — no hole to stop the swap
+    expect(isSealed(s)).toBe(true);
+    expect(canMoveCell(s.cells, 7, 1, isSealed(s))).toBe(false);
+    expect(moveCell(s, 7, 1)).toBe(s);
+    expect(canMoveCell(s.cells, 6, 1, isSealed(s))).toBe(true); // inside the page, still fine
+  });
+
+  it("still allows a cross-page swap when nothing is pinned", () => {
+    const s = make(running(12));
+    expect(isSealed(s)).toBe(false);
+    expect(canMoveCell(s.cells, 7, 1, isSealed(s))).toBe(true);
+    expect(moveCell(s, 7, 1).cells.map((c) => c.uid)[7]).toBe(8);
+  });
+
+  it("attention-sorts INSIDE each page once a workspace is pinned, and across all pages when none is", () => {
+    const across = make(running(12), { sortMode: "auto" });
+    expect(orderGrid(across, { 10: "blocked" }).map((c) => c.uid)[0]).toBe(10); // floats onto page 1
+    const sealed = togglePagePin(across, 0);
+    const ordered = orderGrid(sealed, { 10: "blocked" });
+    expect(pageSlice(ordered, 0).map((c) => c.uid)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]); // page 0 unchanged
+    expect(pageSlice(ordered, 1).map((c) => c.uid)[0]).toBe(10); // sorted, but only within page 1
+  });
+});
+
+describe("workspace persistence (page meta + reserved slots)", () => {
+  it("round-trips names, pins and the reserved slots through a reload", () => {
+    const saved = setPageLabel(closeCell(togglePagePin(make(running(12)), 0), 0), 0, "orosy");
+    const restored = parseGridState(JSON.stringify(saved));
+    if (!restored) throw new Error("expected parsed state");
+    expect(pageLabel(restored, 0)).toBe("orosy");
+    expect(isPagePinned(restored, 0)).toBe(true);
+    expect(pageSlice(restored.cells, 0)).toHaveLength(8);
+    expect(realCells(pageSlice(restored.cells, 0))).toHaveLength(7);
+    expect(realCells(pageSlice(restored.cells, 1)).map((c) => c.session)).toEqual([U(8), U(9), U(10), U(11)]);
+  });
+
+  it("reads a pre-workspace grid_v2 unchanged: no pages, no slots, uids still renumbered", () => {
+    const older = JSON.stringify({ cells: [cell(4, U(0)), cell(9, U(1))], expanded: 9, page: 0, nextUid: 10 });
+    const s = parseGridState(older);
+    if (!s) throw new Error("expected parsed state");
+    expect(s.pages).toBeUndefined();
+    expect(s.cells.some(isHole)).toBe(false);
+    expect(s.cells.map((c) => c.uid)).toEqual([0, 1]); // the renumbering rule is untouched
+    expect(s.expanded).toBe(1);
+    expect(s.nextUid).toBe(2);
+  });
+
+  it("repairs a blob whose slots and pins disagree instead of trusting either", () => {
+    // Pinned page 0 but only 2 cells saved: the padding is re-derived, not assumed.
+    const raw = JSON.stringify({ cells: [cell(0, U(0)), cell(1, U(1))], pages: [{ pinned: true }], page: 0 });
+    const s = parseGridState(raw);
+    if (!s) throw new Error("expected parsed state");
+    expect(s.cells).toHaveLength(8);
+    expect(realCells(s.cells)).toHaveLength(2);
+  });
+
+  it("survives malformed page metadata rather than losing a grid of live sessions", () => {
+    const raw = JSON.stringify({ cells: [cell(0, U(0))], pages: ["nope", 7, { label: 5, pinned: "yes" }, { label: " a " }] });
+    const s = parseGridState(raw);
+    if (!s) throw new Error("expected parsed state");
+    expect(s.cells).toHaveLength(1);
+    expect(pageLabel(s, 3)).toBe("a");
+    expect(isPagePinned(s, 2)).toBe(false);
+  });
+
+  it("drops page metadata entirely when nothing is named or pinned", () => {
+    expect(parseGridState(JSON.stringify({ cells: [cell(0, U(0))], pages: [{}, {}] }))?.pages).toBeUndefined();
+  });
+
+  // MAX_TERMINALS caps TERMINALS, which is what it means everywhere else (it is checked through
+  // runningCount, and a reserved slot is not a terminal). Counting slots against it would trim
+  // the array's TAIL — live sessions on the last pages — and do it silently.
+  it("caps the parse by terminals, not by slots, so a padded grid keeps its last columns", () => {
+    const pinnedPages = Array.from({ length: 8 }, () => ({ pinned: true }));
+    const cells = [
+      ...Array.from({ length: 8 }, (_, i) => cell(i, U(i))), // page 0, real
+      ...Array.from({ length: 56 }, (_, i) => ({ uid: 100 + i, session: null, cwd: null, hole: true as const })),
+      cell(200, U(7)), // a terminal past the reserved region — the one a slot-based cap would eat
+    ];
+    const s = parseGridState(JSON.stringify({ cells, pages: pinnedPages, page: 0 }));
+    if (!s) throw new Error("expected parsed state");
+    expect(runningCount(s.cells)).toBe(9);
+    expect(realCells(s.cells)).toHaveLength(9);
+  });
+
+  it("reserveSlots is idempotent", () => {
+    const once = reserveSlots(make(running(5), { pages: [{ pinned: true }] }));
+    const twice = reserveSlots(once);
+    expect(twice.cells.map((c) => c.uid)).toEqual(once.cells.map((c) => c.uid));
+  });
+});
+
+describe("per-window workspaces (?ws=)", () => {
+  it("gives a named window its own saved grid and leaves an unnamed one on the original key", () => {
+    expect(stateKeyFor(null)).toBe(STATE_KEY);
+    expect(stateKeyFor("left")).toBe(`${STATE_KEY}:left`);
+  });
+
+  it("takes the workspace name from the query string", () => {
+    expect(workspaceFromSearch("?ws=workspace-1")).toBe("workspace-1");
+    expect(workspaceFromSearch("?foo=1&ws=tools_2")).toBe("tools_2");
+    expect(workspaceFromSearch("")).toBeNull();
+    expect(workspaceFromSearch("?ws=")).toBeNull();
+  });
+
+  // The name becomes a localStorage key, so anything that could collide with the base key or
+  // smuggle a separator through is refused rather than sanitised into something else's grid.
+  it("refuses a name that is not a plain identifier", () => {
+    for (const bad of ["?ws=a:b", "?ws=../x", "?ws=-lead", `?ws=${"x".repeat(40)}`]) expect(workspaceFromSearch(bad)).toBeNull();
   });
 });
