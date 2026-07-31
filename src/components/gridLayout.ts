@@ -7,11 +7,13 @@
 // pane. More sessions than MAX_CELLS overflow to the next page instead.
 
 // Ordered smallest→largest: the grid grows through these as terminals are added.
-export const LAYOUTS = ["1", "2", "3", "4", "5", "6", "7", "8"] as const;
+export const LAYOUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"] as const;
 export type Layout = (typeof LAYOUTS)[number];
 
 // Max columns on one page; bounds the persisted arrays (page size).
-export const MAX_CELLS = 8;
+// 10, not 8: the operator's real workspaces run 9-10 columns each (R1), and an
+// 8-column cap is exactly why the Claude desktop app was rejected as a host.
+export const MAX_CELLS = 10;
 
 export function isLayout(v: unknown): v is Layout {
   return typeof v === "string" && (LAYOUTS as readonly string[]).includes(v);

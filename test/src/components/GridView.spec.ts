@@ -368,8 +368,8 @@ describe("GridView keyboard shortcuts (#829)", () => {
 // existed — no second toolbar row, because every row costs each column readable lines.
 const TabsGridStub = { name: "TerminalGrid", props: ["cells", "expandedUid"], template: '<div class="tabs-stub" />' };
 
-const nineSessions = (from: number) =>
-  Array.from({ length: 9 }, (_, i) => ({ uid: from + i, session: `${String((from + i) % 10).repeat(8)}-cccc-cccc-cccc-cccccccccccc`, cwd: "/w" }));
+const elevenSessions = (from: number) =>
+  Array.from({ length: 11 }, (_, i) => ({ uid: from + i, session: `${String((from + i) % 10).repeat(8)}-cccc-cccc-cccc-cccccccccccc`, cwd: "/w" }));
 
 const mountTabs = async () => {
   const w = mount((await import("../../../src/components/GridView.vue")).default, {
@@ -384,7 +384,7 @@ describe("GridView workspaces (R1)", () => {
   beforeEach(() => setSearch(""));
 
   it("gives a ?ws= window its own saved grid, leaving the default window's untouched", async () => {
-    localStorage.setItem("grid_v2", JSON.stringify({ cells: nineSessions(0), page: 0, sortMode: "manual" }));
+    localStorage.setItem("grid_v2", JSON.stringify({ cells: elevenSessions(0), page: 0, sortMode: "manual" }));
     setSearch("?ws=right");
     const w = await mountTabs();
     // The named workspace starts empty rather than inheriting the other window's columns.
@@ -394,12 +394,12 @@ describe("GridView workspaces (R1)", () => {
     await flushPromises();
     // …and what it saves lands on its own key, leaving the default window's grid alone.
     expect(JSON.parse(localStorage.getItem("grid_v2:right") ?? "{}").cells).toHaveLength(1);
-    expect(JSON.parse(localStorage.getItem("grid_v2") ?? "{}").cells).toHaveLength(9); // still nine
+    expect(JSON.parse(localStorage.getItem("grid_v2") ?? "{}").cells).toHaveLength(11); // still eleven
     w.unmount();
   });
 
   it("names a page from the tab row itself: double-click, type, Enter", async () => {
-    localStorage.setItem("grid_v2", JSON.stringify({ cells: nineSessions(0), page: 0, sortMode: "manual" }));
+    localStorage.setItem("grid_v2", JSON.stringify({ cells: elevenSessions(0), page: 0, sortMode: "manual" }));
     const w = await mountTabs();
     const tabs = () => w.findAll("nav[aria-label='Grid tabs'] .grid-tab");
     expect(tabs().map((t) => t.text())).toEqual(["1", "2"]);
@@ -413,7 +413,7 @@ describe("GridView workspaces (R1)", () => {
   });
 
   it("abandons a rename on Escape", async () => {
-    localStorage.setItem("grid_v2", JSON.stringify({ cells: nineSessions(0), page: 0, sortMode: "manual" }));
+    localStorage.setItem("grid_v2", JSON.stringify({ cells: elevenSessions(0), page: 0, sortMode: "manual" }));
     const w = await mountTabs();
     await w.findAll("nav[aria-label='Grid tabs'] .grid-tab")[0].trigger("dblclick");
     const input = w.find("nav[aria-label='Grid tabs'] input");
@@ -424,16 +424,16 @@ describe("GridView workspaces (R1)", () => {
   });
 
   it("pins a page from the same tab, and a pinned page stops closing a column pulling the next page's terminal in", async () => {
-    localStorage.setItem("grid_v2", JSON.stringify({ cells: [...nineSessions(0), ...nineSessions(10)], page: 0, sortMode: "manual" }));
+    localStorage.setItem("grid_v2", JSON.stringify({ cells: [...elevenSessions(0), ...elevenSessions(20)], page: 0, sortMode: "manual" }));
     const w = await mountTabs();
     const grid = w.findComponent(TabsGridStub);
     const onPage0 = () => grid.props("cells").map((c: { uid: number }) => c.uid);
-    expect(onPage0()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(onPage0()).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     await w.findAll("nav[aria-label='Grid tabs'] .grid-tab")[0].trigger("contextmenu");
     grid.vm.$emit("close", 0);
     await flushPromises();
-    // Seven columns left on the pinned page — uid 8 did NOT flow back from page 2.
-    expect(onPage0()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    // Nine columns left on the pinned page — uid 20 did NOT flow back from page 2.
+    expect(onPage0()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(JSON.parse(localStorage.getItem("grid_v2") ?? "{}").pages[0].pinned).toBe(true);
     w.unmount();
   });

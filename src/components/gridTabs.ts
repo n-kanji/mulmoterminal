@@ -73,9 +73,9 @@ export interface GridState {
 }
 
 // Fork-local (iTerm2 mode): a page holds MAX_CELLS full-height columns (see
-// gridLayout.ts) — 8, not the stacked grid's 9.
+// gridLayout.ts) — 10, matching the operator's real 9-10 column workspaces.
 export const PAGE_SIZE = MAX_CELLS;
-export const MAX_TERMINALS = 64; // 8 pages
+export const MAX_TERMINALS = 80; // 8 pages
 // The array can hold more entries than terminals: a pinned page keeps its width with reserved
 // slots (see the workspaces section), so a fully reserved grid is MAX_TERMINALS slots on top of
 // the terminals. Only used to bound what a persisted blob may claim.

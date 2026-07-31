@@ -8,8 +8,10 @@ import { LAYOUTS, MAX_CELLS, isLayout, dims, trackStyle, layoutForCount } from "
 
 describe("gridLayout (columns only)", () => {
   it("exposes the layouts smallest→largest, one per column count", () => {
-    expect(LAYOUTS).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
-    expect(MAX_CELLS).toBe(8);
+    expect(LAYOUTS).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
+    // 10, not 8: the operator's real workspaces run 9-10 columns (R1); an 8-column
+    // cap is exactly why the Claude desktop app was rejected as a host.
+    expect(MAX_CELLS).toBe(10);
   });
 
   it("isLayout accepts known layouts and rejects everything else — including the old stacked ones", () => {
@@ -33,10 +35,10 @@ describe("gridLayout (columns only)", () => {
   it("layoutForCount: one column per cell, clamped to 1..MAX_CELLS", () => {
     expect(layoutForCount(1)).toBe("1");
     expect(layoutForCount(5)).toBe("5");
-    expect(layoutForCount(8)).toBe("8");
+    expect(layoutForCount(10)).toBe("10");
     expect(layoutForCount(0)).toBe("1");
     expect(layoutForCount(-3)).toBe("1");
-    expect(layoutForCount(12)).toBe("8");
+    expect(layoutForCount(12)).toBe("10");
   });
 
   it("trackStyle: one equal column track per cell, a single full-height row", () => {
