@@ -19,6 +19,7 @@ import {
   switchPage,
   runCommand,
   runScriptInNewCell,
+  forkCell,
   insertCellAfter,
   shellCell,
   launchInCell,
@@ -384,6 +385,17 @@ const quickLaunchUid = ref<number | null>(null);
 function onQuickLaunch(path: string, name?: string | null) {
   const next = addCellWithCwd(state.value, path, name);
   if (next.uid < 0) return; // grid full — the chip does nothing rather than half-launching
+  state.value = next.state;
+  quickLaunchUid.value = next.uid;
+}
+
+// Fork-local (iTerm2 mode, R12): a cell's Fork button — open the branch in the column beside
+// it, already running. It rides the SAME one-shot auto-launch as the preset chip: there is
+// nothing for a launch form to ask (the directory and the conversation both come from the
+// source cell), and stopping at a form is exactly the friction the button exists to remove.
+function onFork(uid: number) {
+  const next = forkCell(state.value, uid);
+  if (next.uid < 0) return; // nothing to fork, or the grid is full
   state.value = next.state;
   quickLaunchUid.value = next.uid;
 }
@@ -787,6 +799,7 @@ function configureAppearance() {
       :open-cwds="openCwds"
       :list-mode="listModeOn"
       @session="onSession"
+      @fork="onFork"
       @agent="onAgent"
       @cwd="onCwd"
       @record-cwd="recordPreset"

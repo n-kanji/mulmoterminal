@@ -66,7 +66,9 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   (e: "session" | "cwd" | "rename", uid: number, value: string): void;
-  (e: "close" | "toggle-expand" | "focus-cell", uid: number): void;
+  // `fork` (fork-local, iTerm2 mode, R12): that cell asked to branch its conversation into a
+  // new column of its own.
+  (e: "close" | "toggle-expand" | "focus-cell" | "fork", uid: number): void;
   (e: "run" | "runSpare", uid: number, command: RunCommand): void;
   (e: "launch", uid: number, pick: LaunchPick): void;
   (e: "move", uid: number, dir: -1 | 1): void;
@@ -345,6 +347,7 @@ watch(
           :initial-session-id="cell.session"
           :initial-cwd="cell.cwd"
           :initial-agent="cell.agent"
+          :initial-fork="cell.fork"
           :default-cwd="defaultCwd"
           :presets="presets"
           :launchers="launchers"
@@ -368,6 +371,7 @@ watch(
           @close="emit('close', cell.uid)"
           @move="(dir) => emit('move', cell.uid, dir)"
           @status="(s) => emit('status', cell.uid, s)"
+          @fork="emit('fork', cell.uid)"
         />
       </Teleport>
     </div>

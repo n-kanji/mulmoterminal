@@ -56,6 +56,10 @@ const props = defineProps<{
   codex?: boolean;
   // Provider/model picked in the launch form, for this session only (#584).
   launch?: LaunchChoice | null;
+  // Fork-local (iTerm2 mode, R12): start this terminal as a BRANCH of that session id
+  // (`--resume <id> --fork-session`) instead of a fresh conversation. The host clears it once
+  // `session` reports the branch's own id, so a reconnect never forks twice.
+  fork?: string | null;
   runMenu?: boolean;
   // Hide this terminal's own header row (used when a grid cell is zoomed: the cell's
   // header already shows dir + activity, so the embedded header would just be clutter).
@@ -101,6 +105,7 @@ function currentTarget(): conn.ConnTarget {
     launcher: props.launcher ?? null,
     codex: !!props.codex,
     launch: props.launch ?? null,
+    fork: props.fork ?? null,
   };
 }
 

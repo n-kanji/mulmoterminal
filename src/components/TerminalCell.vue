@@ -107,6 +107,9 @@ const props = defineProps<
     // Fork-local (iTerm2 mode, R10): the operator's own name for this pane, persisted in the
     // grid state. Null/absent = unnamed, and the strip shows the AI summary as before.
     name?: string | null;
+    // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button —
+    // the session id to branch from. Consumed once (see forkFrom below).
+    initialFork?: string | null;
   }
 >();
 const emit = defineEmits<
@@ -122,6 +125,9 @@ const emit = defineEmits<
     (e: "launch", value: LaunchPick): void;
     // The agent chosen (Claude/Codex) for this fresh launch, so the grid persists it.
     (e: "agent", value: "claude" | "codex"): void;
+    // Fork-local (iTerm2 mode, R12): branch this cell's conversation into a new column
+    // beside it. The grid owns cell creation, so the cell only asks.
+    (e: "fork"): void;
   }
 >();
 
@@ -133,6 +139,10 @@ const sessionId = ref<string | null>(props.initialSessionId);
 // persisted cell on reload so a codex cell reconnects to /ws/codex.
 const agent = ref<"claude" | "codex">(props.initialAgent === "codex" ? "codex" : "claude");
 const connectKey = ref(0);
+// Fork-local (iTerm2 mode, R12): the session this cell branches from, while it has none of
+// its own. Cleared in onSession — the server has named the branch, so every later connect
+// (reconnect, reload) resumes THAT id instead of forking the source again.
+const forkFrom = ref<string | null>(props.initialFork ?? null);
 
 // The directory this terminal runs in (shown in the header, sent to the server).
 const cwd = ref<string | null>(props.initialCwd ?? props.defaultCwd);
@@ -973,6 +983,7 @@ onUnmounted(() => document.removeEventListener("keydown", onCloseKey));
 // persistence, and load its initial activity.
 function onSession(id: string) {
   sessionId.value = id;
+  forkFrom.value = null; // R12: the branch exists now — the fork request is spent
   emit("session", id);
   loadInitial(id);
 }
@@ -1401,6 +1412,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         :cwd="cwd"
         :codex="agent === 'codex'"
         :launch="launchChoice"
+        :fork="forkFrom"
         :dir-header-color="dirConfig.headerColor"
         :dir-header-text-color="dirConfig.headerTextColor"
         :dir-button-color="dirConfig.buttonColor"
@@ -1555,6 +1567,23 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span v-if="copyLabels.prompt">{{ copyLabels.prompt }}</span>
             <span v-else class="material-symbols-outlined" aria-hidden="true">format_quote</span>
+          </button>
+          <!-- Fork-local (iTerm2 mode, R12): `claude --resume <this session> --fork-session`
+               in the column right beside this one — the command the operator was typing by
+               hand. Claude only (codex has no equivalent), and only once there is a
+               conversation to branch. Lives on this row, not row 1: the tiled columns must
+               not grow another always-visible control. -->
+          <button
+            v-if="sessionId && agent !== 'codex'"
+            type="button"
+            data-testid="cell-fork"
+            class="cell-btn"
+            :class="CELL_BTN"
+            title="Fork this conversation into a new column (claude --resume --fork-session)"
+            aria-label="Fork this session into a new column"
+            @click="emit('fork')"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">call_split</span>
           </button>
           <button
             v-if="sessionId && agent !== 'codex'"

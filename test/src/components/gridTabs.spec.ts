@@ -56,7 +56,9 @@ import {
   stepPage,
   PAGE_SIZE,
   MAX_PAGE_LABEL,
+  MAX_TERMINALS,
   STATE_KEY,
+  forkCell,
 } from "../../../src/components/gridTabs.js";
 
 // A full seven-state tally with only the interesting entries named. Shared by countByStatus
@@ -654,6 +656,49 @@ describe("insertCellAfter", () => {
   });
   it("is a no-op at the terminal cap", () => {
     expect(insertCellAfter(make(running(81)), 0, { session: null, cwd: null }).cells).toHaveLength(81);
+  });
+});
+
+// R12. The Fork button branches a conversation into the column beside it. The cell it makes is
+// the request itself: no session of its own, the source's id in `fork`, and the source's dir.
+describe("forkCell (Fork button → adjacent branch of this conversation)", () => {
+  it("opens the branch immediately after the source, carrying its session and dir", () => {
+    const s = make([cell(0, U(0), "/proj"), cell(1, U(1), "/other")]);
+    const { state, uid } = forkCell(s, 0);
+    expect(uid).toBe(2);
+    expect(state.cells.map((c) => c.uid)).toEqual([0, 2, 1]); // the branch lands NEXT to its source
+    expect(state.cells[1]).toMatchObject({ uid: 2, session: null, cwd: "/proj", fork: U(0) });
+  });
+
+  it("refuses a cell with nothing to fork — an empty launcher has no conversation", () => {
+    const s = make([cell(0)]);
+    expect(forkCell(s, 0)).toEqual({ state: s, uid: -1 });
+    expect(forkCell(s, 99)).toEqual({ state: s, uid: -1 }); // and a uid that is gone
+  });
+
+  it("refuses at the terminal cap rather than half-opening a column", () => {
+    const full = make(running(MAX_TERMINALS));
+    expect(forkCell(full, 0)).toEqual({ state: full, uid: -1 });
+  });
+
+  // A fork that has been asked for but not yet answered has no session id, which would otherwise
+  // read as "an empty launch form at the end of the grid" — the one cell the grid feels free to
+  // drop, reuse or cancel. It is a column the operator opened and is waiting on, and it stays one
+  // even when the fork is REFUSED (that pane is holding the error message meant to be read).
+  it("is a real column while it waits for its id, not a spare launch cell", () => {
+    const { state } = forkCell(make([cell(0, U(0), "/proj")]), 0);
+    expect(runningCount(state.cells)).toBe(2);
+    expect(cancelableLaunchUid(state)).toBeNull(); // "+ Terminal" cancels a form, not this
+    expect(switchPage(state, 0).cells).toHaveLength(2); // a tab click does not sweep it away
+  });
+
+  // The one-shot rule. `fork` is a REQUEST, and the server serves it once: the moment the branch
+  // has an id, a reconnect must resume THAT id — a still-set `fork` would branch the source again
+  // and leave the operator with columns they never asked for.
+  it("is spent by setSession, so a reconnect resumes the branch instead of forking twice", () => {
+    const { state, uid } = forkCell(make([cell(0, U(0), "/proj")]), 0);
+    const after = setSession(state, uid, U(7));
+    expect(after.cells.find((c) => c.uid === uid)).toMatchObject({ session: U(7), fork: null });
   });
 });
 

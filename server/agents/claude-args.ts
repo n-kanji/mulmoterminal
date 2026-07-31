@@ -24,6 +24,22 @@ export interface ClaudeArgsInput {
   // Extra directories the session may read/edit (#908). Absolute, existing, deduped by the
   // config layer — this builder only places them.
   addDirs?: string[] | null;
+  // Fork-local (iTerm2 mode, R12): branch `resume`'s conversation into a SECOND session
+  // instead of continuing it — `claude --resume <src> --session-id <new> --fork-session`.
+  // The source transcript is left untouched and keeps running wherever it already is.
+  fork?: boolean;
+}
+
+// A fork with nothing to fork FROM would run as a brand-new session — the one outcome the
+// button must never produce silently (the operator asked to branch a conversation, and a
+// blank pane that looks like it worked is worse than an error). The route refuses this case
+// before spawning; this is the invariant restated where the argv is actually built, so a
+// future caller cannot reintroduce the fallback by accident.
+export class ForkNotResumableError extends Error {
+  constructor() {
+    super("Cannot fork: the source session has no transcript to resume.");
+    this.name = "ForkNotResumableError";
+  }
 }
 
 export function buildClaudeArgs(input: ClaudeArgsInput): string[] {
@@ -36,6 +52,15 @@ export function buildClaudeArgs(input: ClaudeArgsInput): string[] {
   // flag placed after it would be fine but a VALUE would be swallowed. Keeping it at the end
   // means nothing can ever follow it.
   if (input.addDirs?.length) guiArgs.push("--add-dir", ...input.addDirs);
+
+  // A fork reads the source transcript AND names the new session, so it carries both flags.
+  // `--session-id` is what keeps the branch on an id this server minted: without it claude
+  // picks its own, and nothing here would know which transcript the new pane is writing —
+  // no resume after a restart, no `copy last reply`, no activity for the cell.
+  if (input.fork) {
+    if (!input.canResume || input.resume === null) throw new ForkNotResumableError();
+    return ["--resume", input.resume, "--session-id", input.sessionId, "--fork-session", "--settings", input.settings, ...guiArgs];
+  }
 
   // No initial-prompt positional: an auto-run prompt is TYPED into the input box after
   // claude is ready (see spawnClaudePty), not passed as an arg — a large prompt as a

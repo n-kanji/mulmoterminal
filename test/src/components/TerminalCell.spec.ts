@@ -25,7 +25,7 @@ vi.mock("../../../src/composables/usePubSub", () => ({
 vi.mock("../../../src/components/Terminal.vue", () => ({
   default: {
     name: "TerminalView",
-    props: ["sessionId", "connectKey", "cwd", "hideHeader"],
+    props: ["sessionId", "connectKey", "cwd", "hideHeader", "fork"],
     emits: ["session", "cwd"],
     // Render the header-actions slot so the cell's icon buttons (moved onto the
     // terminal's header row) are present in the test DOM — but only when the header
@@ -84,6 +84,10 @@ function mountCell(
     openCwds?: string[];
     expanded?: boolean;
     zoomed?: boolean;
+    // R12: opened by another cell's Fork button — the session to branch, plus the same
+    // one-shot auto-launch the preset chip uses (a fork has nothing to ask a form about).
+    initialFork?: string | null;
+    autoLaunch?: boolean;
   } = {},
 ) {
   return mount(TerminalCell, {
@@ -99,6 +103,8 @@ function mountCell(
       cancellable: opts.cancellable ?? false,
       openSessionIds: opts.openSessionIds ?? [],
       openCwds: opts.openCwds ?? [],
+      initialFork: opts.initialFork ?? null,
+      autoLaunch: opts.autoLaunch ?? false,
     },
   });
 }
@@ -1932,6 +1938,49 @@ describe("TerminalCell", () => {
       await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click"); // the "…" row
       await flushPromises();
       expect(w.find('[data-testid="cell-copy-reply"]').exists()).toBe(true);
+    });
+  });
+
+  // R12 (fork-local, iTerm2 mode): one click for `claude --resume <id> --fork-session`. The
+  // cell only ASKS — the grid owns cell creation, so it opens the column and hands the request
+  // back down as `initialFork`.
+  describe("fork button", () => {
+    const id = "77777777-7777-7777-7777-777777777777";
+
+    it("asks the grid to fork, and only once there is a conversation to fork", async () => {
+      const w = mountCell(id, { initialCwd: "/home/me/proj", expanded: true });
+      await flushPromises();
+      await w.find('[data-testid="cell-fork"]').trigger("click");
+      expect(w.emitted("fork")).toHaveLength(1);
+
+      const empty = mountCell(null, { initialCwd: "/home/me/proj", expanded: true });
+      await flushPromises();
+      expect(empty.find('[data-testid="cell-fork"]').exists()).toBe(false);
+    });
+
+    // Design principle 2: the tiled columns must not grow another always-visible control.
+    it("lives on the toolbar row that the ellipsis summons, not on the always-visible rows", async () => {
+      const w = mountCell(id, { initialCwd: "/home/me/proj" }); // tiled: no toolbar row
+      await flushPromises();
+      expect(w.find('[data-testid="cell-fork"]').exists()).toBe(false);
+
+      await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click");
+      await flushPromises();
+      expect(w.find('[data-testid="cell-fork"]').exists()).toBe(true);
+    });
+
+    // The one-shot rule, cell side: the request rides the socket URL until the server names the
+    // branch. Left set, a reconnect would fork the SOURCE again and open a second conversation.
+    it("passes the fork request to the terminal and drops it once the branch has an id", async () => {
+      const w = mountCell(null, { initialCwd: "/home/me/proj", initialFork: id, autoLaunch: true });
+      await flushPromises();
+      const term = w.findComponent({ name: "TerminalView" });
+      expect(term.props("fork")).toBe(id);
+
+      term.vm.$emit("session", "88888888-8888-8888-8888-888888888888");
+      await flushPromises();
+      expect(term.props("fork")).toBeNull();
+      expect(w.emitted("session")?.[0]).toEqual(["88888888-8888-8888-8888-888888888888"]);
     });
   });
 });

@@ -590,3 +590,40 @@ describe("GridView workspaces (R1)", () => {
     w.unmount();
   });
 });
+
+// R12 (fork-local, iTerm2 mode): the Fork button's end-to-end wiring inside the view — a cell
+// asks, and the grid opens the branch in the column next to it, already launching.
+const ForkGridStub = { name: "TerminalGrid", props: ["cells", "expandedUid", "autoLaunchUid"], template: '<div class="fork-stub" />' };
+
+describe("GridView fork (R12)", () => {
+  const A = "aaaaaaaa-1111-1111-1111-111111111111";
+  const B = "bbbbbbbb-2222-2222-2222-222222222222";
+
+  it("opens the branch beside its source, carrying the fork request and auto-launching it", async () => {
+    localStorage.setItem(
+      "grid_v2",
+      JSON.stringify({
+        cells: [
+          { uid: 0, session: A, cwd: "/w/proj" },
+          { uid: 1, session: B, cwd: "/w/other" },
+        ],
+        page: 0,
+        sortMode: "manual",
+      }),
+    );
+    const w = mount((await import("../../../src/components/GridView.vue")).default, {
+      global: { stubs: { TerminalGrid: ForkGridStub, AppToolbar: ToolbarStub, SettingsModal: SettingsStub } },
+    });
+    await flushPromises();
+    const grid = w.findComponent(ForkGridStub);
+    grid.vm.$emit("fork", 0);
+    await flushPromises();
+
+    const cells = grid.props("cells") as { uid: number; session: string | null; cwd: string | null; fork?: string | null }[];
+    expect(cells.map((c) => c.uid)).toEqual([0, 2, 1]); // the branch sits next to the cell it came from
+    expect(cells[1]).toMatchObject({ session: null, cwd: "/w/proj", fork: A });
+    // No launch form to stop at: the directory and the conversation both come from the source.
+    expect(grid.props("autoLaunchUid")).toBe(2);
+    w.unmount();
+  });
+});

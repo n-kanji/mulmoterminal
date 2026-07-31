@@ -29,6 +29,20 @@ describe("buildTerminalWsUrl", () => {
     const url = buildTerminalWsUrl({ host: "h", secure: true, sessionId: "abc" });
     expect(url.startsWith("wss://")).toBe(true);
   });
+
+  // R12 (fork-local, iTerm2 mode): the Fork button's column asks the server to branch a
+  // conversation. The request only makes sense while this cell has no session of its own.
+  it("asks to fork while the cell has no session of its own", () => {
+    const q = new URL(buildTerminalWsUrl({ host: "h", secure: false, sessionId: null, fork: "src-1", devTerminal: true })).searchParams;
+    expect(q.get("fork")).toBe("src-1");
+    expect(q.get("session")).toBeNull();
+  });
+
+  it("drops the fork once the branch has an id, so a reconnect resumes instead of forking again", () => {
+    const q = new URL(buildTerminalWsUrl({ host: "h", secure: false, sessionId: "branch-1", fork: "src-1" })).searchParams;
+    expect(q.get("fork")).toBeNull();
+    expect(q.get("session")).toBe("branch-1");
+  });
 });
 
 describe("buildRunWsUrl", () => {
@@ -226,5 +240,14 @@ describe("connWsUrl — endpoint precedence", () => {
 
   it("uses wss over https", () => {
     expect(connWsUrl(target(), null, HOST, true).startsWith("wss://")).toBe(true);
+  });
+
+  // R12: a fork rides the Claude endpoint only — codex has no `--fork-session`, and routing
+  // one there would open a plain codex session while the operator thinks they branched.
+  it("carries a fork request to the Claude endpoint, and never to codex", () => {
+    const claude = new URL(connWsUrl(target({ fork: "src-1" }), null, HOST, false));
+    expect([claude.pathname, claude.searchParams.get("fork")]).toEqual(["/ws", "src-1"]);
+    const codex = new URL(connWsUrl(target({ codex: true, fork: "src-1" }), null, HOST, false));
+    expect([codex.pathname, codex.searchParams.get("fork")]).toEqual(["/ws/codex", null]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildClaudeArgs, type ClaudeArgsInput } from "../../../server/agents/claude-args.js";
+import { buildClaudeArgs, ForkNotResumableError, type ClaudeArgsInput } from "../../../server/agents/claude-args.js";
 
 const base: ClaudeArgsInput = {
   sessionId: "11111111-1111-1111-1111-111111111111",
@@ -82,5 +82,38 @@ describe("model selection", () => {
     const args = buildClaudeArgs(cfg({ model: "opus", resume: "abc", canResume: true }));
     expect(args).toContain("--resume");
     expect(args).toContain("--model");
+  });
+});
+
+// R12 (fork-local, iTerm2 mode): the Fork button's argv. A fork is a `--resume` that lands in
+// a NEW session, and the new id has to be ours: without `--session-id` claude mints its own,
+// and nothing on this side would know which transcript the branch is writing — no resume after
+// a restart, no "copy last reply", no activity for the cell.
+describe("fork (--resume + --fork-session)", () => {
+  const source = "55555555-5555-5555-5555-555555555555";
+
+  it("resumes the source into this session's own id", () => {
+    const args = buildClaudeArgs(cfg({ attachGuiMcp: false, resume: source, canResume: true, fork: true }));
+    expect(args).toEqual(["--resume", source, "--session-id", base.sessionId, "--fork-session", "--settings", "{hooks}", "--permission-mode", "auto"]);
+  });
+
+  it("keeps the MCP mode and the model, like any other spawn", () => {
+    const args = buildClaudeArgs(cfg({ resume: source, canResume: true, fork: true, model: "opus" }));
+    expect(args).toContain("--strict-mcp-config");
+    expect(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2)).toEqual(["--model", "opus"]);
+  });
+
+  // The no-silent-fallback rule. A fork with nothing to resume would otherwise come up as a
+  // blank new session that LOOKS like the fork worked — the failure mode the button must never
+  // have. The route refuses it first; this is the same invariant where the argv is built.
+  it("refuses to build when there is nothing to resume, instead of starting fresh", () => {
+    expect(() => buildClaudeArgs(cfg({ resume: source, canResume: false, fork: true }))).toThrow(ForkNotResumableError);
+    expect(() => buildClaudeArgs(cfg({ resume: null, canResume: true, fork: true }))).toThrow(ForkNotResumableError);
+  });
+
+  it("leaves a plain resume untouched", () => {
+    const args = buildClaudeArgs(cfg({ resume: source, canResume: true }));
+    expect(args).not.toContain("--fork-session");
+    expect(args).not.toContain("--session-id");
   });
 });

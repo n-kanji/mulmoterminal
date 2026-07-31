@@ -18,15 +18,22 @@ export interface TerminalWsUrlInput {
   cwd?: string | null; // launch in this directory
   devTerminal?: boolean; // grid dev terminal: no GUI MCP (?gui=0)
   launch?: LaunchChoice | null; // picked at launch; absent => the directory's default
+  // Fork-local (iTerm2 mode, R12): open this as a BRANCH of that session id
+  // (`--resume <id> --fork-session`) rather than a fresh conversation. Claude only — codex
+  // has no equivalent, and CodexWsUrlInput has no such field to set.
+  fork?: string | null;
 }
 
 // The two session-terminal endpoints (/ws for claude, /ws/codex for codex) send the
 // identical session/cwd/gui query, so they share this assembly — only the path differs.
-function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devTerminal, launch }: TerminalWsUrlInput): string {
+function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devTerminal, launch, fork }: TerminalWsUrlInput): string {
   const params = new URLSearchParams();
   if (sessionId) params.set("session", sessionId);
   if (cwd) params.set("cwd", cwd);
   if (devTerminal) params.set("gui", "0");
+  // Sent only while this cell has no session of its own. Once the server names the forked
+  // session the caller drops it, so a reconnect resumes the branch instead of forking again.
+  if (fork && !sessionId) params.set("fork", fork);
   // Only sent when the user picked one — an absent param is what tells the server to use
   // the directory's own provider/model.
   if (launch?.provider) params.set("provider", launch.provider);
@@ -114,6 +121,8 @@ export interface ConnTargetUrlInput {
   launcher: { index: number } | { shell: true } | null;
   codex?: boolean;
   launch?: LaunchChoice | null;
+  // The session this cell branches from, until it has one of its own (see TerminalWsUrlInput).
+  fork?: string | null;
 }
 
 // A command cell's endpoint: a script.json entry by index, or a header shell button by id
@@ -140,5 +149,5 @@ export function connWsUrl(target: ConnTargetUrlInput, resumeId: string | null, h
       : buildLaunchWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, launcher: target.launcher.index });
   }
   if (target.codex) return buildCodexWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, devTerminal: target.devTerminal });
-  return buildTerminalWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, devTerminal: target.devTerminal, launch: target.launch });
+  return buildTerminalWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, devTerminal: target.devTerminal, launch: target.launch, fork: target.fork });
 }
