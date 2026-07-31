@@ -410,6 +410,44 @@ setting existed.
 - Takes effect after a **tab reload**.
 - Partial `POST /api/config` merge — write only `cockpitLines`.
 
+## Browser notifications — `notifyKinds` in `~/.mulmoterminal/config.json`
+
+Which pane states raise an **OS notification from the browser**, so a tab that is behind another
+window is still noticed. Written in the pane-state vocabulary (the same words the cells show),
+and independent of `pushKinds` — see the warning below.
+
+```json
+{ "notifyKinds": ["approval", "question"] }
+```
+
+- The kinds are `"approval"` (承認待ち), `"question"` (質問) and `"unread"` (完了・未読).
+  **Omitting the field keeps `approval` + `question`**; `[]` silences every browser notification
+  while leaving the chime and the tab count alone. An unknown string is dropped.
+- **`unread` is off by default and worth a warning before turning it on.** A finished turn is
+  reading to catch up on, not work blocked behind an answer — on a busy grid it is by far the
+  most frequent event, and it is the setting most likely to make someone mute the whole feature.
+- **`notifyKinds` and `pushKinds` are different settings and neither implies the other.**
+  `pushKinds` is the **phone** (Web Push, needs `pushEnabled` and a connected RemoteHost);
+  `notifyKinds` is the **browser on this machine**. They also speak different vocabularies —
+  `pushKinds` uses `finished` / `waiting`, this uses the pane-state words. If the user says
+  "turn off notifications", ask **which one**; changing the wrong one looks like nothing happened.
+- Three things are built in and are **not** configurable, because they are what keeps the feature
+  from being muted: a **five-minute cooldown** per session per kind, **silence while the tab is
+  visible AND focused** (the chime and the frame colour already cover that case), and one
+  notification per session at a time (a second replaces the first rather than stacking).
+- The browser asks for permission on the **first click or keypress**, never at page load. If the
+  user already pressed Deny for this origin, no config value can undo it — they have to re-allow
+  notifications for the site in their browser's own settings. Say so rather than editing config.
+- Notifications need a **secure context**: `localhost` counts, a plain-`http` LAN address
+  (`http://192.168.x.x:34567`) does not, and there the API is simply absent. The chime and the
+  tab count still work.
+- Clicking a notification focuses the window and puts the cursor in that session's cell.
+- Independent of `soundFile` and a directory's own sound, which are unchanged. The built-in chime
+  now differs by kind (a two-note figure for `approval`/`question`, one quieter note for
+  `unread`); **a configured sound file still plays as-is for every kind**, because naming a file
+  is the user choosing that sound.
+- Takes effect after a **tab reload**. Partial `POST /api/config` merge — write only `notifyKinds`.
+
 ## Dev-work log — `worklogEnabled` / `worklogIntervalHours`
 
 A built-in scheduled task, **off by default**. When on, it fires every `worklogIntervalHours` and

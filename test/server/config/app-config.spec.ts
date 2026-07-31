@@ -22,6 +22,7 @@ import {
   type AppConfig,
 } from "../../../server/config/app-config";
 import { DEFAULT_PUSH_KINDS } from "../../../common/pushKinds.js";
+import { DEFAULT_NOTIFY_KINDS } from "../../../common/notifyKinds.js";
 import { DEFAULT_COCKPIT_LINES } from "../../../common/cockpitLines.js";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "mt-appcfg-"));
@@ -237,6 +238,7 @@ describe("loadAppConfig / saveAppConfig", () => {
     chips: null,
     pushEnabled: false,
     pushKinds: [...DEFAULT_PUSH_KINDS],
+    notifyKinds: [...DEFAULT_NOTIFY_KINDS],
     worklogEnabled: false,
     worklogIntervalHours: 6,
     providers: [],
@@ -260,6 +262,7 @@ describe("loadAppConfig / saveAppConfig", () => {
       chips: ["dir", "git"],
       pushEnabled: true,
       pushKinds: [...DEFAULT_PUSH_KINDS],
+      notifyKinds: [...DEFAULT_NOTIFY_KINDS],
       worklogEnabled: true,
       worklogIntervalHours: 12,
       providers: [],
@@ -313,6 +316,7 @@ describe("loadAppConfig / saveAppConfig", () => {
       chips: null,
       pushEnabled: false,
       pushKinds: [...DEFAULT_PUSH_KINDS],
+      notifyKinds: [...DEFAULT_NOTIFY_KINDS],
       worklogEnabled: false,
       worklogIntervalHours: 6,
       providers: [],
@@ -412,6 +416,7 @@ describe("#741 corrupt config is not silently wiped by a partial update", () => 
     chips: null,
     pushEnabled: false,
     pushKinds: [...DEFAULT_PUSH_KINDS],
+    notifyKinds: [...DEFAULT_NOTIFY_KINDS],
     worklogEnabled: false,
     worklogIntervalHours: 6,
     providers: [],
@@ -469,6 +474,7 @@ describe("mergeConfigUpdate", () => {
     chips: ["git", "diff", "ctx", "usage"],
     pushEnabled: false,
     pushKinds: [...DEFAULT_PUSH_KINDS],
+    notifyKinds: [...DEFAULT_NOTIFY_KINDS],
     worklogEnabled: false,
     worklogIntervalHours: 6,
     providers: [],

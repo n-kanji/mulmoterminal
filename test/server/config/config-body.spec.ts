@@ -31,7 +31,7 @@ describe("badArrayField", () => {
   // caught by review rather than by a test. Adding a field means updating this line, which is
   // the point: it is a decision, not an oversight.
   it("guards exactly these fields — a removal here is a field that can be silently wiped", () => {
-    expect([...ARRAY_FIELDS]).toEqual(["cwdPresets", "prRepos", "launchers", "quickCommands", "pushKinds", "userMcpServers", "providers"]);
+    expect([...ARRAY_FIELDS]).toEqual(["cwdPresets", "prRepos", "launchers", "quickCommands", "pushKinds", "notifyKinds", "userMcpServers", "providers"]);
   });
 
   it("names only the first offender — the response reports one field", () => {
