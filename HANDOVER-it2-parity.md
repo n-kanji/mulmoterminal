@@ -12,8 +12,11 @@
   - 状態語は 6 値（approval/question/disconnected/unread/idle=無語/working/shell）。分類は Notification payload の notification_type フィールド（ワーカーが CLI バイナリ解析で特定）
   - mission は PUT /api/session/:id/mission、~/.mulmoterminal/missions.json に永続化。/clear 後の id ずれは session-alias が吸収
   - I-5 実ブラウザ E2E / CLAUDE.md の書き込み先差し替えは Gate 1 / Gate 3 項目
-- Wave 2: **実行中** — w2-keymap（I-4 既定キーマップ+新4アクション）/ w2-notify（I-6 ブラウザ通知+バッジ+音種別）/ w2-copy（I-8 応答コピー+copyOnSelect）の 3 worktree ワーカー並列
-- Wave 3（I-7/I-9/I-10）: 未着手。Wave 2 マージ後に発注
+- Wave 2: **完走**（I-8 コピー体験 / I-6 通知+バッジ+音種別 / I-4 既定キーマップ すべてマージ済み。テスト 4,914 件 green）
+  - 既定キー: Alt+J/L=列移動, Alt+U/H=ページ, Alt+A=next-attention, Alt+Z=zoom, Alt+N=新規隣接, Alt+W=閉じる（ユーザーが keymap を 1 つでも書くと既定は全部無効）
+  - 通知: approval/question で OS 通知+favicon バッジ+title (N)。可視+フォーカス時は抑制。5 分クールダウン
+  - 教訓: マージコンフリクト解消後のテスト修正がステージ漏れで kanji が一時 red に（507c100c で修復）。以後 status 確認をゲートに組み込み済み
+- Wave 3: **実行中** — w3-leftovers（I-7 積み残し 5 件+確認 1 件）/ w3-fork-scroll（I-9 Fork ボタン + I-10 scrollback 10000）
 - Wave 4（P2）: Gate 2 通過まで着手しない（計画通り）
 
 ## このセッションが死んだ場合の再開手順
