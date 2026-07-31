@@ -26,11 +26,21 @@ describe("CockpitHeader", () => {
     expect(bar(mountH({ headerColor: null })).attributes("style") ?? "").not.toContain("--cell-header-bg");
   });
 
-  it("shows the roster status word for each status", () => {
-    expect(badge(mountH({ status: "idle" }))).toBe("idle");
-    expect(badge(mountH({ status: "working" }))).toBe("running");
-    expect(badge(mountH({ status: "blocked" }))).toBe("waiting");
-    expect(badge(mountH({ status: "done" }))).toBe("done");
+  // The roster reads the SAME six words as the pane strip (common/paneState). Two names for
+  // one state is how an operator ends up unsure whether they are looking at the same thing.
+  it("shows the shared status word for each status", () => {
+    expect(badge(mountH({ status: "working" }))).toBe("実行中");
+    expect(badge(mountH({ status: "approval" }))).toBe("承認待ち");
+    expect(badge(mountH({ status: "question" }))).toBe("質問");
+    expect(badge(mountH({ status: "unread" }))).toBe("完了・未読");
+    expect(badge(mountH({ status: "disconnected" }))).toBe("切断");
+    expect(badge(mountH({ status: "shell" }))).toBe("シェル");
+  });
+
+  // `idle` has no word at all, so the badge is dropped rather than filled with a placeholder —
+  // a row that says nothing is the point (see common/paneState).
+  it("drops the badge entirely for an idle pane", () => {
+    expect(mountH({ status: "idle" }).find('[data-testid="cockpit-badge"]').exists()).toBe(false);
   });
 
   it("shows the work phase word while working when it is known", () => {

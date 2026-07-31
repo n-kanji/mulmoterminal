@@ -17,7 +17,10 @@ describe("flagEffect", () => {
   // the socket floods with identical rows.
   it("is a no-op when the flag did not actually move", () => {
     expect(flagEffect(at({ working: true }), "working", true, "UserPromptSubmit", NOW)).toEqual({ next: null, rearmReap: false });
-    expect(flagEffect(at({ waiting: true }), "waiting", true, "Notification", NOW)).toEqual({ next: null, rearmReap: false });
+    // The waiting side needs the SAME wait re-reported to be a no-op: a different hook or a
+    // different kind is new information and escalates (see nextActivity's "wait kind").
+    const blocked = at({ waiting: true, event: "Notification", waitKind: "approval" });
+    expect(flagEffect(blocked, "waiting", true, "Notification", NOW, "approval")).toEqual({ next: null, rearmReap: false });
   });
 
   // The difference the duplication was hiding: working re-arms the reap when it goes FALSE
@@ -34,8 +37,18 @@ describe("flagEffect", () => {
 
   // A no-op never re-arms — the two must not disagree.
   it("does not re-arm on a no-op even on the re-arming edge", () => {
-    // waiting already true, set true again → no change → must not re-arm
-    expect(flagEffect(at({ waiting: true }), "waiting", true, "Notification", NOW).rearmReap).toBe(false);
+    // The identical wait re-reported → no change → must not re-arm.
+    const blocked = at({ waiting: true, event: "Notification", waitKind: "question" });
+    expect(flagEffect(blocked, "waiting", true, "Notification", NOW, "question").rearmReap).toBe(false);
+  });
+
+  // An escalation IS a change, so it re-arms like any other waiting-goes-true edge: the pane
+  // has just started blocking on something new and must not be reaped on the short grace.
+  it("re-arms when an already-waiting session escalates to a new wait", () => {
+    const unread = at({ waiting: true, event: "Stop" });
+    const e = flagEffect(unread, "waiting", true, "Notification", NOW, "approval");
+    expect(e.next?.waitKind).toBe("approval");
+    expect(e.rearmReap).toBe(true);
   });
 
   it("touches only the flag it is given", () => {

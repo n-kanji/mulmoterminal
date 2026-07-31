@@ -11,12 +11,17 @@
 // plausible output, so it survives review, and the user sees a session that appears to still
 // be working on the task they just abandoned.
 
+import type { WaitKind } from "../../common/paneState.js";
+
 export interface LiveSessionState {
   // Present, including as "", once this process has seen the session. Absent means "this
   // process knows nothing" — only then does the transcript speak.
   lastPrompt?: string;
   lastResponse?: string;
   aiTitle?: string;
+  // Why this pane exists. Never derived from the transcript — the operator (or the agent
+  // in the pane) writes it, and "nothing written" is a real answer, not a gap to fill.
+  mission?: string | null;
 }
 
 export interface TranscriptSessionState {
@@ -28,12 +33,17 @@ export interface SessionActivity {
   working?: boolean;
   waiting?: boolean;
   event?: string | null;
+  waitKind?: WaitKind | null;
+  at?: number;
 }
 
 export interface SessionDetailView {
   working: boolean;
   waiting: boolean;
   event: string | null;
+  waitKind: WaitKind | null;
+  lastActivityAt: number | null;
+  mission: string | null;
   lastPrompt: string | null;
   lastResponse: string | null;
   aiTitle: string | null;
@@ -46,6 +56,9 @@ export function sessionDetailView(live: LiveSessionState, transcript: Transcript
     working: activity.working ?? false,
     waiting: activity.waiting ?? false,
     event: activity.event ?? null,
+    waitKind: activity.waitKind ?? null,
+    lastActivityAt: activity.at ?? null,
+    mission: live.mission ?? null,
     lastPrompt: live.lastPrompt ?? transcript.lastPrompt,
     lastResponse: live.lastResponse ?? transcript.lastResponse,
     // Ours only — never the external on-disk ai-title.

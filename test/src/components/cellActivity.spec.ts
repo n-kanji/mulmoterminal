@@ -2,7 +2,16 @@ import { describe, it, expect } from "vitest";
 
 import { applyActivityPush, cellHeaderText, type CellActivityState } from "../../../src/components/cellActivity";
 
-const shown: CellActivityState = { working: true, waiting: false, event: "Stop", lastPrompt: "fix the login bug", aiTitle: "Login fix" };
+const shown: CellActivityState = {
+  working: true,
+  waiting: false,
+  event: "Stop",
+  waitKind: null,
+  lastActivityAt: 1000,
+  mission: "keep the release branch green",
+  lastPrompt: "fix the login bug",
+  aiTitle: "Login fix",
+};
 
 describe("applyActivityPush", () => {
   it("takes the flags the push carries", () => {
@@ -37,7 +46,38 @@ describe("applyActivityPush", () => {
 
   it("does not mutate the state it was given", () => {
     applyActivityPush(shown, { working: false, lastPrompt: null });
-    expect(shown).toEqual({ working: true, waiting: false, event: "Stop", lastPrompt: "fix the login bug", aiTitle: "Login fix" });
+    expect(shown).toEqual({
+      working: true,
+      waiting: false,
+      event: "Stop",
+      waitKind: null,
+      lastActivityAt: 1000,
+      mission: "keep the release branch green",
+      lastPrompt: "fix the login bug",
+      aiTitle: "Login fix",
+    });
+  });
+
+  // The mission follows the TEXT rule, not the flag rule: it is the one line on the strip that
+  // is meant to survive a whole afternoon of turns, so a push that says nothing about it must
+  // not blank it. Only an explicit null clears it.
+  it("keeps the mission a push says nothing about, and clears it on an explicit null", () => {
+    expect(applyActivityPush(shown, {}).mission).toBe("keep the release branch green");
+    expect(applyActivityPush(shown, { mission: null }).mission).toBeNull();
+  });
+
+  // waitKind follows the FLAG rule: it describes the wait that is happening now. Carrying the
+  // previous one forward would label the next pause with the last one's word — a question
+  // rendered as "承認待ち", promising a yes/no that is not there.
+  it("drops a stale waitKind rather than carrying it into the next wait", () => {
+    const blocked = applyActivityPush(shown, { waiting: true, event: "Notification", waitKind: "approval" });
+    expect(blocked.waitKind).toBe("approval");
+    expect(applyActivityPush(blocked, { waiting: true, event: "Notification" }).waitKind).toBeNull();
+  });
+
+  it("takes the freshness timestamp the push carries, and forgets it when the push has none", () => {
+    expect(applyActivityPush(shown, { lastActivityAt: 4242 }).lastActivityAt).toBe(4242);
+    expect(applyActivityPush(shown, {}).lastActivityAt).toBeNull();
   });
 });
 

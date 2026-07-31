@@ -39,6 +39,7 @@ import {
   type GridState,
   type Cell,
   type PageMeta,
+  type StatusCounts,
   gridStatusSummary,
   isHole,
   realCells,
@@ -54,6 +55,19 @@ import {
   MAX_PAGE_LABEL,
   STATE_KEY,
 } from "../../../src/components/gridTabs.js";
+
+// A full seven-state tally with only the interesting entries named. Shared by countByStatus
+// and gridStatusSummary so adding a state means editing one literal, not two.
+const counts = (over: Partial<StatusCounts> = {}): StatusCounts => ({
+  approval: 0,
+  question: 0,
+  disconnected: 0,
+  unread: 0,
+  working: 0,
+  idle: 0,
+  shell: 0,
+  ...over,
+});
 
 const U = (n: number) => `${String(n % 10).repeat(8)}-aaaa-aaaa-aaaa-aaaaaaaaaaaa`;
 const cell = (uid: number, session: string | null = null, cwd: string | null = null): Cell => ({ uid, session, cwd });
@@ -376,35 +390,35 @@ describe("nextAttention (jump to a terminal that needs you)", () => {
     const after = nextAttention(
       s,
       s.cells.map((c) => c.uid),
-      status({ 10: "blocked" }),
+      status({ 10: "approval" }),
     );
     expect(after.expanded).toBeNull();
     expect(after.page).toBe(1); // but the calling cell is now on screen
   });
 
   it("NEVER collapses the zoom either — it only moves which cell is enlarged", () => {
-    const after = nextAttention(make(running(3), { expanded: 0 }), [0, 1, 2], status({ 2: "blocked" }));
+    const after = nextAttention(make(running(3), { expanded: 0 }), [0, 1, 2], status({ 2: "approval" }));
     expect(after.expanded).toBe(2);
   });
 
   it("prefers blocked over done, even when done is nearer", () => {
-    const after = nextAttention(make(running(3), { expanded: 0 }), [0, 1, 2], status({ 0: "idle", 1: "done", 2: "blocked" }));
+    const after = nextAttention(make(running(3), { expanded: 0 }), [0, 1, 2], status({ 0: "idle", 1: "unread", 2: "approval" }));
     expect(after.expanded).toBe(2);
   });
 
   it("starts from the cell AFTER the zoomed one", () => {
-    const st = status({ 0: "done", 1: "done", 2: "done" });
+    const st = status({ 0: "unread", 1: "unread", 2: "unread" });
     expect(nextAttention(make(running(3), { expanded: 0 }), [0, 1, 2], st).expanded).toBe(1);
     expect(nextAttention(make(running(3), { expanded: 1 }), [0, 1, 2], st).expanded).toBe(2);
   });
 
   it("wraps around, so repeated presses cycle instead of stopping at the end", () => {
-    const st = status({ 0: "done", 1: "idle", 2: "done" });
+    const st = status({ 0: "unread", 1: "idle", 2: "unread" });
     expect(nextAttention(make(running(3), { expanded: 2 }), [0, 1, 2], st).expanded).toBe(0);
   });
 
   it("stays put when the zoomed cell is the ONLY one wanting attention", () => {
-    const st = status({ 0: "idle", 1: "blocked", 2: "idle" });
+    const st = status({ 0: "idle", 1: "approval", 2: "idle" });
     expect(nextAttention(make(running(3), { expanded: 1 }), [0, 1, 2], st).expanded).toBe(1);
   });
 
@@ -414,7 +428,7 @@ describe("nextAttention (jump to a terminal that needs you)", () => {
   });
 
   it("still prefers a calling cell over a nearer idle one", () => {
-    const after = nextAttention(make(running(3), { expanded: 0 }), [0, 1, 2], status({ 0: "idle", 1: "idle", 2: "done" }));
+    const after = nextAttention(make(running(3), { expanded: 0 }), [0, 1, 2], status({ 0: "idle", 1: "idle", 2: "unread" }));
     expect(after.expanded).toBe(2);
   });
 
@@ -459,7 +473,7 @@ describe("nextAttention (jump to a terminal that needs you)", () => {
   });
 
   it("reports the uid it would move to, so the caller can focus that terminal", () => {
-    const st = status({ 0: "idle", 1: "working", 2: "blocked" });
+    const st = status({ 0: "idle", 1: "working", 2: "approval" });
     expect(nextAttentionUid(make(running(3)), [0, 1, 2], st)).toBe(2);
     // Same rotation as nextAttention: starts after the zoomed cell. Here every remaining cell
     // is idle or working, so it settles on the idle one rather than the mid-turn cell.
@@ -490,7 +504,7 @@ describe("nextAttention (jump to a terminal that needs you)", () => {
 
   it("leaves an un-zoomed grid alone when the candidate is already on screen", () => {
     const s = make(running(3), { page: 0 });
-    const after = nextAttention(s, [0, 1, 2], status({ 1: "blocked" }));
+    const after = nextAttention(s, [0, 1, 2], status({ 1: "approval" }));
     expect(after.expanded).toBeNull();
     expect(after.page).toBe(0);
   });
@@ -498,7 +512,7 @@ describe("nextAttention (jump to a terminal that needs you)", () => {
   it("collapsing after a jump made WHILE ZOOMED lands on that cell's page", () => {
     const s = make(running(12), { expanded: 0 });
     const order = s.cells.map((c) => c.uid);
-    const after = nextAttention(s, order, status({ 10: "blocked" }));
+    const after = nextAttention(s, order, status({ 10: "approval" }));
     expect(after.expanded).toBe(10);
     expect(toggleZoom(after, order).page).toBe(1);
   });
@@ -509,7 +523,7 @@ describe("nextAttention (jump to a terminal that needs you)", () => {
   it("reaches a calling cell on ANOTHER page while un-zoomed", () => {
     const s = make(running(12), { page: 0 });
     const order = s.cells.map((c) => c.uid);
-    const after = nextAttention(s, order, status({ 11: "blocked" }));
+    const after = nextAttention(s, order, status({ 11: "approval" }));
     expect(after.expanded).toBeNull(); // still a grid
     expect(after.page).toBe(1); // showing the page that was calling
   });
@@ -706,32 +720,49 @@ describe("setSortMode / moveCell (manual reorder)", () => {
 });
 
 describe("activityStatus", () => {
-  it("splits waiting into blocked (Notification) vs done (Stop)", () => {
-    expect(activityStatus(false, true, "Notification")).toBe("blocked");
-    expect(activityStatus(false, true, "Stop")).toBe("done");
-    expect(activityStatus(false, true, null)).toBe("done"); // any non-Notification waiting -> done
+  it("splits a Notification wait by the kind the server classified, and Stop into unread", () => {
+    expect(activityStatus(false, true, "Notification", "approval")).toBe("approval");
+    expect(activityStatus(false, true, "Notification", "question")).toBe("question");
+    expect(activityStatus(false, true, "Stop")).toBe("unread");
+    expect(activityStatus(false, true, null)).toBe("unread"); // any non-Notification waiting -> unread
+  });
+  // The safe direction to be wrong: "question" asks the operator to look, while "approval"
+  // would promise a yes/no button that is not there.
+  it("falls back to question for an unclassified Notification", () => {
+    expect(activityStatus(false, true, "Notification")).toBe("question");
+    expect(activityStatus(false, true, "Notification", null)).toBe("question");
   });
   it("is working when only working, idle when neither", () => {
     expect(activityStatus(true, false, "UserPromptSubmit")).toBe("working");
     expect(activityStatus(false, false, null)).toBe("idle");
   });
   it("waiting wins over working (a permission pause mid-turn is blocked)", () => {
-    expect(activityStatus(true, true, "Notification")).toBe("blocked");
+    expect(activityStatus(true, true, "Notification", "approval")).toBe("approval");
+  });
+  // The cell's own two facts outrank everything the session table says: a pane whose socket
+  // died cannot be answered, and a shell pane runs no agent at all.
+  it("reports a dead pane as disconnected whatever it was last doing", () => {
+    expect(activityStatus(true, false, "PreToolUse", null, { connected: false })).toBe("disconnected");
+    expect(activityStatus(false, true, "Notification", "approval", { connected: false })).toBe("disconnected");
+  });
+  it("reports a launcher pane as shell", () => {
+    expect(activityStatus(false, false, null, null, { shell: true })).toBe("shell");
   });
 });
 
 describe("countByStatus", () => {
   it("tallies occupied cells by status, skipping empty launchers", () => {
     const cells = [...running(4), cell(4)]; // uid 4 = empty launcher
-    const counts = countByStatus(cells, { 0: "blocked", 1: "blocked", 2: "done", 3: "working" });
-    expect(counts).toEqual({ blocked: 2, done: 1, working: 1, idle: 0 });
+    expect(countByStatus(cells, { 0: "approval", 1: "question", 2: "unread", 3: "working" })).toEqual(
+      counts({ approval: 1, question: 1, unread: 1, working: 1 }),
+    );
   });
   it("treats an unreported occupied cell as idle", () => {
-    expect(countByStatus(running(2), { 0: "working" })).toEqual({ blocked: 0, done: 0, working: 1, idle: 1 });
+    expect(countByStatus(running(2), { 0: "working" })).toEqual(counts({ working: 1, idle: 1 }));
   });
   it("counts a command cell (occupied, no session)", () => {
     const cmd: Cell = { uid: 0, session: null, cwd: null, command: { source: "script", index: 0, label: "Build", cwd: "/x" } };
-    expect(countByStatus([cmd], { 0: "working" })).toEqual({ blocked: 0, done: 0, working: 1, idle: 0 });
+    expect(countByStatus([cmd], { 0: "working" })).toEqual(counts({ working: 1 }));
   });
 });
 
@@ -739,12 +770,18 @@ describe("orderCells (auto attention sort)", () => {
   const status = (m: Record<number, CellStatus>) => m;
   it("manual mode returns the list unchanged", () => {
     const cells = running(3);
-    expect(orderCells(cells, status({ 0: "working", 1: "blocked", 2: "idle" }), "manual")).toBe(cells);
+    expect(orderCells(cells, status({ 0: "working", 1: "approval", 2: "idle" }), "manual")).toBe(cells);
   });
-  it("auto sorts blocked -> done -> idle -> working, launch cells last", () => {
-    const cells = [...running(4), cell(4)]; // uid 4 is an empty launch cell
-    const ordered = orderCells(cells, status({ 0: "working", 1: "blocked", 2: "done", 3: "idle" }), "auto");
-    expect(ordered.map((c) => c.uid)).toEqual([1, 2, 3, 0, 4]);
+  it("auto sorts blocked -> disconnected -> unread -> idle -> working -> shell, launch cells last", () => {
+    const cells = [...running(7), cell(7)]; // uid 7 is an empty launch cell
+    const ordered = orderCells(cells, status({ 0: "working", 1: "approval", 2: "unread", 3: "idle", 4: "shell", 5: "disconnected", 6: "question" }), "auto");
+    expect(ordered.map((c) => c.uid)).toEqual([1, 6, 5, 2, 3, 0, 4, 7]);
+  });
+  // Which of the two is more urgent depends on the pane, not on the kind, so they share a
+  // bucket and the stable sort leaves them in the operator's own column order.
+  it("ranks approval and question equally, newest-first order preserved", () => {
+    const cells = running(2);
+    expect(orderCells(cells, status({ 0: "question", 1: "approval" }), "auto").map((c) => c.uid)).toEqual([0, 1]);
   });
   it("is stable within a bucket (equal status keeps manual order)", () => {
     const cells = running(4);
@@ -763,7 +800,7 @@ describe("visibleOrdered (attention-sort the whole list, then page)", () => {
     // 12 cells over 2 pages. uid 10 starts on page 2; once blocked it sorts to the
     // front and lands on page 1, while the working uid 0 sinks off page 1.
     const s = make(running(12), { page: 0, sortMode: "auto" });
-    const statusByUid: Record<number, CellStatus> = { 0: "working", 1: "blocked", 10: "blocked" };
+    const statusByUid: Record<number, CellStatus> = { 0: "working", 1: "approval", 10: "approval" };
     const page1 = visibleOrdered(s, statusByUid).map((c) => c.uid);
     expect(page1.slice(0, 2)).toEqual([1, 10]); // both blocked cells, base order, up front
     expect(page1).not.toContain(0); // working uid 0 sank to page 2
@@ -771,11 +808,11 @@ describe("visibleOrdered (attention-sort the whole list, then page)", () => {
   });
   it("manual mode leaves the on-screen order untouched", () => {
     const s = make(running(4), { sortMode: "manual" });
-    expect(visibleOrdered(s, { 0: "working", 3: "blocked" }).map((c) => c.uid)).toEqual([0, 1, 2, 3]);
+    expect(visibleOrdered(s, { 0: "working", 3: "approval" }).map((c) => c.uid)).toEqual([0, 1, 2, 3]);
   });
   it("orders the whole list (the filmstrip) while zoomed", () => {
     const s = make(running(12), { page: 0, expanded: 11, sortMode: "auto" });
-    expect(visibleOrdered(s, { 11: "blocked" }).map((c) => c.uid)[0]).toBe(11);
+    expect(visibleOrdered(s, { 11: "approval" }).map((c) => c.uid)[0]).toBe(11);
   });
 });
 
@@ -871,8 +908,8 @@ describe("resolveCellStatus", () => {
   // The server's activity for the cell's session wins: it is the only source that knows a
   // turn is blocked, which is what auto mode sorts on.
   it("prefers the session's live status over the cell's own", () => {
-    const out = resolveCellStatus([cell(1, "s1")], new Map<string, CellStatus>([["s1", "blocked"]]), { 1: "working" });
-    expect(out[1]).toBe("blocked");
+    const out = resolveCellStatus([cell(1, "s1")], new Map<string, CellStatus>([["s1", "approval"]]), { 1: "working" });
+    expect(out[1]).toBe("approval");
   });
 
   // Command cells have no session id, and a just-launched cell has none yet — without the
@@ -890,7 +927,7 @@ describe("resolveCellStatus", () => {
   });
 
   it("answers for every cell, not just the ones with activity", () => {
-    const out = resolveCellStatus([cell(1, "s1"), cell(2, null), cell(3, "s3")], new Map<string, CellStatus>([["s1", "blocked"]]), {});
+    const out = resolveCellStatus([cell(1, "s1"), cell(2, null), cell(3, "s3")], new Map<string, CellStatus>([["s1", "approval"]]), {});
     expect(Object.keys(out).sort()).toEqual(["1", "2", "3"]);
   });
 
@@ -902,40 +939,55 @@ describe("resolveCellStatus", () => {
   it("returns an empty map for no cells", () => {
     expect(resolveCellStatus([], new Map<string, CellStatus>(), {})).toEqual({});
   });
+
+  // The two exceptions to "the session wins". Only the CELL can see that this browser's
+  // socket dropped or that the pane runs a plain shell — the server's row describes an
+  // agent's turn and knows neither. A pane whose socket died while its last row said
+  // "working" must not keep claiming to work, or the auto sort buries it under idle cells.
+  it("lets the cell's disconnected win over the session's last known state", () => {
+    const out = resolveCellStatus([cell(1, "s1")], new Map<string, CellStatus>([["s1", "working"]]), { 1: "disconnected" });
+    expect(out[1]).toBe("disconnected");
+  });
+
+  it("lets the cell's shell win over the session's state", () => {
+    const out = resolveCellStatus([cell(1, "s1")], new Map<string, CellStatus>([["s1", "idle"]]), { 1: "shell" });
+    expect(out[1]).toBe("shell");
+  });
 });
 
 describe("gridStatusSummary", () => {
-  const counts = (over: Partial<Record<"blocked" | "done" | "working" | "idle", number>> = {}) => ({ blocked: 0, done: 0, working: 0, idle: 0, ...over });
-
   it("shows nothing when there are no counts", () => {
     expect(gridStatusSummary(null)).toEqual({ show: false, title: "" });
     expect(gridStatusSummary(undefined)).toEqual({ show: false, title: "" });
   });
 
-  // The asymmetry this exists for: idle alone does not raise the badge — a wholly-idle grid
-  // has nothing to triage, and the strip would be noise on every quiet session.
-  it("does not show for a grid that is only idle", () => {
+  // The asymmetry this exists for: the quiet states alone do not raise the badge — a grid of
+  // nothing but idle and shell panes has nothing to triage, and the strip would be noise.
+  it("does not show for a grid that is only idle or shell", () => {
     expect(gridStatusSummary(counts({ idle: 9 })).show).toBe(false);
+    expect(gridStatusSummary(counts({ idle: 4, shell: 5 })).show).toBe(false);
   });
 
-  it.each(["blocked", "done", "working"] as const)("shows as soon as one cell is %s", (key) => {
+  it.each(["approval", "question", "disconnected", "unread", "working"] as const)("shows as soon as one cell is %s", (key) => {
     expect(gridStatusSummary(counts({ [key]: 1 })).show).toBe(true);
   });
 
-  // …but idle IS in the tooltip text once the strip is up.
+  // …but the quiet ones ARE in the tooltip text once the strip is up.
   it("includes idle in the title even though it does not raise the badge", () => {
     const s = gridStatusSummary(counts({ working: 1, idle: 3 }));
     expect(s.show).toBe(true);
     expect(s.title).toBe("1 working · 3 idle");
   });
 
-  // Reading order: blocked (needs you) first.
-  it("orders the parts blocked, done, working, idle", () => {
-    expect(gridStatusSummary(counts({ blocked: 1, done: 2, working: 3, idle: 4 })).title).toBe("1 need input · 2 done (review) · 3 working · 4 idle");
+  // Reading order: the ones holding the operator up first.
+  it("orders the parts approval, question, disconnected, unread, working, idle, shell", () => {
+    expect(gridStatusSummary(counts({ approval: 1, question: 2, disconnected: 3, unread: 4, working: 5, idle: 6, shell: 7 })).title).toBe(
+      "1 awaiting approval · 2 asking · 3 disconnected · 4 done (review) · 5 working · 6 idle · 7 shell",
+    );
   });
 
   it("omits a zero count from the title", () => {
-    expect(gridStatusSummary(counts({ blocked: 2, working: 1 })).title).toBe("2 need input · 1 working");
+    expect(gridStatusSummary(counts({ approval: 2, working: 1 })).title).toBe("2 awaiting approval · 1 working");
   });
 });
 
@@ -1001,7 +1053,7 @@ describe("zoom invariants (#829)", () => {
   // place, so on a one-cell grid there is nothing for it to refuse.
   it("nextAttention still does not zoom a lone cell", () => {
     const lonely = make([cell(0, U(0)), cell(1)]);
-    expect(nextAttention(lonely, [0, 1], { 0: "blocked" }, null).expanded).toBeNull();
+    expect(nextAttention(lonely, [0, 1], { 0: "approval" }, null).expanded).toBeNull();
   });
 
   it("always allows LEAVING the zoom, even in a state that could not be entered", () => {

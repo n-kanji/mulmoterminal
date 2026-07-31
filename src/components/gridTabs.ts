@@ -1,5 +1,6 @@
 import type { RunCommand } from "./runCommand";
 import { isRecord } from "../../common/isRecord";
+import { paneStateOf, type PaneState, type WaitKind } from "../../common/paneState";
 import { MAX_CELLS } from "./gridLayout";
 
 // The grid is ONE flat, ordered list of terminal cells, split into pages of 9
@@ -38,19 +39,24 @@ export interface Cell {
 // How the grid orders its cells. "manual": the user's hand-arranged order (the move buttons);
 // "auto": attention-first, recomputed from each cell's live status.
 export type SortMode = "manual" | "auto";
-// A cell's live activity, reported up from the cell. Drives the "auto" order and the
-// cell's color/label. `blocked` (needs input/permission) and `done` (finished a turn,
-// output unreviewed) both come from the server's `waiting` flag, split by which hook
-// set it. Absent uids are treated as idle.
-export type CellStatus = "blocked" | "done" | "working" | "idle";
+// A cell's live activity, reported up from the cell. Drives the "auto" order and the cell's
+// colour/label. The vocabulary and the rule that picks one live in common/paneState, because
+// only the SERVER can split a Notification into approval-vs-question and only the client
+// renders it; this alias is the grid's name for the same six words (plus `idle`, the floor
+// that renders as no word at all).
+export type CellStatus = PaneState;
 
-// Map the server's raw activity to a CellStatus. `waiting` means "needs the user";
-// the `event` that set it distinguishes a permission/question pause ("Notification"
-// → blocked, most urgent) from a finished-but-unreviewed turn ("Stop" → done).
-export function activityStatus(working: boolean, waiting: boolean, event: string | null | undefined): CellStatus {
-  if (waiting) return event === "Notification" ? "blocked" : "done";
-  if (working) return "working";
-  return "idle";
+// Map the server's raw activity to a CellStatus. `connected` and `shell` are facts the
+// session table cannot know — a launcher pane runs no agent, and a dead socket is the
+// browser's own observation — so the caller supplies them and they win (see paneStateOf).
+export function activityStatus(
+  working: boolean,
+  waiting: boolean,
+  event: string | null | undefined,
+  waitKind?: WaitKind | null,
+  opts?: { connected?: boolean; shell?: boolean },
+): CellStatus {
+  return paneStateOf({ working, waiting, event, waitKind, connected: opts?.connected ?? true, shell: opts?.shell });
 }
 
 // Fork-local (iTerm2 mode, R1): what a page is besides a number. `label` names it ("orosy");
@@ -492,14 +498,16 @@ export function toggleZoom(state: GridState, order: readonly number[], fromUid: 
   return zoomAt(state, order, at >= 0 ? at : state.page * PAGE_SIZE);
 }
 
-// Search order for "somewhere worth going": the two states that are actually calling —
-// `blocked` (needs an answer now) then `done` (finished, unreviewed) — and `idle` as a
-// fallback, so the key still moves on a board where nothing happens to be waiting.
+// Search order for "somewhere worth going": the states that are actually calling — approval
+// and question (an answer is owed now), then a dead pane (it needs relaunching, and nothing
+// else will tell you), then `unread` (finished, not looked at) — with `idle` as a fallback so
+// the key still moves on a board where nothing happens to be waiting.
 //
 // `working` is deliberately absent: a cell mid-turn is the one place the user has no reason to
-// be, and skipping it is what stops this from being a plain "next cell". This mirrors the
-// attention RANK the "auto" sort already uses, where idle likewise outranks working.
-const ATTENTION_ORDER: readonly CellStatus[] = ["blocked", "done", "idle"];
+// be, and skipping it is what stops this from being a plain "next cell". `shell` is absent for
+// the same reason — it is a terminal the user drives, not one that ever asks for them. This
+// mirrors the attention RANK the "auto" sort already uses.
+const ATTENTION_ORDER: readonly CellStatus[] = ["approval", "question", "disconnected", "unread", "idle"];
 
 // Jump to the next terminal that wants the user, cycling from wherever the zoom is now — the
 // "take me to whoever called" key. Also works un-zoomed, where it doubles as a way in.
@@ -600,12 +608,15 @@ export function moveCell(state: GridState, uid: number, dir: -1 | 1): GridState 
 export const zoomedUid = (state: GridState): number | null =>
   state.expanded !== null && state.cells.some((c) => c.uid === state.expanded && !isHole(c)) ? state.expanded : null;
 
-// Attention-first rank for the "auto" order: blocked (needs input now) first, then
-// done (finished, review it), then idle, then working, with empty launch cells last.
-// Lower sorts earlier.
-const RANK: Record<CellStatus, number> = { blocked: 0, done: 1, idle: 2, working: 3 };
-const LAUNCH_RANK = 4;
-const HOLE_RANK = 5; // a reserved slot is not even a launcher — it sorts behind everything
+// Attention-first rank for the "auto" order, read as "who is holding ME up": the two states
+// that block a turn first — approval and question are EQUAL, because which one is more urgent
+// depends on the pane, not on the kind — then a pane that has died (nothing can be answered
+// until it is relaunched), then finished-unreviewed, then the quiet ones. Working sinks below
+// idle for the reason it always has: a pane mid-turn is the one place there is nothing to do.
+// A shell pane never calls anyone, so it sits under working, above only an empty launch cell.
+const RANK: Record<CellStatus, number> = { approval: 0, question: 0, disconnected: 1, unread: 2, idle: 3, working: 4, shell: 5 };
+const LAUNCH_RANK = 6;
+const HOLE_RANK = 7; // a reserved slot is not even a launcher — it sorts behind everything
 const cellRank = (c: Cell, statusByUid: Record<number, CellStatus>): number => {
   if (isHole(c)) return HOLE_RANK;
   return isLaunchCell(c) ? LAUNCH_RANK : RANK[statusByUid[c.uid] ?? "idle"];
@@ -657,7 +668,7 @@ export type StatusCounts = Record<CellStatus, number>;
 // Tally occupied cells (a running session or command) by status — empty launchers are
 // skipped. Powers the toolbar's at-a-glance "N need you" summary across ALL pages.
 export function countByStatus(cells: Cell[], statusByUid: Record<number, CellStatus>): StatusCounts {
-  const counts: StatusCounts = { blocked: 0, done: 0, working: 0, idle: 0 };
+  const counts: StatusCounts = { approval: 0, question: 0, disconnected: 0, unread: 0, working: 0, idle: 0, shell: 0 };
   for (const c of cells) {
     if (isLaunchCell(c) || isHole(c)) continue;
     counts[statusByUid[c.uid] ?? "idle"]++;
@@ -785,6 +796,13 @@ export function initialState(curRaw: string | null, legacyRaw: string | null): {
 // This feeds orderCells and countByStatus, so getting it backwards is not cosmetic: in auto
 // mode a blocked cell on page 3 stops floating to page 1, which is the entire point of that
 // mode, and the toolbar's "needs you" tally goes with it.
+//
+// TWO states invert that precedence, because they are things only the CELL can see. The
+// server's row describes an agent's turn; it does not know that this browser's socket has
+// dropped (`disconnected`), and it has no concept of a pane running a plain shell (`shell`).
+// A pane whose socket died while its last row said "working" must not keep claiming to work.
+const CELL_OWNED: ReadonlySet<CellStatus> = new Set<CellStatus>(["disconnected", "shell"]);
+
 export function resolveCellStatus(
   cells: readonly { uid: number; session: string | null }[],
   bySession: ReadonlyMap<string, CellStatus>,
@@ -792,21 +810,26 @@ export function resolveCellStatus(
 ): Record<number, CellStatus> {
   const out: Record<number, CellStatus> = {};
   for (const cell of cells) {
+    const own = byUid[cell.uid];
+    if (own && CELL_OWNED.has(own)) {
+      out[cell.uid] = own;
+      continue;
+    }
     const fromSession = cell.session ? bySession.get(cell.session) : undefined;
-    out[cell.uid] = fromSession ?? byUid[cell.uid] ?? "idle";
+    out[cell.uid] = fromSession ?? own ?? "idle";
   }
   return out;
 }
 
 // The toolbar's grid-wide, at-a-glance tally. Two decisions, and the asymmetry is deliberate:
 //
-// The badge shows only when something is actually RUNNING — blocked + done + working > 0.
-// Idle is NOT counted there: a grid of nothing but idle cells has nothing to triage, and
-// surfacing the strip on every quiet session is noise. But idle IS in the tooltip text, as
-// the trailing part, because once the strip is up "how many are idle" is useful context.
+// The badge shows only when something is actually RUNNING or stuck — the quiet states are not
+// counted there: a grid of nothing but idle and shell cells has nothing to triage, and
+// surfacing the strip on every quiet session is noise. They ARE in the tooltip text, as the
+// trailing part, because once the strip is up "how many are idle" is useful context.
 //
-// Order is fixed: blocked (needs you) first, then done, working, idle — the reading order for
-// deciding which cell to look at.
+// Order is fixed: the ones needing an answer first, then a dead pane, then unreviewed,
+// working, and the quiet ones — the reading order for deciding which cell to look at.
 export interface GridStatusSummary {
   show: boolean;
   title: string;
@@ -815,9 +838,13 @@ export interface GridStatusSummary {
 export function gridStatusSummary(counts: StatusCounts | null | undefined): GridStatusSummary {
   if (!counts) return { show: false, title: "" };
   const parts: string[] = [];
-  if (counts.blocked) parts.push(`${counts.blocked} need input`);
-  if (counts.done) parts.push(`${counts.done} done (review)`);
+  if (counts.approval) parts.push(`${counts.approval} awaiting approval`);
+  if (counts.question) parts.push(`${counts.question} asking`);
+  if (counts.disconnected) parts.push(`${counts.disconnected} disconnected`);
+  if (counts.unread) parts.push(`${counts.unread} done (review)`);
   if (counts.working) parts.push(`${counts.working} working`);
   if (counts.idle) parts.push(`${counts.idle} idle`);
-  return { show: counts.blocked + counts.done + counts.working > 0, title: parts.join(" · ") };
+  if (counts.shell) parts.push(`${counts.shell} shell`);
+  const active = counts.approval + counts.question + counts.disconnected + counts.unread + counts.working;
+  return { show: active > 0, title: parts.join(" · ") };
 }

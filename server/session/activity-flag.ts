@@ -10,6 +10,7 @@
 // This decides; the caller applies. `changed` is null when the flag's value did not actually
 // move — every hook calls these, and publishing an unchanged row would flood the socket.
 import type { Activity } from "./types.js";
+import type { WaitKind } from "../../common/paneState.js";
 import { nextActivity } from "./activity-transition.js";
 
 export type ActivityFlag = "working" | "waiting";
@@ -23,8 +24,15 @@ export interface FlagEffect {
 
 // working: re-arm when it goes FALSE (a finished turn might be waiting on the user).
 // waiting: re-arm when it goes TRUE (needing the user escalates to the long grace).
-export function flagEffect(prev: Activity | undefined, flag: ActivityFlag, value: boolean, event: string | undefined, now: number): FlagEffect {
-  const next = nextActivity(prev, flag === "working" ? { working: value } : { waiting: value }, event, now);
+export function flagEffect(
+  prev: Activity | undefined,
+  flag: ActivityFlag,
+  value: boolean,
+  event: string | undefined,
+  now: number,
+  waitKind?: WaitKind | null,
+): FlagEffect {
+  const next = nextActivity(prev, flag === "working" ? { working: value } : { waiting: value }, event, now, waitKind);
   if (!next) return { next: null, rearmReap: false };
   const rearmReap = flag === "working" ? !value : value;
   return { next, rearmReap };

@@ -1,4 +1,5 @@
 import type { PushKind } from "../../common/pushKinds.js";
+import type { WaitKind } from "../../common/paneState.js";
 
 // Pure decision for a Claude activity hook (UserPromptSubmit / Stop / Notification).
 //
@@ -35,6 +36,53 @@ export function activityHookEffects(event: string, active: boolean): ActivityEff
   }
   if (event === "Notification") return active ? [] : [{ kind: "waiting", value: true }];
   return [];
+}
+
+// Which kind of Notification is holding the session up: one the operator can ANSWER with a
+// yes/no (a permission dialog), or one that needs them to read and type something. Both stop
+// the turn, but they cost the operator different amounts of attention, and a grid of thirty
+// panes is unreadable when they share one word.
+//
+// The payload names it. Claude Code's Notification hook carries `notification_type` alongside
+// `message` (verified against the shipped CLI, 2.1.220: the hook input is built as
+// `{hook_event_name:"Notification", message, title, notification_type}`), and the values that
+// reach it are `permission_prompt` (the tool/plan/browser permission dialog), `idle_prompt`
+// ("Claude is waiting for your input"), `elicitation_dialog` / `elicitation_url_dialog` (an MCP
+// server asking), `worker_permission_prompt` (a teammate agent needing permission or network
+// access), plus informational ones. So the type is read first — it is a field, not prose, and
+// it does not move when the wording is reworded.
+//
+// The message is only a FALLBACK, for a Claude old enough to send no type. It matches the
+// permission families by their distinctive verb ("needs your permission", "needs permission
+// for", "needs your approval", "needs network access", "wants to use your browser", "wants to
+// enter plan mode") and nothing else — "Claude Code needs your input" is an elicitation, and
+// must not be dragged into approval by the word "needs".
+//
+// Anything unrecognised is a question. That is the direction to be wrong in: "question" asks
+// the operator to look, while "approval" promises a yes/no that may not be there.
+const APPROVAL_NOTIFICATION_TYPES = new Set(["permission_prompt", "worker_permission_prompt"]);
+const APPROVAL_MESSAGE_PATTERNS = [
+  "needs your permission",
+  "needs permission for",
+  "needs your approval",
+  "needs network access",
+  "wants to use your browser",
+  "wants to enter plan mode",
+];
+
+export function notificationWaitKind(notificationType: unknown, message: unknown): WaitKind {
+  if (typeof notificationType === "string" && notificationType) {
+    return APPROVAL_NOTIFICATION_TYPES.has(notificationType) ? "approval" : "question";
+  }
+  if (typeof message !== "string") return "question";
+  const text = message.toLowerCase();
+  return APPROVAL_MESSAGE_PATTERNS.some((p) => text.includes(p)) ? "approval" : "question";
+}
+
+// The wait kind a hook implies, or null when the hook is not a wait at all. Only a Notification
+// splits; a Stop is "finished, unread" and carries no kind, and clearing the flag must clear it.
+export function waitKindFor(event: string, notificationType: unknown, message: unknown): WaitKind | null {
+  return event === "Notification" ? notificationWaitKind(notificationType, message) : null;
 }
 
 // Which kind of Web Push a hook warrants, or null for none. Two events reach the

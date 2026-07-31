@@ -10,18 +10,18 @@ import {
 const never = () => false;
 const anyId = () => true;
 
-const P = (over: Partial<PersistedActivity> = {}): PersistedActivity => ({ working: false, waiting: false, event: null, ...over });
+const P = (over: Partial<PersistedActivity> = {}): PersistedActivity => ({ working: false, waiting: false, event: null, waitKind: null, at: null, ...over });
 
 describe("buildActivitySnapshot", () => {
   it("keeps working OR waiting sessions with their full state, dropping idle ones", () => {
     const entries: Array<[string, RestartActivity]> = [
-      ["a", { waiting: true, event: "Notification" }],
+      ["a", { waiting: true, event: "Notification", waitKind: "approval", at: 10 }],
       ["b", { working: true, event: "UserPromptSubmit" }],
       ["c", { working: false, waiting: false, event: null }],
     ];
     expect(buildActivitySnapshot(entries, never)).toEqual({
-      a: { working: false, waiting: true, event: "Notification" },
-      b: { working: true, waiting: false, event: "UserPromptSubmit" },
+      a: { working: false, waiting: true, event: "Notification", waitKind: "approval", at: 10 },
+      b: { working: true, waiting: false, event: "UserPromptSubmit", waitKind: null, at: null },
     });
   });
 
@@ -30,30 +30,35 @@ describe("buildActivitySnapshot", () => {
       ["a", { waiting: true, event: "Stop" }],
       ["hidden", { working: true, event: "x" }],
     ];
-    expect(buildActivitySnapshot(entries, (id) => id === "hidden")).toEqual({ a: { working: false, waiting: true, event: "Stop" } });
+    expect(buildActivitySnapshot(entries, (id) => id === "hidden")).toEqual({ a: { working: false, waiting: true, event: "Stop", waitKind: null, at: null } });
   });
 
   it("defaults a missing event to null", () => {
-    expect(buildActivitySnapshot([["a", { waiting: true }]], never)).toEqual({ a: { working: false, waiting: true, event: null } });
+    expect(buildActivitySnapshot([["a", { waiting: true }]], never)).toEqual({ a: { working: false, waiting: true, event: null, waitKind: null, at: null } });
   });
 });
 
 describe("parseActivityState", () => {
-  it("parses id -> {working, waiting, event}", () => {
-    const raw = { a: { working: false, waiting: true, event: "Stop" }, b: { working: true, waiting: false, event: null } };
+  it("parses id -> {working, waiting, event, waitKind, at}", () => {
+    const raw = {
+      a: { working: false, waiting: true, event: "Notification", waitKind: "approval", at: 7 },
+      b: { working: true, waiting: false, event: null },
+    };
     expect(parseActivityState(raw, anyId)).toEqual([
-      { id: "a", working: false, waiting: true, event: "Stop" },
-      { id: "b", working: true, waiting: false, event: null },
+      { id: "a", working: false, waiting: true, event: "Notification", waitKind: "approval", at: 7 },
+      { id: "b", working: true, waiting: false, event: null, waitKind: null, at: null },
     ]);
   });
 
   it("drops ids that fail validation and non-object entries", () => {
     const raw = { good: { waiting: true, event: "Stop" }, "../bad": { waiting: true }, x: "nope" };
-    expect(parseActivityState(raw, (id) => id === "good")).toEqual([{ id: "good", working: false, waiting: true, event: "Stop" }]);
+    expect(parseActivityState(raw, (id) => id === "good")).toEqual([{ id: "good", working: false, waiting: true, event: "Stop", waitKind: null, at: null }]);
   });
 
   it("coerces missing/invalid fields to false/null", () => {
-    expect(parseActivityState({ a: { event: 5 } }, anyId)).toEqual([{ id: "a", working: false, waiting: false, event: null }]);
+    expect(parseActivityState({ a: { event: 5, waitKind: "nonsense", at: "soon" } }, anyId)).toEqual([
+      { id: "a", working: false, waiting: false, event: null, waitKind: null, at: null },
+    ]);
   });
 
   it("returns [] for non-object input", () => {

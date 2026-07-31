@@ -532,6 +532,102 @@ describe("TerminalCell", () => {
     expect(dotClass(w)).toContain("is-done");
   });
 
+  // The six-word intervention vocabulary (common/paneState). The word is the ONE thing an
+  // operator scanning thirty columns reads, so each state has to reach the strip intact.
+  describe("the status strip's state word", () => {
+    const stateWord = (w: ReturnType<typeof mount>) => {
+      const el = w.find('[data-testid="cell-strip-state"]');
+      return el.exists() ? el.text() : "";
+    };
+
+    it("names an approval and a question separately, from the kind the server classified", async () => {
+      const id = "22222222-2222-2222-2222-222222222222";
+      const w = mountCell(id);
+      await flushPromises();
+
+      captured?.({ id, waiting: true, event: "Notification", waitKind: "approval" });
+      await nextTick();
+      expect(stateWord(w)).toBe("承認待ち");
+
+      captured?.({ id, waiting: true, event: "Notification", waitKind: "question" });
+      await nextTick();
+      expect(stateWord(w)).toBe("質問");
+    });
+
+    it("names a finished-unreviewed turn and a running one", async () => {
+      const id = "22222222-2222-2222-2222-222222222222";
+      const w = mountCell(id);
+      await flushPromises();
+
+      captured?.({ id, waiting: true, event: "Stop" });
+      await nextTick();
+      expect(stateWord(w)).toBe("完了・未読");
+
+      captured?.({ id, working: true });
+      await nextTick();
+      expect(stateWord(w)).toBe("実行中");
+    });
+
+    // The reason the vocabulary changed: the old "待機" appeared on most panes most of the
+    // time, which is a column carrying no information. Now the space goes to the summary.
+    it("says nothing at all for a pane with nothing to ask", async () => {
+      const id = "22222222-2222-2222-2222-222222222222";
+      const w = mountCell(id);
+      await flushPromises();
+      captured?.({ id, working: false, waiting: false });
+      await nextTick();
+      expect(w.find('[data-testid="cell-strip-state"]').exists()).toBe(false);
+    });
+  });
+
+  // The mission — why this column exists — is written over HTTP by the agent in the pane, and
+  // arrives on the same row as the flags. It must survive the turn-by-turn churn around it.
+  describe("the status strip's mission", () => {
+    const mission = (w: ReturnType<typeof mount>) => {
+      const el = w.find('[data-testid="cell-strip-mission"]');
+      return el.exists() ? el.text() : "";
+    };
+
+    it("shows a mission the server pushed, marked off from the summary", async () => {
+      const id = "22222222-2222-2222-2222-222222222222";
+      const w = mountCell(id);
+      await flushPromises();
+      captured?.({ id, mission: "keep the release branch green", aiTitle: "fixing the parser" });
+      await nextTick();
+      expect(mission(w)).toBe("[keep the release branch green]");
+      expect(summaryText(w)).toBe("fixing the parser");
+    });
+
+    it("is absent until one is set", async () => {
+      const w = mountCell("22222222-2222-2222-2222-222222222222");
+      await flushPromises();
+      expect(mission(w)).toBe("");
+    });
+
+    // The point of the layer: the summary is rewritten every turn, the mission is not.
+    it("survives the activity pushes that rewrite everything else", async () => {
+      const id = "22222222-2222-2222-2222-222222222222";
+      const w = mountCell(id);
+      await flushPromises();
+      captured?.({ id, mission: "keep the release branch green" });
+      await nextTick();
+      captured?.({ id, working: true, aiTitle: "running the tests" });
+      await nextTick();
+      expect(mission(w)).toBe("[keep the release branch green]");
+    });
+
+    it("clears on an explicit null (the way a blank PUT clears it)", async () => {
+      const id = "22222222-2222-2222-2222-222222222222";
+      const w = mountCell(id);
+      await flushPromises();
+      captured?.({ id, mission: "keep the release branch green" });
+      await nextTick();
+      captured?.({ id, mission: null });
+      await nextTick();
+      expect(mission(w)).toBe("");
+    });
+  });
+
   it("re-seeds its status from the server on a pub/sub reconnect", async () => {
     // The dropped socket missed the push that would have said "working", so the cell is idle.
     // On reconnect it must re-ask /api/session — not sit idle until the session's next event,
@@ -1623,10 +1719,10 @@ describe("TerminalCell", () => {
   it("a filmstrip thumbnail (another cell zoomed) uses the shared roster header, chips stripped", async () => {
     const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj", zoomed: true, expanded: false });
     await flushPromises();
-    // The roster-style header (dir colour applied regardless of status, plus its status badge),
-    // NOT the full info header.
+    // The roster-style header (dir colour applied regardless of status), NOT the full info
+    // header. Its status badge is state-dependent — an idle pane has no word to show
+    // (common/paneState) — so the badge itself is asserted in CockpitHeader's own spec.
     expect(w.find('[data-testid="cockpit-header"]').exists()).toBe(true);
-    expect(w.find('[data-testid="cockpit-badge"]').exists()).toBe(true);
     expect(w.find('[data-testid="cell-header-main"]').exists()).toBe(false);
     // Info stripped: no git chip / usage / open-dir button; the terminal's own header row is hidden.
     expect(w.find('[data-testid="git-chip"]').exists()).toBe(false);

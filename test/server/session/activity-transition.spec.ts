@@ -29,6 +29,7 @@ describe("nextActivity", () => {
       expect(nextActivity(undefined, { working: true }, "UserPromptSubmit", NOW)).toEqual({
         working: true,
         event: "UserPromptSubmit",
+        waitKind: null,
         at: NOW,
       });
     });
@@ -38,6 +39,7 @@ describe("nextActivity", () => {
         working: false,
         waiting: true,
         event: "Stop",
+        waitKind: null,
         at: NOW,
       });
     });
@@ -46,6 +48,7 @@ describe("nextActivity", () => {
       expect(nextActivity({ waiting: true, event: "Notification", at: 1 }, { waiting: false }, undefined, NOW)).toEqual({
         waiting: false,
         event: "Notification",
+        waitKind: null,
         at: NOW,
       });
     });
@@ -85,8 +88,50 @@ describe("nextActivity", () => {
 
   it("drives both setters identically apart from which flag moves", () => {
     const prev = { event: "Stop", at: 1 };
-    expect(nextActivity(prev, { working: true }, undefined, NOW)).toEqual({ working: true, event: "Stop", at: NOW });
-    expect(nextActivity(prev, { waiting: true }, undefined, NOW)).toEqual({ waiting: true, event: "Stop", at: NOW });
+    expect(nextActivity(prev, { working: true }, undefined, NOW)).toEqual({ working: true, event: "Stop", waitKind: null, at: NOW });
+    expect(nextActivity(prev, { waiting: true }, undefined, NOW)).toEqual({ waiting: true, event: "Stop", waitKind: null, at: NOW });
+  });
+
+  // Which KIND of wait is blocking belongs to the wait: recorded when `waiting` goes up,
+  // cleared when it goes down. A kind left behind by a finished wait would label the next one
+  // — a question rendered as "承認待ち", promising a yes/no that is not there.
+  describe("wait kind", () => {
+    it("records the kind when waiting is raised", () => {
+      expect(nextActivity({}, { waiting: true }, "Notification", NOW, "approval")?.waitKind).toBe("approval");
+    });
+
+    it("clears the kind when waiting is dropped", () => {
+      expect(nextActivity({ waiting: true, waitKind: "approval" }, { waiting: false }, undefined, NOW)?.waitKind).toBeNull();
+    });
+
+    it("leaves the kind alone when only the working flag moves", () => {
+      expect(nextActivity({ waiting: true, waitKind: "question" }, { working: true }, "PreToolUse", NOW)?.waitKind).toBe("question");
+    });
+
+    // The one place the no-op rule is relaxed. A session that finished a turn unread and THEN
+    // hits a permission prompt cannot move the flag — it is already true — so without this it
+    // would go on saying "完了・未読" while it blocks.
+    it("escalates an already-waiting session when a new wait arrives", () => {
+      const unread = { waiting: true, event: "Stop", waitKind: null, at: 1 };
+      expect(nextActivity(unread, { waiting: true }, "Notification", NOW, "approval")).toEqual({
+        waiting: true,
+        event: "Notification",
+        waitKind: "approval",
+        at: NOW,
+      });
+    });
+
+    it("escalates when only the kind changes", () => {
+      const asking = { waiting: true, event: "Notification", waitKind: "question" as const, at: 1 };
+      expect(nextActivity(asking, { waiting: true }, "Notification", NOW, "approval")?.waitKind).toBe("approval");
+    });
+
+    // …and it stays a no-op when nothing actually differs, so a repeated Notification cannot
+    // flood the socket. The working-flag re-assertions are untouched (see "no-op detection").
+    it("stays a no-op when the same wait is re-reported", () => {
+      const blocked = { waiting: true, event: "Notification", waitKind: "approval" as const, at: 1 };
+      expect(nextActivity(blocked, { waiting: true }, "Notification", NOW, "approval")).toBeNull();
+    });
   });
 });
 
@@ -100,6 +145,9 @@ describe("sessionRow", () => {
       working: false,
       waiting: false,
       event: null,
+      waitKind: null,
+      lastActivityAt: null,
+      mission: null,
       lastPrompt: null,
       aiTitle: null,
       lastResponse: null,
@@ -111,8 +159,17 @@ describe("sessionRow", () => {
     expect(row).toMatchObject({ working: true, waiting: true, event: "Stop", cwd: "/ws" });
   });
 
-  it("does not leak `at` — it is bookkeeping, not part of the row", () => {
-    expect(Object.keys(sessionRow("S", { working: true, at: 999 }, null, {}))).not.toContain("at");
+  // `at` is no longer only bookkeeping: the pane's dot ages from it. It is published under the
+  // name the client reads it by, and the raw key still stays out of the row.
+  it("publishes `at` as lastActivityAt, not as a raw `at` key", () => {
+    const row = sessionRow("S", { working: true, at: 999 }, null, {});
+    expect(row.lastActivityAt).toBe(999);
+    expect(Object.keys(row)).not.toContain("at");
+  });
+
+  it("carries the wait kind and the mission through", () => {
+    const row = sessionRow("S", { waiting: true, event: "Notification", waitKind: "approval" }, "/ws", { mission: "ship the release" });
+    expect(row).toMatchObject({ waitKind: "approval", mission: "ship the release" });
   });
 
   it("carries the roster texts, defaulting each missing one to null", () => {

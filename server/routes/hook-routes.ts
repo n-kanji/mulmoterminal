@@ -5,7 +5,7 @@
 import type { Express, Request, Response } from "express";
 import { SESSION_ID_RE } from "../config/env.js";
 import { dirConfigWriteTarget } from "../config/dir-config.js";
-import { activityHookEffects, pushKindFor, resolveHookCwd, resolveHookSessionId } from "../session/activity-hook.js";
+import { activityHookEffects, pushKindFor, resolveHookCwd, resolveHookSessionId, waitKindFor } from "../session/activity-hook.js";
 import { headerHookEffect } from "../session/header-hook.js";
 import { lastPrompts, lastResponses, ptys } from "../session/registry.js";
 import { latestUserPrompt } from "../session/session-reads.js";
@@ -14,6 +14,7 @@ import { preferredHeaderPrompt } from "../session/transcript.js";
 import { failPendingTranslation } from "../session/translation-worker.js";
 import type { SessionActivityDeps } from "../session/session-activity-deps.js";
 import { publishesDirConfig, toolHookRecord } from "../session/tool-hook.js";
+import { noteSessionAlias } from "../session/session-alias.js";
 
 // The header shows one line, so a longer prompt is stored truncated rather than in full.
 
@@ -32,10 +33,13 @@ export interface HookDeps extends SessionActivityDeps {
 // Activity hooks update a session's working / needs-attention flags. `active` (this
 // session is the user's actively-viewed pane) suppresses the attention flag — see
 // activityHookEffects for why a mere attached socket doesn't count in the grid.
-function handleActivityHook(deps: HookDeps, sessionId: string, event: string, active: boolean, message: string) {
+// `notificationType` is the Notification hook's own `notification_type` field — the reliable
+// half of the approval-vs-question split, with the message as its fallback (activity-hook).
+function handleActivityHook(deps: HookDeps, sessionId: string, event: string, active: boolean, message: string, notificationType: unknown) {
+  const waitKind = waitKindFor(event, notificationType, message);
   for (const eff of activityHookEffects(event, active)) {
     if (eff.kind === "working") deps.setWorking(sessionId, eff.value, event);
-    else deps.setWaiting(sessionId, eff.value, event);
+    else deps.setWaiting(sessionId, eff.value, event, waitKind);
   }
   // Push regardless of `active` — the phone is elsewhere, unlike the attention beep.
   // A finished turn (Stop) and a blocked one (Notification) both reach here; the kind
@@ -121,6 +125,10 @@ async function handleHookRequest(deps: HookDeps, req: Request, res: Response) {
   const body = req.body || {};
   const sessionId = resolveHookSessionId(req.headers["x-mt-session"], body.session_id, (id) => SESSION_ID_RE.test(id));
   const event = body.hook_event_name;
+  // Every hook shows both ids, and after a /clear they differ. Recording the pairing is what
+  // lets the agent inside a pane address itself by its OWN id — the only one it knows — when
+  // it writes its mission (see session-alias.ts).
+  noteSessionAlias(req.headers["x-mt-session"], body.session_id);
   if (!sessionId && body.session_id) {
     // Rejecting silently would make hooks look simply broken; the id shape is the
     // precondition for using it as a Firestore doc id and as push routing.
@@ -137,7 +145,7 @@ async function handleHookRequest(deps: HookDeps, req: Request, res: Response) {
     // pty — so tracking an id with no pty (any well-formed uuid may be posted here) would never be
     // reclaimed. A session whose pty is gone simply reports no phase, as it does before its first tool.
     if (entry) deps.noteWorkPhase(sessionId, event, typeof body.tool_name === "string" ? body.tool_name : undefined);
-    handleActivityHook(deps, sessionId, event, active, typeof body.message === "string" ? body.message : "");
+    handleActivityHook(deps, sessionId, event, active, typeof body.message === "string" ? body.message : "", body.notification_type);
     await handleToolHook(deps, sessionId, event, body, cwd);
     // A hidden translation worker that ends its turn while still pending never called
     // submitTranslation — fail it now rather than hang until the timeout. (When it DID

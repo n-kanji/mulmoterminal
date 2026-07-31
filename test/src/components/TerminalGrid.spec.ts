@@ -343,12 +343,13 @@ describe("grid cockpit (list view)", () => {
   it("shows the plain status word for a working cell whose sub-phase is unknown", async () => {
     const w = mountCockpit([cell(0, "s0")], 0, [rosterRow(0, { status: "working", workPhase: null })]);
     await nextTick();
-    expect(w.find('[data-testid="cockpit-badge"]').text()).toBe("running");
+    expect(w.find('[data-testid="cockpit-badge"]').text()).toBe("実行中");
   });
 
-  it("ignores workPhase for a non-working cell (idle stays idle)", async () => {
+  // An idle pane has no word at all (common/paneState), so a workPhase cannot smuggle one in.
+  it("ignores workPhase for a non-working cell (idle still says nothing)", async () => {
     const w = mountCockpit([cell(0, "s0")], 0, [rosterRow(0, { status: "idle", workPhase: "implementing" })]);
     await nextTick();
-    expect(w.find('[data-testid="cockpit-badge"]').text()).toBe("idle");
+    expect(w.find('[data-testid="cockpit-badge"]').exists()).toBe(false);
   });
 });

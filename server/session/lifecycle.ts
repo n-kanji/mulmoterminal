@@ -32,6 +32,9 @@ import {
 import { parseWaitGraceMs, reapDecisionFor, reapTimerDelay, shouldForgetActivity } from "./reap-policy.js";
 import { sessionRow, shouldRefreshReply } from "./activity-transition.js";
 import { flagEffect, type ActivityFlag } from "./activity-flag.js";
+import { missionOf } from "./mission-store.js";
+import { forgetSessionAliases } from "./session-alias.js";
+import type { WaitKind } from "../../common/paneState.js";
 import type { WorkPhase } from "./workPhase.js";
 import { readLatestResponse } from "./session-reads.js";
 import { cleanupSessionSettings } from "./session-settings.js";
@@ -140,6 +143,7 @@ function reap(deps: SessionLifecycleDeps, id: string) {
   deps.forgetTitle(id);
   deps.sessionActivityPublisher.forget(id); // drop the phone's copy so its picker has no ghosts
   deps.forgetWorkPhase(id); // the live turn dies with the session
+  forgetSessionAliases(id); // and any post-/clear id that pointed at it
   titleInFlight.delete(id);
   lastTitledUserTurns.delete(id); // teardown only — kept across /clear as the re-title baseline
   lastTitleAttemptMs.delete(id);
@@ -175,6 +179,7 @@ function publishActivity(deps: SessionLifecycleDeps, id: string) {
     lastPrompt: lastPrompts.get(id),
     aiTitle: aiTitles.get(id),
     lastResponse: lastResponses.get(id),
+    mission: missionOf(id),
   });
   deps.sessionActivityPublisher.publish(id, { working: row.working, waiting: row.waiting, event: row.event, workPhase: deps.workPhaseOf(id) });
   deps.publish(SESSIONS_CHANNEL, row);
@@ -184,8 +189,8 @@ function publishActivity(deps: SessionLifecycleDeps, id: string) {
 // flag, publish the change, persist it, and re-arm the reap on the edge that calls for it.
 // A no-op when the flag's value did not actually move — flagEffect returns null and every
 // hook calls through here, so an unchanged publish would flood the socket.
-function setFlag(deps: SessionLifecycleDeps, id: string, flag: ActivityFlag, value: boolean, event?: string) {
-  const effect = flagEffect(activity.get(id), flag, value, event, Date.now());
+function setFlag(deps: SessionLifecycleDeps, id: string, flag: ActivityFlag, value: boolean, event?: string, waitKind?: WaitKind | null) {
+  const effect = flagEffect(activity.get(id), flag, value, event, Date.now(), waitKind);
   if (!effect.next) return;
   activity.set(id, effect.next);
   claimActivityOwnership(id); // this instance drives this session — persist may write/remove it
@@ -204,6 +209,6 @@ export function createSessionLifecycle(deps: SessionLifecycleDeps) {
     reap: (id: string) => reap(deps, id),
     publishActivity: (id: string) => publishActivity(deps, id),
     setWorking: (id: string, working: boolean, event?: string) => setFlag(deps, id, "working", working, event),
-    setWaiting: (id: string, waiting: boolean, event?: string) => setFlag(deps, id, "waiting", waiting, event),
+    setWaiting: (id: string, waiting: boolean, event?: string, waitKind?: WaitKind | null) => setFlag(deps, id, "waiting", waiting, event, waitKind),
   };
 }

@@ -6,18 +6,29 @@
 // window, whose Stop was lost — corrected on the user's next turn).
 
 import { isRecord } from "../../common/isRecord.js";
+import type { WaitKind } from "../../common/paneState.js";
 
 export interface RestartActivity {
   working?: boolean;
   waiting?: boolean;
   event?: string | null;
+  waitKind?: WaitKind | null;
+  at?: number;
 }
 
 export interface PersistedActivity {
   working: boolean;
   waiting: boolean;
   event: string | null;
+  /** Persisted with the flag it belongs to: a restart that dropped it would demote every
+   *  blocked pane from "承認待ち" to the generic "質問" until the next hook. */
+  waitKind: WaitKind | null;
+  /** Persisted so the pane's freshness colour survives a --watch reload rather than
+   *  resetting every session to "just now". Null when never recorded. */
+  at: number | null;
 }
+
+const asWaitKind = (v: unknown): WaitKind | null => (v === "approval" || v === "question" ? v : null);
 
 // The sessions to persist across a restart: those that are working OR waiting (blocked/done),
 // minus hidden translation workers (they flag waiting internally but must never surface, and
@@ -28,7 +39,14 @@ export function buildActivitySnapshot(
 ): Record<string, PersistedActivity> {
   const snapshot: Record<string, PersistedActivity> = {};
   for (const [id, a] of entries) {
-    if ((a.working || a.waiting) && !isHidden(id)) snapshot[id] = { working: !!a.working, waiting: !!a.waiting, event: a.event ?? null };
+    if ((a.working || a.waiting) && !isHidden(id))
+      snapshot[id] = {
+        working: !!a.working,
+        waiting: !!a.waiting,
+        event: a.event ?? null,
+        waitKind: asWaitKind(a.waitKind),
+        at: typeof a.at === "number" ? a.at : null,
+      };
   }
   return snapshot;
 }
@@ -57,7 +75,14 @@ export function parseActivityState(raw: unknown, isValidId: (id: string) => bool
   const out: Array<{ id: string } & PersistedActivity> = [];
   for (const [id, v] of Object.entries(raw)) {
     if (!isValidId(id) || !isRecord(v)) continue;
-    out.push({ id, working: v.working === true, waiting: v.waiting === true, event: typeof v.event === "string" ? v.event : null });
+    out.push({
+      id,
+      working: v.working === true,
+      waiting: v.waiting === true,
+      event: typeof v.event === "string" ? v.event : null,
+      waitKind: asWaitKind(v.waitKind),
+      at: typeof v.at === "number" ? v.at : null,
+    });
   }
   return out;
 }

@@ -17,7 +17,11 @@ vi.mock("../../../src/composables/usePubSub", () => ({
 import { useGridActivity } from "../../../src/composables/useGridActivity";
 import type { CellActivity } from "../../../src/composables/sessionActivity";
 
-const IDLE = { working: false, waiting: false, event: null };
+// A seed row as /api/activity answers it. `act` fills the fields these tests do not care
+// about (the approval/question split and the freshness stamp), so a new wire field does not
+// mean editing every literal in the file.
+const act = (a: Partial<CellActivity> = {}): CellActivity => ({ working: false, waiting: false, event: null, waitKind: null, lastActivityAt: null, ...a });
+const IDLE = act();
 const SESSION = "session-1";
 
 // A seed response this test decides when to answer, so a push can be delivered while the
@@ -100,7 +104,7 @@ describe("useGridActivity", () => {
   });
 
   it("still seeds the state it fetched when nothing arrived meanwhile", async () => {
-    const { answer } = deferredSeed({ [SESSION]: { working: true, waiting: false, event: "seeded" } });
+    const { answer } = deferredSeed({ [SESSION]: act({ working: true, event: "seeded" }) });
     const { get } = mountGrid();
 
     answer();
@@ -110,7 +114,7 @@ describe("useGridActivity", () => {
   });
 
   it("leaves other sessions the seed reported alone", async () => {
-    const { answer } = deferredSeed({ [SESSION]: IDLE, other: { working: true, waiting: false, event: null } });
+    const { answer } = deferredSeed({ [SESSION]: IDLE, other: act({ working: true }) });
     const { get } = mountGrid([SESSION, "other"]);
 
     push({ id: SESSION, working: true, waiting: false, event: "started" });
@@ -145,7 +149,7 @@ describe("useGridActivity", () => {
     }
 
     it("ignores an older answer that lands after a newer one", async () => {
-      const { answerFirst, answerSecond } = twoSeeds({ [SESSION]: IDLE }, { [SESSION]: { working: true, waiting: false, event: "newer" } });
+      const { answerFirst, answerSecond } = twoSeeds({ [SESSION]: IDLE }, { [SESSION]: act({ working: true, event: "newer" }) });
       const { get, seedAgain } = mountGrid();
       await seedAgain();
 

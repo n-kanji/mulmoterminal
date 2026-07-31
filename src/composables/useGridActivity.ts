@@ -43,7 +43,13 @@ export function useGridActivity(sessionIds: Ref<string[]>) {
       const data: Record<string, CellActivity> = await res.json();
       if (seedId !== latestSeed) return;
       for (const [id, a] of Object.entries(data)) {
-        activity.set(id, { working: !!a.working, waiting: !!a.waiting, event: a.event ?? null });
+        activity.set(id, {
+          working: !!a.working,
+          waiting: !!a.waiting,
+          event: a.event ?? null,
+          waitKind: a.waitKind ?? null,
+          lastActivityAt: a.lastActivityAt ?? null,
+        });
       }
       // Stop recording before replaying, or each replayed update records itself again.
       if (pushedDuringSeed === pushed) pushedDuringSeed = null;

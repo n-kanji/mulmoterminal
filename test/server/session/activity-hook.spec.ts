@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { activityHookEffects, buildPushText, pushKindFor, resolveHookCwd, resolveHookSessionId } from "../../../server/session/activity-hook.js";
+import {
+  activityHookEffects,
+  buildPushText,
+  notificationWaitKind,
+  pushKindFor,
+  resolveHookCwd,
+  resolveHookSessionId,
+  waitKindFor,
+} from "../../../server/session/activity-hook.js";
 import { dirConfigWriteTarget } from "../../../server/config/dir-config.js";
 
 describe("activityHookEffects", () => {
@@ -46,6 +54,74 @@ describe("activityHookEffects", () => {
     expect(activityHookEffects("SessionStart", true)).toEqual([]);
     expect(activityHookEffects("PreCompact", false)).toEqual([]);
     expect(activityHookEffects("", false)).toEqual([]);
+  });
+});
+
+// Splitting "the turn stopped on the user" into an approval the operator can answer yes/no and
+// a question they have to read. The payload names it: Claude Code's Notification hook carries
+// `notification_type` next to `message` (verified against the shipped CLI 2.1.220), so the type
+// decides and the message is only the fallback for a Claude too old to send one.
+describe("notificationWaitKind", () => {
+  // The two permission families the CLI emits: the interactive dialog (tool / plan / browser /
+  // paused session all arrive under one type) and a teammate agent asking on its own behalf.
+  it.each(["permission_prompt", "worker_permission_prompt"])("classifies %s as an approval", (type) => {
+    expect(notificationWaitKind(type, "Claude needs your permission")).toBe("approval");
+  });
+
+  it.each(["idle_prompt", "elicitation_dialog", "elicitation_url_dialog"])("classifies %s as a question", (type) => {
+    expect(notificationWaitKind(type, "Claude is waiting for your input")).toBe("question");
+  });
+
+  // A type this build has never seen is still a Notification: the turn HAS stopped, so it must
+  // surface — as a question, the wording that only asks the operator to look.
+  it("falls back to a question for a type it does not recognise", () => {
+    expect(notificationWaitKind("some_future_type", "")).toBe("question");
+    expect(notificationWaitKind(42, "")).toBe("question");
+  });
+
+  // The message fallback, for a Claude old enough to send no type at all.
+  it.each([
+    "Claude needs your permission",
+    "Claude Code needs your approval for the plan",
+    "Claude Code wants to enter plan mode",
+    "Claude wants to use your browser",
+    "agent-7 needs permission for Bash",
+    "worker-2 needs network access to api.github.com",
+  ])("reads %j as an approval when no type is sent", (message) => {
+    expect(notificationWaitKind(undefined, message)).toBe("approval");
+  });
+
+  // The trap in the message fallback: an elicitation says "needs your input", and matching on
+  // "needs" alone would promise a yes/no button that is not on screen.
+  it.each(["Claude is waiting for your input", "Claude Code needs your input", "Session paused", ""])(
+    "reads %j as a question when no type is sent",
+    (message) => {
+      expect(notificationWaitKind(undefined, message)).toBe("question");
+    },
+  );
+
+  it("ignores a non-string message rather than throwing", () => {
+    expect(notificationWaitKind(null, { text: "hi" })).toBe("question");
+  });
+
+  // The type wins outright when present: a permission dialog whose wording changes tomorrow
+  // must not silently demote to "question" because the prose no longer matches.
+  it("prefers the type over the message", () => {
+    expect(notificationWaitKind("permission_prompt", "some entirely new wording")).toBe("approval");
+    expect(notificationWaitKind("idle_prompt", "Claude needs your permission")).toBe("question");
+  });
+});
+
+describe("waitKindFor", () => {
+  it("only classifies a Notification", () => {
+    expect(waitKindFor("Notification", "permission_prompt", "")).toBe("approval");
+    expect(waitKindFor("Notification", undefined, "")).toBe("question");
+  });
+
+  // A finished turn is "unread", not a kind of wait. Returning a kind here would let a Stop
+  // paint the pane with an approval word it never asked for.
+  it.each(["Stop", "UserPromptSubmit", "PreToolUse", ""])("returns null for %j", (event) => {
+    expect(waitKindFor(event, "permission_prompt", "Claude needs your permission")).toBeNull();
   });
 });
 

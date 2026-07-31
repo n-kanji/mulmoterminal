@@ -4,11 +4,17 @@
 import type { IPty } from "node-pty";
 import type { WebSocket } from "ws";
 import type { SessionAgent } from "../../common/sessionAgent.js";
+import type { WaitKind } from "../../common/paneState.js";
 
 export interface Activity {
   working?: boolean;
   waiting?: boolean;
   event?: string | null;
+  /** Which kind of Notification is holding the session up (approval vs question). Set with
+   *  `waiting`, cleared with it, and null for a `waiting` raised by Stop. */
+  waitKind?: WaitKind | null;
+  /** Epoch ms of the last state change. The freshness of the pane's dot is read from this,
+   *  so it is a wire field (lastActivityAt) and not just bookkeeping. */
   at?: number;
 }
 

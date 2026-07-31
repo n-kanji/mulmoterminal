@@ -23,6 +23,9 @@ import CellChromeButtons from "./CellChromeButtons.vue";
 import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
 import { activityStatus, CELL_DRAG_MIME, type CellStatus } from "./gridTabs";
+import { paneStateWord, type WaitKind } from "../../common/paneState";
+import { freshnessOf, type Freshness } from "./paneFreshness";
+import { connView } from "../composables/useTerminalConnections";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
 import { CELL_ACTIONS, CELL_BTN, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
@@ -144,8 +147,17 @@ watch([() => props.presets, () => props.defaultCwd], () => {
 const working = ref(false);
 const waiting = ref(false);
 // The hook that set the current state ("Stop" | "Notification" | …). Splits `waiting`
-// into done (Stop) vs blocked (Notification) — see activityStatus.
+// into unread (Stop) vs blocked-on-the-user (Notification) — see activityStatus.
 const activityEvent = ref<string | null>(null);
+// Which KIND of Notification is blocking: an approval the operator can answer yes/no, or a
+// question they have to read. Classified server-side from the hook's notification_type.
+const waitKind = ref<WaitKind | null>(null);
+// Epoch ms of the last state change, for the dot's freshness colour. Null = never reported.
+const lastActivityAt = ref<number | null>(null);
+// Why this pane exists, as the operator or the agent in it wrote it (PUT /api/session/:id/
+// mission). Independent of the turn-by-turn state — that is the point: the summary goes stale
+// every turn, this does not.
+const mission = ref<string | null>(null);
 const lastPrompt = ref<string | null>(null);
 // A cheap-model summary of the recent turns (issue #316). Preferred over lastPrompt in
 // the header because a raw follow-up prompt goes stale ("ok") or context-dependent once
@@ -218,12 +230,24 @@ let latestBadgeReq = 0;
 function applyActivity(d: ActivityMsg) {
   activityGen++;
   const next = applyActivityPush(
-    { working: working.value, waiting: waiting.value, event: activityEvent.value, lastPrompt: lastPrompt.value, aiTitle: aiTitle.value },
+    {
+      working: working.value,
+      waiting: waiting.value,
+      event: activityEvent.value,
+      waitKind: waitKind.value,
+      lastActivityAt: lastActivityAt.value,
+      mission: mission.value,
+      lastPrompt: lastPrompt.value,
+      aiTitle: aiTitle.value,
+    },
     d,
   );
   working.value = next.working;
   waiting.value = next.waiting;
   activityEvent.value = next.event;
+  waitKind.value = next.waitKind;
+  lastActivityAt.value = next.lastActivityAt;
+  mission.value = next.mission;
   lastPrompt.value = next.lastPrompt;
   aiTitle.value = next.aiTitle;
 }
@@ -829,29 +853,68 @@ const headerDir = computed(() => {
   return wt ? `⎇ ${wt.repo} (${wt.task})` : dirDisplay.value;
 });
 
-// blocked (needs input) / done (finished, unreviewed) / working / idle — split from
-// the server's working+waiting+event (see activityStatus).
-const status = computed<CellStatus>(() => activityStatus(working.value, waiting.value, activityEvent.value));
-const STATUS_CLASS = { blocked: "is-blocked", done: "is-done", working: "is-working", idle: "is-idle" } as const;
-const STATUS_LABEL = { blocked: "Needs input", done: "Done — review", working: "Working…", idle: "Idle" } as const;
+// Whether THIS pane's durable connection is up. The connection manager keys its slots by the
+// same `cell-<uid>` used for persistKey below, so the cell can read its own socket state
+// without another prop. A cell that has not launched yet has no socket and is not "dead" —
+// it is an empty launch form, which reads as idle.
+const connStatus = computed(() => connView.get(`cell-${props.uid}`)?.status ?? null);
+const disconnected = computed(() => launched.value && connStatus.value === "disconnected");
+
+// The six-word intervention vocabulary (common/paneState): approval / question / working /
+// unread / disconnected / shell, with `idle` as the floor that says nothing. `connected` is
+// this cell's own observation and outranks whatever the server last said about the session.
+const status = computed<CellStatus>(() =>
+  activityStatus(working.value, waiting.value, activityEvent.value, waitKind.value, { connected: !disconnected.value }),
+);
+const STATUS_CLASS = {
+  approval: "is-blocked",
+  question: "is-blocked",
+  unread: "is-done",
+  working: "is-working",
+  disconnected: "is-disconnected",
+  shell: "is-idle",
+  idle: "is-idle",
+} as const;
+const STATUS_LABEL = {
+  approval: "Waiting for your approval",
+  question: "Asking you something",
+  unread: "Done — review",
+  working: "Working…",
+  disconnected: "Disconnected",
+  shell: "Shell",
+  idle: "Idle",
+} as const;
 const statusClass = computed(() => STATUS_CLASS[status.value]);
 // The is-* class stays on the element as a state marker (the specs assert it); these
 // carry the styling that used to live in the .cell.is-* / .cell-header.is-* rules.
 // The header colour rides along in the non-blocked branches so two text utilities
 // never race for the same element.
 const HEADER_FG = "text-[var(--cell-header-fg,inherit)]";
+const CELL_QUIET_BORDER = "border-[var(--cell-border,var(--border))]";
+const CELL_BLOCKED = "border-amber shadow-[0_0_0_2px_color-mix(in_srgb,var(--amber)_55%,transparent)]";
 const CELL_STATUS = {
-  // Idle keeps the per-dir --cell-border override; the active states deliberately replace it.
-  idle: "border-[var(--cell-border,var(--border))]",
+  // The quiet states keep the per-dir --cell-border override; the active ones replace it.
+  idle: CELL_QUIET_BORDER,
+  shell: CELL_QUIET_BORDER,
   working: "border-accent",
-  done: "border-accent shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_40%,transparent)]",
-  blocked: "border-amber shadow-[0_0_0_2px_color-mix(in_srgb,var(--amber)_55%,transparent)]",
+  unread: "border-accent shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_40%,transparent)]",
+  // Approval and question share the amber ring: both mean a turn has STOPPED on the operator,
+  // and the ring's job is to be seen from across a 4K grid — the word says which one it is.
+  approval: CELL_BLOCKED,
+  question: CELL_BLOCKED,
+  // Red is used by nothing else here, so a dead pane cannot be misread as a busy one.
+  disconnected: "border-[var(--err)] shadow-[0_0_0_2px_color-mix(in_srgb,var(--err)_45%,transparent)]",
 } as const;
+const HEADER_QUIET = `bg-[var(--cell-header-bg,var(--bg-panel))] border-b-border ${HEADER_FG}`;
+const HEADER_BLOCKED = "bg-[var(--warn-bg-subtle)] border-b-amber text-warn";
 const HEADER_STATUS = {
-  idle: `bg-[var(--cell-header-bg,var(--bg-panel))] border-b-border ${HEADER_FG}`,
+  idle: HEADER_QUIET,
+  shell: HEADER_QUIET,
   working: `bg-selected border-b-accent ${HEADER_FG}`,
-  done: `bg-selected border-b-accent ${HEADER_FG}`,
-  blocked: "bg-[var(--warn-bg-subtle)] border-b-amber text-warn",
+  unread: `bg-selected border-b-accent ${HEADER_FG}`,
+  approval: HEADER_BLOCKED,
+  question: HEADER_BLOCKED,
+  disconnected: `bg-[var(--err-bg)] border-b-[var(--err)] text-[var(--err-text,var(--err))]`,
 } as const;
 // Every state names its own colour: a base tint plus a status tint would be two `bg-*`
 // utilities on one element, and Tailwind's output order — not this map — would pick.
@@ -860,28 +923,64 @@ const headerStatusClass = computed(() => HEADER_STATUS[status.value]);
 const statusLabel = computed(() => STATUS_LABEL[status.value]);
 watch(status, (s) => emit("status", s), { immediate: true });
 
-// Fork-local (iTerm2 mode): the always-visible status strip under the header — the
-// triage row, and the only row the operator actually READS while scanning columns.
-// Vocabulary is intervention-centric (what should I do), not process-centric: 要対応
-// (answer a permission/question NOW) / 未読 (finished, review when convenient) /
-// 実行中 (nothing to do) / 待機 (reviewed, idle). AI summary is the one flexible
-// element; the last prompt only appears when the column is wide enough for it whole.
+// Fork-local (iTerm2 mode): the always-visible status strip under the header — the triage row,
+// and the only row the operator actually READS while scanning columns.
+//
+// Vocabulary is intervention-centric (what should I do), not process-centric, and the six words
+// are defined once in common/paneState because the server classifies them. The word for `idle`
+// is deliberately EMPTY: the old "待機" appeared on most panes most of the time, which is the
+// definition of a column carrying no information — a pane with nothing to ask now gives its
+// space to the summary instead.
+//
+// The AI summary is the one flexible element; the mission sits ahead of it (it is why the pane
+// exists, so it reads first), and the last prompt only appears when the column is wide enough
+// for it whole.
+const STRIP_BLOCKED = "text-[#f59e0b]";
 const STRIP_STATUS = {
   working: "text-[#3b82f6]",
-  blocked: "text-[#f59e0b]",
-  done: "text-[#34d399]",
+  approval: STRIP_BLOCKED,
+  question: STRIP_BLOCKED,
+  unread: "text-[#34d399]",
+  disconnected: "text-[var(--err)]",
+  shell: "text-muted",
   idle: "text-muted",
 } as const;
+// The dot's colour is the STATE at full freshness and the AGE once a pane has been sitting:
+// amber past five minutes, red past thirty. Two dimensions on one 6px dot, and it works
+// because they never compete — a pane the operator is actively working never ages (working is
+// exempt, see paneFreshness), so an aged dot always means "nobody has touched this".
 const STRIP_DOT = {
   working: "bg-[#3b82f6]",
-  blocked: "bg-[#f59e0b]",
-  done: "bg-[#34d399]",
+  approval: "bg-[#f59e0b]",
+  question: "bg-[#f59e0b]",
+  unread: "bg-[#34d399]",
+  disconnected: "bg-[var(--err)]",
+  shell: "bg-[var(--text-dim)]",
   idle: "bg-[var(--text-dim)]",
 } as const;
-const STRIP_LABEL = { working: "実行中", blocked: "要対応", done: "未読", idle: "待機" } as const;
+const FRESHNESS_DOT: Record<Freshness, string | null> = {
+  fresh: null, // keep the state colour
+  aging: "bg-[var(--warn)]",
+  stale: "bg-[var(--err)]",
+};
+const FRESHNESS_TITLE: Record<Freshness, string> = {
+  fresh: "",
+  aging: "5分以上動きなし",
+  stale: "30分以上動きなし",
+};
+
+// Ticks so the dot ages while the pane sits still — without it a stale pane keeps the colour
+// it had when the last push arrived, which is exactly the pane this is meant to surface.
+const FRESHNESS_TICK_MS = 60_000;
+const nowMs = ref(Date.now());
+const freshnessTimer = setInterval(() => (nowMs.value = Date.now()), FRESHNESS_TICK_MS);
+onUnmounted(() => clearInterval(freshnessTimer));
+
+const freshness = computed(() => freshnessOf(status.value, lastActivityAt.value, nowMs.value));
 const stripStatusClass = computed(() => STRIP_STATUS[status.value]);
-const stripDotClass = computed(() => STRIP_DOT[status.value]);
-const stripLabel = computed(() => STRIP_LABEL[status.value]);
+const stripDotClass = computed(() => FRESHNESS_DOT[freshness.value] ?? STRIP_DOT[status.value]);
+const stripDotTitle = computed(() => FRESHNESS_TITLE[freshness.value]);
+const stripLabel = computed(() => paneStateWord(status.value));
 const stripPrompt = computed(() => (lastPrompt.value ? `❯ ${lastPrompt.value}` : ""));
 
 // Row 1 shows no path/badge/id anymore (identity lives in the left stripe + hover);
@@ -1138,15 +1237,36 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           <CellChromeButtons :expanded="expanded" @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
-      <!-- Fork-local (iTerm2 mode): per-pane status line — status word + AI summary + last
-           prompt, always visible in the tiled columns. -->
+      <!-- Fork-local (iTerm2 mode): per-pane status line — status word + mission + AI summary +
+           last prompt, always visible in the tiled columns. Still ONE 22px row: the mission
+           takes space from the summary rather than adding a line, because rows are the scarce
+           resource in a column and readable lines per column is the top UI metric here. -->
       <div
         v-if="!filmstrip"
         data-testid="cell-status-strip"
         class="flex h-[22px] flex-none items-center gap-1.5 overflow-hidden border-b border-b-border px-1.5"
       >
-        <span class="h-1.5 w-1.5 flex-none rounded-full" :class="stripDotClass" aria-hidden="true" />
-        <span class="flex-none font-sans text-[11px] font-medium tracking-wide" :class="stripStatusClass" :title="statusLabel">{{ stripLabel }}</span>
+        <span class="h-1.5 w-1.5 flex-none rounded-full" :class="stripDotClass" :title="stripDotTitle" aria-hidden="true" />
+        <!-- No word at all for a pane with nothing to ask (common/paneState): the summary
+             takes the space rather than a placeholder taking a column-width of it. -->
+        <span
+          v-if="stripLabel"
+          data-testid="cell-strip-state"
+          class="flex-none font-sans text-[11px] font-medium tracking-wide"
+          :class="stripStatusClass"
+          :title="statusLabel"
+          >{{ stripLabel }}</span
+        >
+        <!-- The mission — why this pane exists — ahead of the summary, dimmer and capped at a
+             third of the row: it is read first but must never crowd out what is happening now.
+             Hidden in a narrow column, like the prompt, so the summary keeps a whole line. -->
+        <span
+          v-if="mission"
+          data-testid="cell-strip-mission"
+          class="hidden max-w-[34%] flex-none truncate font-sans text-[11px] text-dim @[340px]/pane:inline"
+          :title="`mission: ${mission}`"
+          >[{{ mission }}]</span
+        >
         <!-- The one flexible element of the row (P0-3): the AI summary, brightest text in
              the pane chrome — dynamic info above static (P1-4). -->
         <span data-testid="cell-strip-summary" class="min-w-0 flex-auto truncate font-sans text-[12px] text-fg" :title="aiTitle ?? ''">{{

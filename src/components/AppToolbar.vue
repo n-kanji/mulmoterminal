@@ -71,6 +71,9 @@ const route = useRoute();
 const summary = computed(() => gridStatusSummary(props.statusCounts));
 const summaryTitle = computed(() => summary.value.title);
 const hasSummary = computed(() => summary.value.show);
+// One "stuck on me" number, not two dots: approval and question are different asks of the
+// operator but the same answer to "should I go look" — the pane's own strip names which.
+const blockedCount = computed(() => (props.statusCounts?.approval ?? 0) + (props.statusCounts?.question ?? 0));
 const { shortcuts } = useShortcuts();
 const { view: browseView } = useCollectionBrowse();
 const { isOpen: accountingOpen } = useAccountingView();
@@ -281,11 +284,16 @@ function showPrs(): void {
         :aria-label="`Grid status — ${summaryTitle}`"
         :title="summaryTitle"
       >
-        <span v-if="statusCounts.blocked" class="inline-flex items-center gap-1 font-mono text-[12px] leading-none text-amber" aria-hidden="true">
-          <span class="h-2 w-2 rounded-full bg-current" />{{ statusCounts.blocked }}
+        <!-- Blocked = approval + question. The toolbar answers "how many are stuck on me",
+             one number; WHICH kind is a per-pane question and the pane's own strip says it. -->
+        <span v-if="blockedCount" class="inline-flex items-center gap-1 font-mono text-[12px] leading-none text-amber" aria-hidden="true">
+          <span class="h-2 w-2 rounded-full bg-current" />{{ blockedCount }}
         </span>
-        <span v-if="statusCounts.done" class="inline-flex items-center gap-1 font-mono text-[12px] leading-none text-accent" aria-hidden="true">
-          <span class="h-2 w-2 rounded-full bg-current" />{{ statusCounts.done }}
+        <span v-if="statusCounts.disconnected" class="inline-flex items-center gap-1 font-mono text-[12px] leading-none text-err" aria-hidden="true">
+          <span class="h-2 w-2 rounded-full bg-current" />{{ statusCounts.disconnected }}
+        </span>
+        <span v-if="statusCounts.unread" class="inline-flex items-center gap-1 font-mono text-[12px] leading-none text-accent" aria-hidden="true">
+          <span class="h-2 w-2 rounded-full bg-current" />{{ statusCounts.unread }}
         </span>
         <span v-if="statusCounts.working" class="inline-flex items-center gap-1 font-mono text-[12px] leading-none text-muted" aria-hidden="true">
           <span class="h-2 w-2 rounded-full bg-current" />{{ statusCounts.working }}
