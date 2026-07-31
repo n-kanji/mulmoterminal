@@ -43,7 +43,7 @@ describe("gridLayout (columns only)", () => {
     expect(trackStyle("3")).toEqual({
       gridTemplateColumns: "1fr 1fr 1fr",
       gridTemplateRows: "1fr",
-      gap: "6px",
+      gap: "4px",
     });
     LAYOUTS.forEach((layout) => {
       const style = trackStyle(layout);

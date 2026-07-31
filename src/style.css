@@ -16,6 +16,7 @@
    from the real app (bg #262624 family, warm off-white text, terracotta accent) so
    long Japanese transcripts read the same in both windows. */
 :root[data-theme="claude"] {
+  color-scheme: dark;
   --bg-base: #262624;
   --bg-deep: #1f1e1c;
   --bg-panel: #2b2a27;
@@ -39,6 +40,7 @@
 }
 
 :root[data-theme="midnight"] {
+  color-scheme: dark;
   --bg-base: #1a1a2e;
   --bg-deep: #11162a;
   --bg-panel: #16213e;
@@ -63,6 +65,7 @@
 
 /* Nord — cool slate, frost-cyan accent (medium-dark). */
 :root[data-theme="nord"] {
+  color-scheme: dark;
   --bg-base: #2e3440;
   --bg-deep: #272b35;
   --bg-panel: #3b4252;
@@ -87,6 +90,7 @@
 
 /* Daylight — bright, cool. White panels on a soft gray base, vivid blue accent. */
 :root[data-theme="daylight"] {
+  color-scheme: light;
   --bg-base: #f4f6fb;
   --bg-deep: #e8edf6;
   --bg-panel: #ffffff;
@@ -111,6 +115,7 @@
 
 /* Solarized Light — bright, warm. Cream base, classic Solarized blue accent. */
 :root[data-theme="solarized"] {
+  color-scheme: light;
   --bg-base: #fdf6e3;
   --bg-deep: #ece5cf;
   --bg-panel: #eee8d5;
@@ -206,4 +211,25 @@
       "GRAD" 0,
       "opsz" 20;
   }
+}
+
+/* Fork-local (iTerm2 mode): the terminal scrollbar. Chrome's default bar rendered as a
+   fat light strip on every pane's right edge (the "white line" complaint); color-scheme
+   above fixes the color, this trims it to a sliver that only asserts itself on hover. */
+.xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
 }

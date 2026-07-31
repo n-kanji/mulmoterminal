@@ -9,6 +9,10 @@ const props = defineProps<{
   agent: "claude" | "codex";
   model: string | null;
   contextTokens: number;
+  // Fork-local (iTerm2 mode): show the model only — Claude's TUI already prints its own
+  // Context % at the bottom of the pane, so the strip copy skips the redundant number.
+  // The full token count stays in the hover title.
+  hideContext?: boolean;
 }>();
 
 // Substring → short label for Claude's model families; matched case-insensitively.
@@ -50,7 +54,30 @@ function shortModelLabel(model: string): string {
   if (preset) return preset.label;
   const lower = model.toLowerCase();
   const family = CLAUDE_FAMILIES.find((f) => lower.includes(f.match));
-  return family ? family.label : (model.split("/").pop() ?? model);
+  if (!family) return model.split("/").pop() ?? model;
+  const version = familyVersion(lower, family.match);
+  return version ? `${family.label} ${version}` : family.label;
+}
+
+// Fork-local (iTerm2 mode): include the version — "Opus" alone can't distinguish a 4.8
+// pane from a 5 pane, and the operator runs both side by side. claude-opus-4-8 → "4.8",
+// claude-opus-5 → "5". Segments of 4+ digits are DATE stamps (claude-opus-4-20250514)
+// and END the version; the pre-4 naming put the version BEFORE the family
+// (claude-3-5-sonnet-…), so both sides are tried in order.
+function familyVersion(lower: string, familyMatch: string): string | null {
+  const afterFamily = new RegExp(`${familyMatch}[-_.]([0-9]+(?:[-_.][0-9]+)*)`);
+  const beforeFamily = new RegExp(`([0-9]+(?:[-_.][0-9]+)*)[-_.]${familyMatch}`);
+  for (const re of [afterFamily, beforeFamily]) {
+    const raw = lower.match(re)?.[1];
+    if (!raw) continue;
+    const parts: string[] = [];
+    for (const seg of raw.split(/[-_.]/)) {
+      if (seg.length >= 4) break;
+      parts.push(seg);
+    }
+    if (parts.length) return parts.join(".");
+  }
+  return null;
 }
 
 function contextWindowTokens(model: string): number | null {
@@ -66,7 +93,7 @@ function contextWindowTokens(model: string): number | null {
 const label = computed(() => (props.model ? shortModelLabel(props.model) : null));
 const windowTokens = computed(() => (props.model ? contextWindowTokens(props.model) : null));
 const ctxPercent = computed(() => (windowTokens.value ? Math.round((props.contextTokens / windowTokens.value) * PERCENT) : null));
-const badgeText = computed(() => (ctxPercent.value !== null ? `${label.value} · ctx ${ctxPercent.value}%` : label.value));
+const badgeText = computed(() => (ctxPercent.value !== null && !props.hideContext ? `${label.value} · ctx ${ctxPercent.value}%` : label.value));
 
 const title = computed(() => {
   if (!props.model) return "";

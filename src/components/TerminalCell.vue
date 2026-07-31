@@ -167,7 +167,11 @@ const context = ref<CellContext | null>(null);
 // the project badge, the status dot/activity, and the row-2 tools timeline stay structural.
 const { chips: headerChips } = useHeaderButtons({ cwd, session: sessionId, agent, model: computed(() => context.value?.model ?? null) });
 const ROW1_BUILTIN_CHIPS = new Set(["git", "diff", "ctx", "usage"]);
-const DEFAULT_CELL_CHIP_IDS = ["git", "diff", "ctx", "usage"];
+// Fork-local (iTerm2 mode): ctx and usage are out of the default header. The model
+// (with its version) sits in the status strip, Claude's own TUI prints Context: % at
+// the bottom of every pane, and the token-transfer chip answered a question the
+// operator never asks. A directory config that explicitly lists them still wins.
+const DEFAULT_CELL_CHIP_IDS = ["git", "diff"];
 interface CellChipView {
   key: string;
   builtin: string | null;
@@ -1160,7 +1164,14 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         <!-- Model + context % pinned at the strip's right edge — the header's ctx chip
              truncates first in a narrow column, and "which model is this pane on" must
              survive at every width (the operator's iTerm2 statusline showed it). -->
-        <ModelContextBadge v-if="context" class="flex-none tabular-nums" :agent="agent" :model="context.model" :context-tokens="context.contextTokens" />
+        <ModelContextBadge
+          v-if="context"
+          class="flex-none tabular-nums"
+          :agent="agent"
+          :model="context.model"
+          :context-tokens="context.contextTokens"
+          hide-context
+        />
       </div>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TerminalView

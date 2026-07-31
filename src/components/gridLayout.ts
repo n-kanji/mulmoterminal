@@ -32,5 +32,5 @@ export function layoutForCount(count: number): Layout {
 export function trackStyle(layout: Layout) {
   const { cols } = dims(layout);
   const tracks = Array.from({ length: cols }, () => "1fr").join(" ");
-  return { gridTemplateColumns: tracks, gridTemplateRows: "1fr", gap: "6px" };
+  return { gridTemplateColumns: tracks, gridTemplateRows: "1fr", gap: "4px" };
 }

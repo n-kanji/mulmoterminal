@@ -637,6 +637,8 @@ describe("TerminalCell", () => {
       const u = String(url);
       if (u.includes("/api/scripts")) return { ok: true, json: async () => ({ cwd: "/p", scripts: [] }) };
       if (u.includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
+      // iTerm2 mode dropped usage from the default chips — these tests opt back in.
+      if (u.includes("/api/header")) return { ok: true, json: async () => ({ buttons: [], chips: [{ kind: "builtin", id: "usage" }] }) };
       return {
         ok: true,
         json: async () => ({
@@ -666,6 +668,7 @@ describe("TerminalCell", () => {
       const u = String(url);
       if (u.includes("/api/scripts")) return { ok: true, json: async () => ({ cwd: "/p", scripts: [] }) };
       if (u.includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
+      if (u.includes("/api/header")) return { ok: true, json: async () => ({ buttons: [], chips: [{ kind: "builtin", id: "usage" }] }) };
       return { ok: true, json: async () => ({ working: false, waiting: false, lastPrompt: null, usage }) };
     }) as unknown as typeof fetch;
     const w = mountCell(id);
@@ -696,6 +699,7 @@ describe("TerminalCell", () => {
       const u = String(url);
       if (u.includes("/api/scripts")) return { ok: true, json: async () => ({ cwd: "/p", scripts: [] }) };
       if (u.includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
+      if (u.includes("/api/header")) return { ok: true, json: async () => ({ buttons: [], chips: [{ kind: "builtin", id: "usage" }] }) };
       if (u.includes(`/api/session/${id}`)) {
         const n = sessionCall++;
         if (n === 0) return { ok: true, json: async () => ({ working: false, waiting: false, lastPrompt: null, usage: INITIAL }) }; // mount seed
@@ -739,6 +743,8 @@ describe("TerminalCell", () => {
       const u = String(url);
       if (u.includes("/api/scripts")) return { ok: true, json: async () => ({ cwd: "/p", scripts: [] }) };
       if (u.includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
+      // iTerm2 mode dropped usage from the default chips — these tests opt back in.
+      if (u.includes("/api/header")) return { ok: true, json: async () => ({ buttons: [], chips: [{ kind: "builtin", id: "usage" }] }) };
       return {
         ok: true,
         json: async () => ({ working: false, waiting: false, lastPrompt: null, context: { model: "claude-opus-4-20250514", contextTokens: 70_000 } }),
@@ -748,7 +754,10 @@ describe("TerminalCell", () => {
     await flushPromises();
     const badge = w.find('[data-testid="model-badge"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toBe("Opus · ctx 35%"); // 70k / 200k
+    // iTerm2 mode: the strip badge carries model + version only — Claude's own TUI
+    // prints the Context % at the bottom of the pane. Tokens stay in the tooltip.
+    expect(badge.text()).toBe("Opus 4");
+    expect(badge.attributes("title")).toContain("70,000 / 200,000 (35%)");
   });
 
   it("renders configured chips: hides an omitted built-in, keeps a listed one, and shows custom text", async () => {
