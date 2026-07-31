@@ -87,6 +87,7 @@ Open it from the ⚙ in the toolbar.
 | `keymap` | User-defined keyboard shortcuts. **Empty by default — nothing is bound** (→ [Keyboard shortcuts](#keymap)) |
 | `prWorkdirFooter` | End a created PR's body with `work in <clone>` (→ [Which clone made this PR](#pr-workdir-footer)). **On by default**; `false` opts out |
 | `cockpitLines` | How many lines each cockpit-roster row shows before clamping (default `2 / 2 / 3` → [Cockpit roster line counts](#cockpit-lines)) |
+| `copyOnSelect` | Put a terminal selection on the clipboard as soon as the drag ends. **On by default**; `false` opts out |
 | `fontFamily` | The font every terminal renders in — a CSS font-family stack (→ [Terminal font](#font-family)) |
 
 ## Running on another model (providers) {#providers}

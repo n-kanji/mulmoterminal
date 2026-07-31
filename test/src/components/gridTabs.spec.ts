@@ -1190,7 +1190,7 @@ describe("pinned pages (sealed workspaces)", () => {
     const s = closeCell(pin(running(12), 0), 7);
     const holeUid = s.cells.filter(isHole)[0].uid;
     const order = s.cells.map((c) => c.uid);
-    expect(countByStatus(s.cells, {})).toEqual({ blocked: 0, done: 0, working: 0, idle: 11 });
+    expect(countByStatus(s.cells, {})).toEqual({ approval: 0, question: 0, disconnected: 0, unread: 0, working: 0, idle: 11, shell: 0 });
     expect(nextAttentionUid(s, order, {}, 6)).toBe(8); // steps over the slot at index 7
     expect(zoomedUid({ ...s, expanded: holeUid })).toBeNull();
     expect(moveZoom({ ...s, expanded: 6 }, order, 1).expanded).toBe(8);
@@ -1227,9 +1227,9 @@ describe("pinned pages (sealed workspaces)", () => {
 
   it("attention-sorts INSIDE each page once a workspace is pinned, and across all pages when none is", () => {
     const across = make(running(12), { sortMode: "auto" });
-    expect(orderGrid(across, { 10: "blocked" }).map((c) => c.uid)[0]).toBe(10); // floats onto page 1
+    expect(orderGrid(across, { 10: "approval" }).map((c) => c.uid)[0]).toBe(10); // floats onto page 1
     const sealed = togglePagePin(across, 0);
-    const ordered = orderGrid(sealed, { 10: "blocked" });
+    const ordered = orderGrid(sealed, { 10: "approval" });
     expect(pageSlice(ordered, 0).map((c) => c.uid)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); // page 0 unchanged
     expect(pageSlice(ordered, 1).map((c) => c.uid)[0]).toBe(10); // sorted, but only within page 1
   });

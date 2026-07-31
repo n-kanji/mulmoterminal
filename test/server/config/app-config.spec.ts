@@ -244,6 +244,7 @@ describe("loadAppConfig / saveAppConfig", () => {
     keymap: {},
     prWorkdirFooter: true,
     cockpitLines: { ...DEFAULT_COCKPIT_LINES },
+    copyOnSelect: true,
     fontFamily: null,
   };
   it("round-trips presets + soundFile + prRepos + launchers + userMcpServers through a file", () => {
@@ -267,6 +268,7 @@ describe("loadAppConfig / saveAppConfig", () => {
       keymap: { "zoom-next": "PageDown" }, // a bound shortcut must survive the round-trip too
       prWorkdirFooter: false, // the opt-out: it defaults ON, so only `false` proves it persisted
       cockpitLines: { summary: 6, prompt: 2, response: 3 }, // a raised clamp must survive it too
+      copyOnSelect: false, // like prWorkdirFooter it defaults ON, so only `false` proves it persisted
       fontFamily: "Cica, monospace", // already normalized, so it must come back byte-identical
     };
     expect(saveAppConfig(file, cfg)).toBe(true);
@@ -318,6 +320,7 @@ describe("loadAppConfig / saveAppConfig", () => {
       providers: [],
       terminalSubmit: "cr",
       prWorkdirFooter: true, // absent from the file — every config predating #872 stays enabled
+      copyOnSelect: true, // ditto: absent means on, so an upgrading user gets copy-on-select
       fontFamily: null,
     });
     rmSync(dir, { recursive: true, force: true });
@@ -419,6 +422,7 @@ describe("#741 corrupt config is not silently wiped by a partial update", () => 
     keymap: {},
     prWorkdirFooter: true,
     cockpitLines: { ...DEFAULT_COCKPIT_LINES },
+    copyOnSelect: true,
     fontFamily: null,
   };
 
@@ -476,6 +480,7 @@ describe("mergeConfigUpdate", () => {
     keymap: {},
     prWorkdirFooter: true,
     cockpitLines: { ...DEFAULT_COCKPIT_LINES },
+    copyOnSelect: true,
     fontFamily: null,
     ...over,
   });
@@ -507,6 +512,13 @@ describe("mergeConfigUpdate", () => {
     expect(mergeConfigUpdate(baseConfig(), { terminalSubmit: "bogus" }).terminalSubmit).toBe("cr"); // invalid => default
     // a chips-only update must not reset the mapping
     expect(mergeConfigUpdate(baseConfig({ terminalSubmit: "esc-cr" }), { chips: ["git"] }).terminalSubmit).toBe("esc-cr");
+  });
+
+  it("applies copyOnSelect from the body and keeps it when omitted", () => {
+    expect(mergeConfigUpdate(baseConfig(), { copyOnSelect: false }).copyOnSelect).toBe(false);
+    // Same shape of trap as prWorkdirFooter: the opt-out must survive an unrelated save, or
+    // the next Settings write silently switches copy-on-select back on.
+    expect(mergeConfigUpdate(baseConfig({ copyOnSelect: false }), { chips: ["git"] }).copyOnSelect).toBe(false);
   });
 
   it("applies prWorkdirFooter from the body and keeps it when omitted", () => {

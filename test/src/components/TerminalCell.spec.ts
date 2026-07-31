@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import TerminalCell from "../../../src/components/TerminalCell.vue";
@@ -1850,5 +1850,88 @@ describe("TerminalCell", () => {
     expect(idle?.classes()).not.toContain("is-running");
     expect(idle?.find('[data-testid="cell-chip-dot"]').exists()).toBe(false);
     expect(idle?.find('[data-testid="cell-chip-launch"]').attributes("aria-label")).not.toContain("already running");
+  });
+
+  // R11 — the copy buttons on the "…" toolbar row. What they copy is the TRANSCRIPT text
+  // (unwrapped, whole), which is the reason they exist at all: reading the screen buffer
+  // gives back the pane's hard wraps and loses whatever scrolled away.
+  describe("copying the last turn", () => {
+    const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+    function mockTurnFetch(turn: { prompt: string | null; reply: string | null }) {
+      const urls: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string) => {
+        const u = String(url);
+        urls.push(u);
+        if (u.includes("/api/transcript/last-turn")) return { ok: true, json: async () => ({ ...turn, text: "FRAMED handoff block" }) };
+        if (u.includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
+        return { ok: true, json: async () => ({ working: false, waiting: false, lastPrompt: null }) };
+      }) as unknown as typeof fetch;
+      return urls;
+    }
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("copies the last reply whole, and says so on the button", async () => {
+      const reply = "renamed the parser\n\n- kept the old export\n- 全文が入る";
+      const urls = mockTurnFetch({ prompt: "what did you change?", reply });
+      const writeText = vi.fn(async () => {});
+      vi.stubGlobal("navigator", { clipboard: { writeText } });
+
+      const w = mountCell(id, { initialCwd: "/home/me/proj", expanded: true });
+      await flushPromises();
+      await w.find('[data-testid="cell-copy-reply"]').trigger("click");
+      await flushPromises();
+
+      // The RAW reply — not the framed handoff text that same route returns for agent-to-agent
+      // relaying, and not a screen scrape.
+      expect(writeText).toHaveBeenCalledWith(reply);
+      expect(w.find('[data-testid="cell-copy-reply"]').text()).toBe("Copied");
+      expect(urls.some((u) => u.includes("/api/transcript/last-turn") && u.includes(`session=${id}`))).toBe(true);
+    });
+
+    it("copies the last prompt from the other button", async () => {
+      mockTurnFetch({ prompt: "what did you change?", reply: "renamed the parser" });
+      const writeText = vi.fn(async () => {});
+      vi.stubGlobal("navigator", { clipboard: { writeText } });
+
+      const w = mountCell(id, { initialCwd: "/home/me/proj", expanded: true });
+      await flushPromises();
+      await w.find('[data-testid="cell-copy-prompt"]').trigger("click");
+      await flushPromises();
+
+      expect(writeText).toHaveBeenCalledWith("what did you change?");
+      expect(w.find('[data-testid="cell-copy-prompt"]').text()).toBe("Copied");
+    });
+
+    // A fresh pane has no completed turn. That is the expected state, not a failure — and it
+    // must not report a copy that did not happen.
+    it("says there is nothing to copy instead of writing an empty clipboard", async () => {
+      mockTurnFetch({ prompt: null, reply: null });
+      const writeText = vi.fn(async () => {});
+      vi.stubGlobal("navigator", { clipboard: { writeText } });
+
+      const w = mountCell(id, { initialCwd: "/home/me/proj", expanded: true });
+      await flushPromises();
+      await w.find('[data-testid="cell-copy-reply"]').trigger("click");
+      await flushPromises();
+
+      expect(writeText).not.toHaveBeenCalled();
+      expect(w.find('[data-testid="cell-copy-reply"]').text()).toBe("No reply");
+    });
+
+    // The always-visible rows are the scarce resource (design principle 2): the buttons live
+    // on the toolbar row that "…" summons, never on the status strip.
+    it("keeps the buttons off the always-visible rows", async () => {
+      mockTurnFetch({ prompt: "q", reply: "a" });
+      const w = mountCell(id, { initialCwd: "/home/me/proj" }); // tiled: no toolbar row
+      await flushPromises();
+      expect(w.find('[data-testid="cell-copy-reply"]').exists()).toBe(false);
+      expect(w.find('[data-testid="cell-status-strip"] [data-testid="cell-copy-reply"]').exists()).toBe(false);
+
+      await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click"); // the "…" row
+      await flushPromises();
+      expect(w.find('[data-testid="cell-copy-reply"]').exists()).toBe(true);
+    });
   });
 });
