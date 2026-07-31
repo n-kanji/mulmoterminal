@@ -31,6 +31,12 @@ export interface Cell {
   launcher?: CellLauncher | null;
   // The agent this cell runs. "codex" reconnects via /ws/codex; absent = Claude (the default).
   agent?: "codex";
+  // Fork-local (iTerm2 mode, R10): a name the OPERATOR gave this pane ("orosy 決済"), or the
+  // one an agent asked for when it opened the column (POST /api/workspace/column `label`).
+  // Persisted, unlike everything else on the status strip: the AI summary is rewritten every
+  // turn and the directory is shared by half the grid, so neither can say WHICH of the four
+  // panes in this repo is which. Absent = the pane has no name and shows its summary.
+  name?: string;
   // Fork-local (iTerm2 mode, R1): a RESERVED SLOT, not a terminal. Holes exist only to hold a
   // pinned page's width open — see the "workspaces" section below. They are never rendered,
   // never occupied, and never somewhere to send anyone.
@@ -91,6 +97,10 @@ export const LEGACY_KEY = "grid_state_v1";
 // A page name is a tab label on a 30px row — long enough for "workspace-1", short enough that
 // eight of them still fit without the row wrapping.
 export const MAX_PAGE_LABEL = 20;
+// R10: a pane name shares its 22px row with the state word and the model badge, so it is capped
+// well below a title. Long enough for "orosy 決済リファクタ", short enough that it can never be
+// the reason the summary loses its line.
+export const MAX_CELL_NAME = 32;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Fork-local (iTerm2 mode, R1): a second browser window runs a SECOND workspace by opening
@@ -303,21 +313,24 @@ export function moveCellTo(state: GridState, uid: number, targetUid: number): Gr
 // so one click goes straight from chip to running pane with no launcher stop. Reuses an
 // already-open trailing launch cell rather than stacking a second one. Returns the cell's
 // uid so the caller can target the auto-launch; -1 means "full, nothing added".
-export function addCellWithCwd(state: GridState, cwd: string): { state: GridState; uid: number } {
+// `name` (R10) is the column's operator-visible name. The chip strip never passes one; the agent
+// self-drive API does, so a column an agent opened for itself arrives already saying WHY.
+export function addCellWithCwd(state: GridState, cwd: string, name?: string | null): { state: GridState; uid: number } {
   const expanded = zoomedUid(state) !== null ? null : state.expanded;
+  const named = name ? cellName(name) : undefined;
   const open = trailingLaunchIndex(state);
   if (open >= 0) {
     const reuse = state.cells[open];
-    const cells = state.cells.map((c) => (c.uid === reuse.uid ? { ...c, cwd } : c));
+    const cells = state.cells.map((c) => (c.uid === reuse.uid ? { ...c, cwd, name: named } : c));
     return { state: { ...state, cells, expanded, page: pageOfIndex(open) }, uid: reuse.uid };
   }
   if (runningCount(state.cells) >= MAX_TERMINALS) return { state, uid: -1 };
   const uid = state.nextUid;
   // Same rule as addCell: the chip opens its column on the page in front of the operator.
   const slot = freeSlot(state, state.page);
-  const filled = slot >= 0 ? insertAt(state, slot, { uid, session: null, cwd }) : null;
+  const filled = slot >= 0 ? insertAt(state, slot, { uid, session: null, cwd, name: named }) : null;
   if (filled) return { state: { ...state, cells: filled, nextUid: state.nextUid + 1, page: pageOfIndex(slot), expanded }, uid };
-  const cells = [...state.cells, { uid, session: null, cwd }];
+  const cells = [...state.cells, { uid, session: null, cwd, name: named }];
   return { state: { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded }, uid };
 }
 
@@ -337,6 +350,17 @@ export function setSession(state: GridState, uid: number, id: string | null): Gr
 
 export function setCwd(state: GridState, uid: number, cwd: string): GridState {
   return { ...state, cells: state.cells.map((c) => (c.uid === uid ? { ...c, cwd } : c)) };
+}
+
+// R10: normalise a pane name. A blank one CLEARS the name (the field is emptied to remove it),
+// which is why this returns undefined rather than "" — an empty string persisted would read as
+// "named, with nothing to show" everywhere that tests the field.
+export const cellName = (name: string): string | undefined => name.trim().slice(0, MAX_CELL_NAME) || undefined;
+
+// R10: name (or un-name) a pane. The one writer — the header's inline rename and the agent API's
+// `label` both land here — so the trimming rule cannot differ between them.
+export function setCellName(state: GridState, uid: number, name: string): GridState {
+  return { ...state, cells: state.cells.map((c) => (c.uid === uid ? { ...c, name: cellName(name) } : c)) };
 }
 
 // Record which agent a cell launched (only "codex" is stored; Claude is the default/absent) so a
@@ -785,6 +809,9 @@ export function parseGridState(raw: string | null): GridState | null {
             cwd: c.cwd,
             launcher: asLauncher(c.launcher),
             agent: c.agent === "codex" ? "codex" : undefined,
+            // Re-trimmed on the way in, not trusted: the blob is hand-editable, and a 10k-char
+            // "name" would take the status strip apart on every pane in the workspace.
+            name: typeof c.name === "string" ? cellName(c.name) : undefined,
           },
     );
     const expandedIdx = running.findIndex((c: Cell) => c.uid === parsed.expanded);

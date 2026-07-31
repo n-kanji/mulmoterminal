@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, useTemplateRef } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from "vue";
 import TerminalView from "./Terminal.vue";
 import { usePubSub } from "../composables/usePubSub";
 import { useDirConfig } from "../composables/useDirConfig";
@@ -22,10 +22,26 @@ import CockpitHeader from "./CockpitHeader.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
 import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
-import { activityStatus, CELL_DRAG_MIME, type CellStatus } from "./gridTabs";
+import { activityStatus, CELL_DRAG_MIME, MAX_CELL_NAME, type CellStatus } from "./gridTabs";
 import { paneStateWord, type WaitKind } from "../../common/paneState";
-import { freshnessOf, type Freshness } from "./paneFreshness";
-import { connView } from "../composables/useTerminalConnections";
+import { freshnessOf } from "./paneFreshness";
+import { connView, insertText as insertIntoSlot } from "../composables/useTerminalConnections";
+import {
+  CELL_STATUS,
+  CELL_STRIP,
+  CELL_STRIP_DOT,
+  CELL_STRIP_MAIN,
+  CELL_STRIP_WORD,
+  FRESHNESS_DOT,
+  FRESHNESS_TITLE,
+  HEADER_STATUS,
+  STATUS_CLASS,
+  STATUS_LABEL,
+  STRIP_DOT,
+  STRIP_STATUS,
+} from "./cellStatusStyles";
+import { dragCarriesFiles, dropTextFromUriList, toShellArg } from "./dropPaths";
+import { pastedImageFile, pasteFailureLabel, uploadPastedImage } from "../composables/usePasteImage";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
 import { CELL_ACTIONS, CELL_BTN, CELL_BTN_BOX, CELL_BTN_INK, CELL_BTN_SIZE, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
@@ -88,13 +104,17 @@ const props = defineProps<
     // Fork-local (iTerm2 mode): a toolbar preset chip opened this cell — launch claude
     // in initialCwd immediately on mount, skipping the launcher form.
     autoLaunch?: boolean;
+    // Fork-local (iTerm2 mode, R10): the operator's own name for this pane, persisted in the
+    // grid state. Null/absent = unnamed, and the strip shows the AI summary as before.
+    name?: string | null;
   }
 >();
 const emit = defineEmits<
   GridCellEmits & {
     // `record-cwd`: auto-record a fresh launch's server-confirmed cwd as a preset.
     // `remove-preset`: drop a preset (its close button) from the shared list — value is the path.
-    (e: "session" | "cwd" | "record-cwd" | "remove-preset", value: string): void;
+    // `rename`: the operator's own name for this pane (R10); an empty value clears it.
+    (e: "session" | "cwd" | "record-cwd" | "remove-preset" | "rename", value: string): void;
     // `run` launches in THIS (empty) cell from the launcher; `runSpare` is the running
     // terminal's header menu, which must NOT replace the session — it runs in a new cell.
     (e: "run" | "runSpare", value: RunCommand): void;
@@ -738,6 +758,86 @@ onUnmounted(() => {
   for (const timer of Object.values(copyTimers)) clearTimeout(timer);
 });
 
+// Fork-local (iTerm2 mode, R10): the pane's own transient line — "saving…", "inserted", a
+// failure. It takes over the status strip's flexible slot for a moment instead of raising a
+// toast: the strip is already the row the operator reads while scanning columns, and a
+// floating notice over one of thirty columns is chrome that costs a reading line.
+const CELL_MSG_MS = 3000;
+const cellMsg = ref<string | null>(null);
+let cellMsgTimer: ReturnType<typeof setTimeout> | null = null;
+// `ms = 0` keeps the message up until the next call replaces it — for the "in progress" half of
+// an upload, which has no honest duration.
+function showCellMsg(msg: string | null, ms: number = CELL_MSG_MS) {
+  cellMsg.value = msg;
+  if (cellMsgTimer) clearTimeout(cellMsgTimer);
+  cellMsgTimer = null;
+  if (msg && ms > 0) cellMsgTimer = setTimeout(() => (cellMsg.value = null), ms);
+}
+onUnmounted(() => {
+  if (cellMsgTimer) clearTimeout(cellMsgTimer);
+});
+
+// R10: the WHOLE pane takes a file drop, not just the terminal canvas.
+//
+// The canvas is the smaller half of a column once the header, the strip and (zoomed) the
+// terminal's own toolbar are counted, and a drop that lands a few pixels high silently did
+// nothing — the operator's report was "it works sometimes". The insert is the same one
+// Terminal.vue does; only the target area is bigger.
+//
+// `defaultPrevented` is the whole coordination: a drop ON the canvas is handled there and
+// bubbles up here already prevented, so this must not insert the path a second time. And the
+// column-reorder drag carries a custom MIME with no "Files" entry, so it never reaches here.
+const fileDragOver = ref(false);
+
+function onCellDragOver(e: DragEvent) {
+  if (!launched.value || !e.dataTransfer || !dragCarriesFiles(e.dataTransfer.types)) return;
+  e.preventDefault(); // required for the drop event to fire
+  e.dataTransfer.dropEffect = "copy";
+  fileDragOver.value = true;
+}
+
+// Only when the pointer actually left the CELL: dragleave also fires on every internal
+// boundary crossing, which would flicker the ring off over the terminal.
+function onCellDragLeave(e: DragEvent) {
+  const root = e.currentTarget instanceof HTMLElement ? e.currentTarget : null;
+  const to = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+  if (!root || !to || !root.contains(to)) fileDragOver.value = false;
+}
+
+function onCellDrop(e: DragEvent) {
+  fileDragOver.value = false;
+  if (e.defaultPrevented) return; // the terminal canvas already inserted it
+  const dt = e.dataTransfer;
+  if (!launched.value || !dt || !dragCarriesFiles(dt.types)) return;
+  e.preventDefault();
+  const text = dropTextFromUriList(dt.getData("text/uri-list") || dt.getData("text/plain"));
+  if (text) insertIntoSlot(`cell-${props.uid}`, text);
+  // Chrome withholds a dropped file's path. Say so — a drop that inserted nothing otherwise
+  // reads as the feature being broken. (The canvas has its own longer hint for the same case.)
+  else showCellMsg("このブラウザはパスを渡しません（クリップは添付ボタンから）");
+}
+
+// R10: Cmd+V an image into the focused pane. A clipboard image has no path — that is exactly
+// why the drop path cannot cover it — so the bytes go to the host, which writes them into the
+// workspace attachment store and answers with a path to insert.
+//
+// A paste with no image is left alone: xterm's own paste handling is what types text into the
+// terminal, and claiming the event would break the ordinary Cmd+V.
+async function onCellPaste(e: ClipboardEvent) {
+  if (!launched.value) return;
+  const file = pastedImageFile(e.clipboardData);
+  if (!file) return;
+  e.preventDefault();
+  showCellMsg("画像を保存中…", 0);
+  const outcome = await uploadPastedImage(file);
+  if (!outcome.ok) {
+    showCellMsg(pasteFailureLabel(outcome.reason));
+    return;
+  }
+  insertIntoSlot(`cell-${props.uid}`, toShellArg(outcome.path));
+  showCellMsg("画像のパスを挿入しました");
+}
+
 // One automatic exchange: our turn goes out, their answer comes back, both submitted.
 // `exchangeStop` is the only way a running exchange ends early, so it is also what the
 // cell unmounting sets — a loop typing into terminals must not outlive its cell.
@@ -898,58 +998,10 @@ const disconnected = computed(() => launched.value && connStatus.value === "disc
 const status = computed<CellStatus>(() =>
   activityStatus(working.value, waiting.value, activityEvent.value, waitKind.value, { connected: !disconnected.value }),
 );
-const STATUS_CLASS = {
-  approval: "is-blocked",
-  question: "is-blocked",
-  unread: "is-done",
-  working: "is-working",
-  disconnected: "is-disconnected",
-  shell: "is-idle",
-  idle: "is-idle",
-} as const;
-const STATUS_LABEL = {
-  approval: "Waiting for your approval",
-  question: "Asking you something",
-  unread: "Done — review",
-  working: "Working…",
-  disconnected: "Disconnected",
-  shell: "Shell",
-  idle: "Idle",
-} as const;
+// The is-* class stays on the element as a state marker (the specs assert it); the tables in
+// cellStatusStyles carry the styling that used to live in the .cell.is-* / .cell-header.is-*
+// rules. They live there rather than here because the launcher pane wears the same two rows.
 const statusClass = computed(() => STATUS_CLASS[status.value]);
-// The is-* class stays on the element as a state marker (the specs assert it); these
-// carry the styling that used to live in the .cell.is-* / .cell-header.is-* rules.
-// The header colour rides along in the non-blocked branches so two text utilities
-// never race for the same element.
-const HEADER_FG = "text-[var(--cell-header-fg,inherit)]";
-const CELL_QUIET_BORDER = "border-[var(--cell-border,var(--border))]";
-const CELL_BLOCKED = "border-amber shadow-[0_0_0_2px_color-mix(in_srgb,var(--amber)_55%,transparent)]";
-const CELL_STATUS = {
-  // The quiet states keep the per-dir --cell-border override; the active ones replace it.
-  idle: CELL_QUIET_BORDER,
-  shell: CELL_QUIET_BORDER,
-  working: "border-accent",
-  unread: "border-accent shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_40%,transparent)]",
-  // Approval and question share the amber ring: both mean a turn has STOPPED on the operator,
-  // and the ring's job is to be seen from across a 4K grid — the word says which one it is.
-  approval: CELL_BLOCKED,
-  question: CELL_BLOCKED,
-  // Red is used by nothing else here, so a dead pane cannot be misread as a busy one.
-  disconnected: "border-[var(--err)] shadow-[0_0_0_2px_color-mix(in_srgb,var(--err)_45%,transparent)]",
-} as const;
-const HEADER_QUIET = `bg-[var(--cell-header-bg,var(--bg-panel))] border-b-border ${HEADER_FG}`;
-const HEADER_BLOCKED = "bg-[var(--warn-bg-subtle)] border-b-amber text-warn";
-const HEADER_STATUS = {
-  idle: HEADER_QUIET,
-  shell: HEADER_QUIET,
-  working: `bg-selected border-b-accent ${HEADER_FG}`,
-  unread: `bg-selected border-b-accent ${HEADER_FG}`,
-  approval: HEADER_BLOCKED,
-  question: HEADER_BLOCKED,
-  disconnected: `bg-[var(--err-bg)] border-b-[var(--err)] text-[var(--err-text,var(--err))]`,
-} as const;
-// Every state names its own colour: a base tint plus a status tint would be two `bg-*`
-// utilities on one element, and Tailwind's output order — not this map — would pick.
 const cellStatusClass = computed(() => CELL_STATUS[status.value]);
 const headerStatusClass = computed(() => HEADER_STATUS[status.value]);
 const statusLabel = computed(() => STATUS_LABEL[status.value]);
@@ -966,40 +1018,8 @@ watch(status, (s) => emit("status", s), { immediate: true });
 //
 // The AI summary is the one flexible element; the mission sits ahead of it (it is why the pane
 // exists, so it reads first), and the last prompt only appears when the column is wide enough
-// for it whole.
-const STRIP_BLOCKED = "text-[#f59e0b]";
-const STRIP_STATUS = {
-  working: "text-[#3b82f6]",
-  approval: STRIP_BLOCKED,
-  question: STRIP_BLOCKED,
-  unread: "text-[#34d399]",
-  disconnected: "text-[var(--err)]",
-  shell: "text-muted",
-  idle: "text-muted",
-} as const;
-// The dot's colour is the STATE at full freshness and the AGE once a pane has been sitting:
-// amber past five minutes, red past thirty. Two dimensions on one 6px dot, and it works
-// because they never compete — a pane the operator is actively working never ages (working is
-// exempt, see paneFreshness), so an aged dot always means "nobody has touched this".
-const STRIP_DOT = {
-  working: "bg-[#3b82f6]",
-  approval: "bg-[#f59e0b]",
-  question: "bg-[#f59e0b]",
-  unread: "bg-[#34d399]",
-  disconnected: "bg-[var(--err)]",
-  shell: "bg-[var(--text-dim)]",
-  idle: "bg-[var(--text-dim)]",
-} as const;
-const FRESHNESS_DOT: Record<Freshness, string | null> = {
-  fresh: null, // keep the state colour
-  aging: "bg-[var(--warn)]",
-  stale: "bg-[var(--err)]",
-};
-const FRESHNESS_TITLE: Record<Freshness, string> = {
-  fresh: "",
-  aging: "5分以上動きなし",
-  stale: "30分以上動きなし",
-};
+// for it whole. A pane the operator NAMED (R10) shows that name in the summary's place — see
+// stripMain below.
 
 // Ticks so the dot ages while the pane sits still — without it a stale pane keeps the colour
 // it had when the last push arrived, which is exactly the pane this is meant to surface.
@@ -1014,6 +1034,37 @@ const stripDotClass = computed(() => FRESHNESS_DOT[freshness.value] ?? STRIP_DOT
 const stripDotTitle = computed(() => FRESHNESS_TITLE[freshness.value]);
 const stripLabel = computed(() => paneStateWord(status.value));
 const stripPrompt = computed(() => (lastPrompt.value ? `❯ ${lastPrompt.value}` : ""));
+
+// R10 — the pane's NAME, and why it outranks the AI summary.
+//
+// The summary answers "what is happening right now" and is rewritten every turn. With four
+// panes open on one repo, that is the one thing which cannot tell them apart: they all say
+// something plausible about the same project. A name the operator typed is stable and is the
+// answer to "which pane is this", so when there is one it takes the row's flexible slot and
+// the summary steps back into the hover title. Nothing is lost — the summary is one hover away
+// and the terminal underneath is showing the same work.
+const named = computed(() => !!props.name);
+const stripMain = computed(() => cellMsg.value || props.name || aiTitle.value || "—");
+const stripMainTitle = computed(() => (props.name && aiTitle.value ? `${props.name} — ${aiTitle.value}` : (props.name ?? aiTitle.value ?? "")));
+
+// Double-clicking the identity text opens the rename in place. Deliberately NOT on the header
+// row above: a click there zooms the cell, so a double-click would zoom and un-zoom on its way
+// to the input — this row has no click action to fight with, and it is where the name shows.
+const renaming = ref(false);
+const nameDraft = ref("");
+const nameInput = useTemplateRef<HTMLInputElement>("nameInput");
+
+function startRename() {
+  nameDraft.value = props.name ?? "";
+  renaming.value = true;
+  void nextTick(() => nameInput.value?.select());
+}
+function commitRename() {
+  if (!renaming.value) return; // Enter commits and blurs; the blur must not commit a second time
+  renaming.value = false;
+  emit("rename", nameDraft.value);
+}
+const cancelRename = () => (renaming.value = false);
 
 // Row 1 shows no path/badge/id anymore (identity lives in the left stripe + hover);
 // everything is still one hover away for debugging and resume.
@@ -1165,8 +1216,12 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
 <template>
   <div
     class="cell @container/pane relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border bg-[var(--cell-bg,var(--bg-base))]"
-    :class="[statusClass, cellStatusClass]"
+    :class="[statusClass, cellStatusClass, { 'cell-file-drop [outline:2px_dashed_var(--accent)] [outline-offset:-2px]': fileDragOver }]"
     :style="[cellStyle, stripeStyle]"
+    @dragover="onCellDragOver"
+    @dragleave="onCellDragLeave"
+    @drop="onCellDrop"
+    @paste="onCellPaste"
   >
     <template v-if="launched">
       <!-- Filmstrip thumbnail: the same roster header (CockpitHeader) — the dir colour is applied
@@ -1273,22 +1328,11 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
            last prompt, always visible in the tiled columns. Still ONE 22px row: the mission
            takes space from the summary rather than adding a line, because rows are the scarce
            resource in a column and readable lines per column is the top UI metric here. -->
-      <div
-        v-if="!filmstrip"
-        data-testid="cell-status-strip"
-        class="flex h-[22px] flex-none items-center gap-1.5 overflow-hidden border-b border-b-border px-1.5"
-      >
-        <span class="h-1.5 w-1.5 flex-none rounded-full" :class="stripDotClass" :title="stripDotTitle" aria-hidden="true" />
+      <div v-if="!filmstrip" data-testid="cell-status-strip" :class="CELL_STRIP">
+        <span :class="[CELL_STRIP_DOT, stripDotClass]" :title="stripDotTitle" aria-hidden="true" />
         <!-- No word at all for a pane with nothing to ask (common/paneState): the summary
              takes the space rather than a placeholder taking a column-width of it. -->
-        <span
-          v-if="stripLabel"
-          data-testid="cell-strip-state"
-          class="flex-none font-sans text-[11px] font-medium tracking-wide"
-          :class="stripStatusClass"
-          :title="statusLabel"
-          >{{ stripLabel }}</span
-        >
+        <span v-if="stripLabel" data-testid="cell-strip-state" :class="[CELL_STRIP_WORD, stripStatusClass]" :title="statusLabel">{{ stripLabel }}</span>
         <!-- The mission — why this pane exists — ahead of the summary, dimmer and capped at a
              third of the row: it is read first but must never crowd out what is happening now.
              Hidden in a narrow column, like the prompt, so the summary keeps a whole line. -->
@@ -1299,11 +1343,32 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           :title="`mission: ${mission}`"
           >[{{ mission }}]</span
         >
-        <!-- The one flexible element of the row (P0-3): the AI summary, brightest text in
-             the pane chrome — dynamic info above static (P1-4). -->
-        <span data-testid="cell-strip-summary" class="min-w-0 flex-auto truncate font-sans text-[12px] text-fg" :title="aiTitle ?? ''">{{
-          aiTitle || "—"
-        }}</span>
+        <!-- The one flexible element of the row (P0-3): the pane's NAME if it has one, else the
+             AI summary — brightest text in the pane chrome, dynamic info above static (P1-4).
+             Double-click to rename in place; Enter commits, Esc cancels, blur commits. -->
+        <input
+          v-if="renaming"
+          ref="nameInput"
+          v-model="nameDraft"
+          data-testid="cell-strip-name-input"
+          class="min-w-0 flex-auto rounded-[3px] border border-accent bg-input px-1 py-0 font-sans text-[12px] leading-[16px] text-fg outline-none"
+          :maxlength="MAX_CELL_NAME"
+          aria-label="Pane name"
+          spellcheck="false"
+          @keydown.enter.prevent="commitRename"
+          @keydown.esc.prevent="cancelRename"
+          @blur="commitRename"
+          @dblclick.stop
+        />
+        <span
+          v-else
+          data-testid="cell-strip-summary"
+          :class="[CELL_STRIP_MAIN, named ? 'font-medium' : '']"
+          :data-named="named ? 'true' : undefined"
+          :title="stripMainTitle"
+          @dblclick.stop="startRename"
+          >{{ stripMain }}</span
+        >
         <!-- The last prompt only when the column can afford it whole — never half-truncated
              into noise next to a half-truncated summary (P0-4). -->
         <span

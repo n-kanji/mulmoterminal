@@ -26,6 +26,8 @@ import { mountOpenDirRoute } from "../files/open-dir.js";
 import { mountGitRemoteRoute } from "../git/gitRemote.js";
 import { mountWorktreeRoutes } from "../git/worktree-routes.js";
 import { mountPickFileRoute } from "../files/pick-file.js";
+import { mountPasteImageRoute } from "../files/paste-image.js";
+import { createSaveAttachment } from "../backends/remoteHost/attachmentStore.js";
 import { mountCommandSummaryRoute } from "../session/command-summary.js";
 import { mountCostRoute } from "../session/cost.js";
 import { mountCollectionRoutes } from "../backends/collections.js";
@@ -248,6 +250,15 @@ function mountSessionFacingRoutes(app: Express, deps: AppRouteDeps): void {
   // path(s) — how a browser tab inserts a real filesystem path into the terminal
   // (the browser hides paths from drag/drop and <input type=file>).
   mountPickFileRoute(app, { isAllowedOrigin: deps.isAllowedOrigin });
+
+  // GRID-ONLY (dev_tool), R10: POST /api/paste-image saves an image pasted over a pane into
+  // the shared workspace attachment store and answers with its absolute path, which the cell
+  // inserts into the terminal. Same store as the phone's chat uploads — see files/paste-image.ts.
+  mountPasteImageRoute(app, {
+    workspace: CLAUDE_CWD,
+    isAllowedOrigin: deps.isAllowedOrigin,
+    saveAttachment: createSaveAttachment(CLAUDE_CWD),
+  });
 
   // POST /api/command/summarize runs `claude -p` headless over a Run cell's captured
   // terminal output and returns a short Errors/Warnings/cause/fix summary (issue #246).
