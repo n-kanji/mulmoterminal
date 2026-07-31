@@ -30,6 +30,7 @@ import { sessionExistsOnDisk } from "../session/session-reads.js";
 import { canStartLauncher, resolveReattachableId, resolveSession, type SessionResolution } from "../session/session-resolve.js";
 import type { PtyEntry } from "../session/types.js";
 import type { SpawnClaudePty, SpawnCodexPty, SpawnCommandPty, SpawnLauncherPty, ResolveLauncher } from "../session/spawners.js";
+import { takeAgentPrompt } from "../session/agent-prompt-queue.js";
 import { terminalWsKind, type TerminalWsKind } from "./terminal-ws-path.js";
 import { normalizeAgent, parseIndexParam } from "./routeParams.js";
 import { codexResumeId } from "../agents/codex-resume.js";
@@ -59,6 +60,14 @@ export interface WsRouteDeps {
 // (tmux new-session -A attaches the running program), so a surviving session with no
 // resolvable launcher index still reattaches via this harmless fallback.
 const DEFAULT_LAUNCH_CMD = process.env.SHELL || "/bin/sh";
+
+// Fork-local (iTerm2 mode, R8): the first turn a POST /api/workspace/column asked for, held
+// on the server (session/agent-prompt-queue.ts) rather than sent through the browser. Claimed
+// only by a session that is genuinely fresh, in the grid, in that directory: a `--resume` has
+// a conversation of its own to continue, and the single view is not what that route opens.
+function queuedFirstTurn(resume: string | null, attachGuiMcp: boolean, cwd: string): string | undefined {
+  return resume || attachGuiMcp ? undefined : takeAgentPrompt(cwd);
+}
 
 function resolveClaudeSession(requested: string | null, cwd: string): SessionResolution {
   const hasLivePty = !!requested && ptys.has(requested);
@@ -264,7 +273,8 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     // file. On reconnect, re-sync it from the (now-refreshed) Keychain so a token that
     // rotated since spawn doesn't leave the reattached session stuck at "Not logged in".
     if (live?.sandbox) writeSandboxCredentials(sessionId);
-    entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch });
+    const initialPrompt = live ? undefined : queuedFirstTurn(resume, attachGuiMcp, cwd); // a reattach must not consume one — nothing spawns to run it
+    entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt });
   } catch (err) {
     // A failed spawn (claude missing, or node-pty's spawn-helper not executable)
     // must close just this connection — never crash the whole server.

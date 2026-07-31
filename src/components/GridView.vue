@@ -54,6 +54,7 @@ import type { RunCommand } from "./runCommand";
 import { EMPTY_SESSION_META, isPrPhase, mergeSessionMeta, type PrPhase, type WorkPhase } from "./rosterPhase";
 import { useGridActivity } from "../composables/useGridActivity";
 import { registerNewTerminalHandler, type NewTerminalRequest } from "../composables/useNewTerminal";
+import { registerAgentColumnHandler } from "../composables/useAgentColumn";
 import { usePendingScript } from "../composables/usePendingScript";
 import { reportActiveTerminals } from "../composables/useUnloadGuard";
 import { useAppConfig } from "../composables/useAppConfig";
@@ -450,6 +451,20 @@ const detachNewTerminal = () => {
 onActivated(() => (offNewTerminal = registerNewTerminalHandler(openNewTerminal)));
 onDeactivated(detachNewTerminal);
 onBeforeUnmount(detachNewTerminal);
+
+// Fork-local (iTerm2 mode, R8): an agent asked for a column of its own
+// (POST /api/workspace/column). Registered on the same ACTIVE-only lifecycle as the opener
+// above, and served by the preset chip's path — the column arrives already running claude,
+// which is the point of the request; a launch form waiting for a human would not be a
+// self-drive API. Its first turn (if any) is typed by the server at spawn.
+let offAgentColumn: (() => void) | null = null;
+const detachAgentColumn = () => {
+  offAgentColumn?.();
+  offAgentColumn = null;
+};
+onActivated(() => (offAgentColumn = registerAgentColumnHandler(({ cwd }) => onQuickLaunch(cwd))));
+onDeactivated(detachAgentColumn);
+onBeforeUnmount(detachAgentColumn);
 
 // Server config: the default workspace dir + the auto-recorded dir presets + sound.
 const { defaultCwd, home, presets, launchers, loadConfig, recordPreset, removePreset, savePresets } = useAppConfig();
