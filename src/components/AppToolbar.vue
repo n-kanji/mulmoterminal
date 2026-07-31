@@ -40,12 +40,28 @@ const props = defineProps<{
   // blocked ("needs you") cell count per directory path, across ALL pages — so an
   // off-screen pane waiting for approval still shows up as an amber badge on its chip.
   presetAlerts?: Record<string, number>;
+  // Fork-local (iTerm2 mode, R10): a chip was just removed and can still be taken back. The
+  // strip shows an Undo in the SLOT IT LEFT — the grid owns the entry and the timer; this is
+  // only what to draw and where.
+  undoChip?: { label: string; index: number } | null;
 }>();
 const emit = defineEmits<{
-  (e: "add-terminal" | "toggle-sort" | "toggle-view" | "settings" | "pick-launch"): void;
+  (e: "add-terminal" | "toggle-sort" | "toggle-view" | "settings" | "pick-launch" | "undo-remove-preset"): void;
   (e: "quick-launch" | "remove-preset", path: string): void;
   (e: "reorder-preset", fromPath: string, toPath: string): void;
 }>();
+
+// The undo takes the removed chip's SLOT without being spliced into the preset list: it is
+// placed by flex `order` instead, so nothing downstream (the drag reorder, the alert badges,
+// the v-for keys) can mistake a placeholder for a directory. Chips take the even orders and
+// the undo the odd one just before the chip that closed the gap; the trailing "+" is pinned
+// past every possible chip.
+const chipOrder = (index: number): number => index * 2;
+const UNDO_ORDER_OFFSET = -1;
+const ADD_BUTTON_ORDER = 9999;
+// The row still has to exist when the LAST chip was the one removed — otherwise removing the
+// only preset would take the undo away with it.
+const showChipRow = computed(() => !!props.presets?.length || !!props.undoChip);
 
 // Fork-local (iTerm2 mode): chip drag & drop reorder, same custom-MIME gating as the
 // grid's cell drag (see gridTabs.CELL_DRAG_MIME rationale).
@@ -163,16 +179,28 @@ function showPrs(): void {
     <span class="flex-none font-sans text-[12px] font-semibold tracking-[0.02em] text-muted" title="MulmoTerminal">MT</span>
     <!-- Fork-local (iTerm2 mode): the preset chips, merged from the old second row.
          The ONLY flex-1 in the header — chips get every spare pixel. -->
-    <div
-      v-if="inGrid && presets?.length"
-      class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
-      aria-label="Quick launch presets"
-    >
+    <div v-if="inGrid && showChipRow" class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Quick launch presets">
+      <!-- The undo stands in the removed chip's own slot (flex order, see chipOrder): the eye
+           is already there, and a notice anywhere else would be a second thing to find. It
+           disappears on its own after a few seconds. -->
+      <button
+        v-if="undoChip"
+        type="button"
+        data-testid="preset-undo"
+        class="inline-flex h-[22px] flex-none cursor-pointer items-center gap-1 rounded-full border border-accent bg-base px-2 font-mono text-[11px] leading-none text-accent hover:bg-hover"
+        :style="{ order: chipOrder(undoChip.index) + UNDO_ORDER_OFFSET }"
+        :title="`${undoChip.label} をプリセットに戻す`"
+        :aria-label="`Undo removing ${undoChip.label}`"
+        @click="emit('undo-remove-preset')"
+      >
+        <span class="material-symbols-outlined text-[13px]" aria-hidden="true">undo</span>Undo
+      </button>
       <span
-        v-for="p in presets"
+        v-for="(p, i) in presets"
         :key="p.path"
         draggable="true"
         class="group relative inline-flex h-[22px] flex-none cursor-grab items-center rounded-full border border-border bg-base leading-none text-muted hover:bg-hover hover:text-fg"
+        :style="{ order: chipOrder(i) }"
         @dragstart="onPresetDragStart($event, p.path)"
         @dragover="onPresetDragOver"
         @drop="onPresetDrop($event, p.path)"
@@ -210,6 +238,7 @@ function showPrs(): void {
       <button
         type="button"
         class="inline-flex h-[22px] flex-none cursor-pointer items-center rounded-full border border-border bg-base px-1.5 text-muted hover:bg-hover hover:text-fg"
+        :style="{ order: ADD_BUTTON_ORDER }"
         title="Pick a folder and open a new column there"
         aria-label="Pick a folder and open a new column there"
         @click="emit('pick-launch')"

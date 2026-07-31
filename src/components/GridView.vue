@@ -13,6 +13,7 @@ import {
   setSession,
   setCwd,
   setCellAgent,
+  setCellName,
   closeCell,
   toggleExpand,
   switchPage,
@@ -73,6 +74,9 @@ import { reportActiveTerminals } from "../composables/useUnloadGuard";
 import { useAppConfig } from "../composables/useAppConfig";
 import { fetchDirConfig, invalidateDirConfig } from "../composables/useDirConfig";
 import { usePubSub } from "../composables/usePubSub";
+import { holdOrder } from "./sortHold";
+import { useTypingHold } from "../composables/useTypingHold";
+import { PRESET_UNDO_MS, restorePreset, takePresetUndo, type PendingPresetUndo } from "./presetUndo";
 import type { LaunchAgent } from "../../common/launchAgent";
 
 // The multi-terminal grid view, shown at /terminals. Leaving the grid is just a
@@ -143,7 +147,18 @@ const statusCounts = computed(() => countByStatus(state.value.cells, statusForSo
 const reorderable = computed(() => state.value.sortMode === "manual");
 // In "auto" mode the whole list is attention-sorted; "manual" keeps the hand-arranged order.
 // The ONE ordering both the grid and the cockpit roster read, so the two can't drift (#720).
-const orderedCells = computed(() => orderGrid(state.value, statusForSort.value));
+const liveOrder = computed(() => orderGrid(state.value, statusForSort.value));
+
+// Fork-local (iTerm2 mode, R10): the auto sort is HELD while the operator is typing into a
+// terminal. A status change anywhere in the fleet re-sorts the columns, and mid-sentence that
+// slides a different pane under the cursor — the remaining keystrokes then land in it, and
+// there is nothing to undo. The hold releases 2 seconds after the last keystroke or the moment
+// the terminal loses focus (see useTypingHold); `holdOrder` reconciles rather than replays, so
+// a column closed or opened during the hold is still handled.
+const { holding: typingHold } = useTypingHold();
+const heldUids = ref<number[] | null>(null);
+watch(typingHold, (holding) => (heldUids.value = holding ? liveOrder.value.map((c) => c.uid) : null));
+const orderedCells = computed(() => (heldUids.value ? holdOrder(liveOrder.value, heldUids.value) : liveOrder.value));
 // The grid: while a cell is zoomed, render EVERY cell (the filmstrip lines up all tabs' terminals,
 // live); otherwise just the active page's slice. A waiting cell from any page floats to the front.
 const displayCells = computed(() => (zoomedUid(state.value) !== null ? orderedCells.value : pageSlice(orderedCells.value, state.value.page)));
@@ -364,9 +379,10 @@ const onSession = (uid: number, id: string) => {
 
 // Fork-local (iTerm2 mode): a preset chip in the permanent strip — one click opens a new
 // column already running claude in that project (addCellWithCwd + TerminalCell autoLaunch).
+// `name` (R10) is only ever set by the agent self-drive API's `label`; a chip click passes none.
 const quickLaunchUid = ref<number | null>(null);
-function onQuickLaunch(path: string) {
-  const next = addCellWithCwd(state.value, path);
+function onQuickLaunch(path: string, name?: string | null) {
+  const next = addCellWithCwd(state.value, path, name);
   if (next.uid < 0) return; // grid full — the chip does nothing rather than half-launching
   state.value = next.state;
   quickLaunchUid.value = next.uid;
@@ -415,6 +431,9 @@ async function onPickAndLaunch() {
 }
 const onCwd = (uid: number, cwd: string) => (state.value = setCwd(state.value, uid, cwd));
 const onAgent = (uid: number, agent: "claude" | "codex") => (state.value = setCellAgent(state.value, uid, agent));
+// R10: the cell's inline rename. Persisted with the rest of the grid state (the `state` watcher
+// writes localStorage), so a pane keeps its name across a reload like its session and dir do.
+const onRename = (uid: number, name: string) => (state.value = setCellName(state.value, uid, name));
 // Pass the on-screen order so closing the zoomed cell stays zoomed on its filmstrip
 // neighbour (previous, or next when it was the first) instead of collapsing the grid.
 const onClose = (uid: number) =>
@@ -523,7 +542,10 @@ const detachAgentColumn = () => {
   offAgentColumn?.();
   offAgentColumn = null;
 };
-onActivated(() => (offAgentColumn = registerAgentColumnHandler(({ cwd }) => onQuickLaunch(cwd))));
+// R10: the request's `label` is the new column's NAME. It was carried on the event from the
+// day the API landed and logged in the meantime, because the grid had no per-cell name field
+// then; now it lands on the cell and the column arrives saying why it exists.
+onActivated(() => (offAgentColumn = registerAgentColumnHandler(({ cwd, label }) => onQuickLaunch(cwd, label))));
 onDeactivated(detachAgentColumn);
 onBeforeUnmount(detachAgentColumn);
 
@@ -557,6 +579,36 @@ onBeforeUnmount(detachReveal);
 const { defaultCwd, home, presets, launchers, loadConfig, recordPreset, removePreset, savePresets } = useAppConfig();
 const showSettings = ref(false);
 onMounted(loadConfig);
+
+// Fork-local (iTerm2 mode, R10): removing a preset chip is undoable for 5 seconds, inline in
+// the slot the chip just left. The x sits a few pixels from the chip's own launch button, so a
+// mis-click deletes a project that then has to be re-found in a folder dialog. The pending
+// entry is held HERE, next to the preset writers, so the undo re-registers with the server
+// through the same serialised savePresets every other preset mutation uses.
+const pendingUndo = ref<PendingPresetUndo | null>(null);
+let undoTimer: ReturnType<typeof setTimeout> | null = null;
+const clearUndo = () => {
+  if (undoTimer) clearTimeout(undoTimer);
+  undoTimer = null;
+  pendingUndo.value = null;
+};
+function onRemovePreset(path: string) {
+  const pending = takePresetUndo(presets.value, path);
+  void removePreset(path);
+  if (!pending) return; // not in the list — nothing was removed, so there is nothing to offer
+  if (undoTimer) clearTimeout(undoTimer);
+  pendingUndo.value = pending;
+  undoTimer = setTimeout(clearUndo, PRESET_UNDO_MS);
+}
+function onUndoRemovePreset() {
+  const pending = pendingUndo.value;
+  clearUndo();
+  if (pending) void savePresets(restorePreset(presets.value, pending));
+}
+onBeforeUnmount(clearUndo);
+// What the toolbar renders in the vacated slot. Trimmed to what it draws so the toolbar never
+// holds the entry itself — the restore is this component's to perform.
+const undoChip = computed(() => (pendingUndo.value ? { label: pendingUndo.value.preset.label, index: pendingUndo.value.index } : null));
 
 function closeSettings() {
   showSettings.value = false;
@@ -677,12 +729,14 @@ function configureAppearance() {
       :list-mode="listModeOn"
       :presets="presets"
       :preset-alerts="presetAlerts"
+      :undo-chip="undoChip"
       @add-terminal="onAddTerminal"
       @toggle-sort="toggleSortMode"
       @toggle-view="toggleListMode"
       @settings="showSettings = true"
       @quick-launch="onQuickLaunch"
-      @remove-preset="removePreset"
+      @remove-preset="onRemovePreset"
+      @undo-remove-preset="onUndoRemovePreset"
       @reorder-preset="onReorderPreset"
       @pick-launch="onPickAndLaunch"
     />
@@ -736,7 +790,8 @@ function configureAppearance() {
       @agent="onAgent"
       @cwd="onCwd"
       @record-cwd="recordPreset"
-      @remove-preset="removePreset"
+      @remove-preset="onRemovePreset"
+      @rename="onRename"
       @close="onClose"
       @toggle-expand="onToggleExpand"
       @focus-cell="focusedCellUid = $event"
