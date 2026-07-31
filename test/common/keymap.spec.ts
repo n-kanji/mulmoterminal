@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { actionForKey, matchesBinding, parseKeyBinding, sanitizeKeymap, validateKeymap, type KeymapKeyEvent } from "../../common/keymap.js";
+import {
+  actionForKey,
+  matchesBinding,
+  parseKeyBinding,
+  sanitizeKeymap,
+  validateKeymap,
+  DEFAULT_KEYMAP,
+  KEYMAP_ACTIONS,
+  keymapWithDefaults,
+  type KeymapKeyEvent,
+} from "../../common/keymap.js";
 
 const ev = (over: Partial<KeymapKeyEvent> = {}): KeymapKeyEvent => ({
   key: "PageDown",
@@ -71,6 +81,111 @@ describe("matchesBinding", () => {
     const shifted = binding("Shift+PageUp");
     expect(matchesBinding(shifted, ev({ key: "PageUp", shiftKey: true }))).toBe(true);
     expect(matchesBinding(shifted, ev({ key: "PageUp" }))).toBe(false);
+  });
+
+  // R3. macOS turns Option+letter into another CHARACTER, which is what every default binding
+  // in this fork would arrive as — matching on `key` alone, none of them would ever fire.
+  describe("Alt bindings match the PHYSICAL key (macOS Option rewrites the character)", () => {
+    it("fires for Option+j arriving as the character it really produces", () => {
+      const altJ = binding("Alt+J");
+      expect(matchesBinding(altJ, ev({ key: "∆", code: "KeyJ", altKey: true }))).toBe(true);
+      expect(matchesBinding(altJ, ev({ key: "¬", code: "KeyL", altKey: true }))).toBe(false);
+    });
+
+    it("is case- and spelling-insensitive about the letter, since a code is one physical key", () => {
+      expect(matchesBinding(binding("Alt+j"), ev({ key: "∆", code: "KeyJ", altKey: true }))).toBe(true);
+      expect(matchesBinding(binding("Option+J"), ev({ key: "∆", code: "KeyJ", altKey: true }))).toBe(true);
+    });
+
+    it("still requires the other modifiers to match exactly", () => {
+      const altJ = binding("Alt+J");
+      expect(matchesBinding(altJ, ev({ key: "Ô", code: "KeyJ", altKey: true, shiftKey: true }))).toBe(false);
+      expect(matchesBinding(altJ, ev({ key: "∆", code: "KeyJ", altKey: true, metaKey: true }))).toBe(false);
+      // ...and Alt itself: a `code` alone never stands in for the chord.
+      expect(matchesBinding(altJ, ev({ key: "j", code: "KeyJ" }))).toBe(false);
+    });
+
+    it("covers digits too, and leaves named keys to `key` (they are not rewritten)", () => {
+      expect(matchesBinding(binding("Alt+7"), ev({ key: "¶", code: "Digit7", altKey: true }))).toBe(true);
+      expect(matchesBinding(binding("Alt+PageDown"), ev({ key: "PageDown", code: "PageDown", altKey: true }))).toBe(true);
+    });
+
+    // A `code` is a QWERTY POSITION, so honouring it for every binding would hijack the wrong
+    // physical key for a Dvorak user. Only Alt, where there is no usable `key` left to honour.
+    it("does NOT consult the code for a binding without Alt", () => {
+      expect(matchesBinding(binding("q"), ev({ key: "'", code: "KeyQ" }))).toBe(false);
+      expect(matchesBinding(binding("Ctrl+q"), ev({ key: "'", code: "KeyQ", ctrlKey: true }))).toBe(false);
+    });
+
+    it("works on an event with no `code` at all, matching on the key as before", () => {
+      expect(matchesBinding(binding("Alt+J"), ev({ key: "J", altKey: true }))).toBe(true);
+      expect(matchesBinding(binding("Alt+J"), ev({ key: "∆", altKey: true }))).toBe(false);
+    });
+  });
+});
+
+// R3. This fork ships bindings; upstream ships none. The rule that keeps upstream's reasoning
+// (a bound key is one the terminal stops receiving, so it is the user's call) is all-or-nothing:
+// one explicit entry and the whole default set is gone.
+describe("keymapWithDefaults", () => {
+  it("applies the defaults to an empty keymap", () => {
+    expect(keymapWithDefaults({})).toEqual(DEFAULT_KEYMAP);
+  });
+
+  it("applies NONE of them once the user has bound a single action", () => {
+    expect(keymapWithDefaults({ "zoom-next": "PageDown" })).toEqual({ "zoom-next": "PageDown" });
+  });
+
+  it("does not let a caller mutate DEFAULT_KEYMAP through the map it hands back", () => {
+    const applied = keymapWithDefaults({});
+    applied["zoom-next"] = "F1";
+    expect(keymapWithDefaults({})).toEqual(DEFAULT_KEYMAP);
+  });
+
+  // KEYMAP_ACTIONS order IS the dispatch order, so the four new actions are appended. Slotting
+  // one in beside its relatives would change which action wins for anyone who has two on the
+  // same keystroke — a config that keeps working while doing something else.
+  it("appends new actions instead of re-ordering the existing ones", () => {
+    expect(KEYMAP_ACTIONS.slice(0, 7)).toEqual([
+      "zoom-toggle",
+      "zoom-next",
+      "zoom-prev",
+      "next-attention",
+      "terminal-new",
+      "terminal-new-adjacent",
+      "terminal-close",
+    ]);
+    expect(KEYMAP_ACTIONS.slice(7)).toEqual(["focus-next-column", "focus-prev-column", "page-next", "page-prev"]);
+  });
+
+  it("binds the iTerm2 muscle memory: Option+j/l for columns, Option+u/h for pages", () => {
+    expect(DEFAULT_KEYMAP["focus-prev-column"]).toBe("Alt+J");
+    expect(DEFAULT_KEYMAP["focus-next-column"]).toBe("Alt+L");
+    expect(DEFAULT_KEYMAP["page-prev"]).toBe("Alt+U");
+    expect(DEFAULT_KEYMAP["page-next"]).toBe("Alt+H");
+    expect(DEFAULT_KEYMAP["next-attention"]).toBe("Alt+A");
+    expect(DEFAULT_KEYMAP["zoom-toggle"]).toBe("Alt+Z");
+    expect(DEFAULT_KEYMAP["terminal-new-adjacent"]).toBe("Alt+N");
+    expect(DEFAULT_KEYMAP["terminal-close"]).toBe("Alt+W");
+  });
+
+  // The defaults ship to a real keyboard, so they have to survive the same checks a
+  // hand-written config does — a duplicate among them would silently disable one action.
+  it("is a valid, non-conflicting keymap that survives sanitizing", () => {
+    expect(validateKeymap(DEFAULT_KEYMAP)).toEqual([]);
+    expect(sanitizeKeymap(DEFAULT_KEYMAP)).toEqual(DEFAULT_KEYMAP);
+  });
+
+  it("reaches its action for the character macOS really sends", () => {
+    const map = keymapWithDefaults({});
+    expect(actionForKey(map, ev({ key: "∆", code: "KeyJ", altKey: true }))).toBe("focus-prev-column");
+    expect(actionForKey(map, ev({ key: "¬", code: "KeyL", altKey: true }))).toBe("focus-next-column");
+    expect(actionForKey(map, ev({ key: "˙", code: "KeyH", altKey: true }))).toBe("page-next");
+    expect(actionForKey(map, ev({ key: "¨", code: "KeyU", altKey: true }))).toBe("page-prev");
+    expect(actionForKey(map, ev({ key: "å", code: "KeyA", altKey: true }))).toBe("next-attention");
+    expect(actionForKey(map, ev({ key: "Ω", code: "KeyZ", altKey: true }))).toBe("zoom-toggle");
+    // An unbound Alt chord is still the terminal's.
+    expect(actionForKey(map, ev({ key: "ß", code: "KeyS", altKey: true }))).toBeNull();
   });
 });
 

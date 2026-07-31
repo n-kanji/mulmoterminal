@@ -429,6 +429,43 @@ export function moveZoom(state: GridState, order: readonly number[], dir: -1 | 1
   return state;
 }
 
+// Fork-local (iTerm2 mode, R3): where the keyboard moves the CURSOR to — the neighbour of
+// `fromUid` among the columns currently rendered (dir -1 = left, +1 = right).
+//
+// Stops at either end rather than wrapping. Wrapping is right for `next-attention` (a round of
+// cells that are calling) and wrong here: Alt+L on the last column would jump the cursor across
+// the whole screen, which reads as the key having done something else entirely.
+//
+// Only OCCUPIED cells are targets. An empty launch cell is a column on screen but holds no
+// terminal to type into, so focusing it would put the cursor nowhere and make the key look dead.
+// With no cursor yet the key enters from the near end, so it works on a freshly loaded grid.
+//
+// Returns a uid for the caller to focus — NOT a new state. There is deliberately no stored
+// "selected cell" (zoom invariant 4): the focus the DOM reports is the one notion of where the
+// user is, and a second copy here would disagree with it the moment a click moved the cursor.
+export function focusStepUid(rendered: readonly Cell[], fromUid: number | null, dir: -1 | 1): number | null {
+  const targets = rendered.filter(isOccupied);
+  if (targets.length === 0) return null;
+  const from = targets.findIndex((c) => c.uid === fromUid);
+  if (from < 0) return targets[dir === 1 ? 0 : targets.length - 1].uid;
+  const at = from + dir;
+  return at >= 0 && at < targets.length ? targets[at].uid : null;
+}
+
+// Fork-local (iTerm2 mode, R3): the keyboard's page switch (dir -1 = previous, +1 = next),
+// stopping at the first and last page rather than wrapping — same reason as focusStepUid.
+//
+// A no-op while zoomed, which is what keeps zoom invariant 1 (only `toggleZoom` changes WHETHER
+// the grid is zoomed): `switchPage` clears the zoom, so paging from a zoomed grid would collapse
+// the layout out from under a key that only claims to change page. Nothing is lost by refusing —
+// `page` is unused while zoomed, and releasing the zoom derives it from the enlarged cell anyway,
+// so a "successful" page change there would be invisible and then immediately overwritten.
+export function stepPage(state: GridState, dir: -1 | 1): GridState {
+  if (zoomedUid(state) !== null) return state;
+  const page = state.page + dir;
+  return page < 0 || page >= pageCount(state.cells.length) ? state : switchPage(state, page);
+}
+
 // ---------------------------------------------------------------------------------------
 // ZOOM INVARIANTS (#829). Every one of these was broken at least once while building this,
 // and each break looked like a different symptom, so they are written down rather than left

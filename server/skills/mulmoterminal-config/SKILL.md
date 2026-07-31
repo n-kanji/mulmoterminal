@@ -305,10 +305,28 @@ the session in a way that is hard to diagnose from inside it.
 
 ## Keyboard shortcuts — `keymap` in `~/.mulmoterminal/config.json`
 
-Also the **global** file, not the per-directory one, and **there are no defaults**: with no `keymap`,
-no shortcut exists and no key is intercepted. Every binding the user adds is a key the program inside
-the terminal (Claude Code, `vim`, `less`, the shell) stops receiving — so ask before binding, and
-never add one they did not request.
+Also the **global** file, not the per-directory one. This fork **ships defaults** (upstream ships
+none): with no `keymap`, these are in force.
+
+```json
+{
+  "zoom-toggle": "Alt+Z",
+  "next-attention": "Alt+A",
+  "terminal-new-adjacent": "Alt+N",
+  "terminal-close": "Alt+W",
+  "focus-next-column": "Alt+L",
+  "focus-prev-column": "Alt+J",
+  "page-next": "Alt+H",
+  "page-prev": "Alt+U"
+}
+```
+
+**Writing a `keymap` replaces all eight** — it is not a merge, so a user who asks for one extra
+shortcut and gets a one-entry `keymap` written for them **loses the other seven without being told**.
+Say so before writing, and when they want an addition, write the defaults back out alongside it.
+
+Every binding is a key the program inside the terminal (Claude Code, `vim`, `less`, the shell) stops
+receiving — so ask before binding, and never add one they did not request.
 
 ```json
 {
@@ -327,6 +345,8 @@ never add one they did not request.
 | `terminal-new` | Add a terminal at the end (the toolbar's `＋`) | no |
 | `terminal-new-adjacent` | Add one right after the current terminal, inheriting its cwd | yes |
 | `terminal-close` | Close the current terminal | yes |
+| `focus-next-column` / `focus-prev-column` | Move the cursor one column right / left; zoomed, moves the enlargement instead. Stops at the ends | no |
+| `page-next` / `page-prev` | Show the next / previous page of columns. Stops at the ends, and does nothing while zoomed | no |
 
 **Offer one of these starter sets rather than inventing keys** — each is checked against the traps
 below, and the guide documents them at
@@ -336,7 +356,7 @@ below, and the guide documents them at
 |---|---|---|
 | Minimal | `zoom-toggle: F8`, `next-attention: F9` | Anyone starting out — the two that open the feature up |
 | Arrows | `Alt+ArrowUp/Left/Right/Down` | **The safe cross-platform default; the only one to offer a Mac user unprompted** |
-| tmux-flavoured | `Alt+z / n / p / a / c / x` | Someone with tmux muscle memory — but NOT on macOS (Alt+letter is dead there) |
+| tmux-flavoured | `Alt+z / n / p / a / c / x` | Someone with tmux muscle memory. Works on macOS in this fork (see the `Option` note below) |
 | iTerm2-flavoured | `Cmd+Enter`, `Cmd+[` / `]`, `Cmd+d` | Mac users who think in iTerm2 panes |
 
 - **Always bind `zoom-toggle` or `next-attention`.** Everything marked "yes" above needs something
@@ -354,8 +374,11 @@ below, and the guide documents them at
 - **Do not propose `F1`–`F12` on a Mac.** macOS delivers no keydown for them by default (they are
   media keys), so the binding looks broken for reasons the user cannot see. If they insist, tell them
   it needs `Fn`+the key, or System Settings → Keyboard → Keyboard Shortcuts → Function Keys.
-- **Do not propose `Option`+letter on a Mac** — `KeyboardEvent.key` reports the composed character,
-  not the letter, so it never matches. `Option`+a non-printing key (`Alt+ArrowDown`) is fine.
+- **`Option`+letter is fine on a Mac in this fork.** `KeyboardEvent.key` reports the composed
+  character rather than the letter, which is why it fails upstream; an `Alt` binding here is matched
+  against the physical key too, so `"Alt+n"` fires for `Option`+`n`. Consequence to remember: for an
+  `Alt` binding the letter's case is meaningless (`"Alt+j"` = `"Alt+J"`), and only letters and digits
+  are translated — `Alt`+`ArrowDown` and friends were never affected.
 - **Never propose `Cmd`/`Ctrl`+`W`, `+T`, `+N`** — the browser reserves them; the binding silently
   does nothing.
 - Two actions on one keystroke only fires the first; the startup check warns, but do not write one.

@@ -52,6 +52,9 @@ import {
   isSealed,
   workspaceFromSearch,
   stateKeyFor,
+  focusStepUid,
+  stepPage,
+  PAGE_SIZE,
   MAX_PAGE_LABEL,
   STATE_KEY,
 } from "../../../src/components/gridTabs.js";
@@ -1190,7 +1193,7 @@ describe("pinned pages (sealed workspaces)", () => {
     const s = closeCell(pin(running(12), 0), 7);
     const holeUid = s.cells.filter(isHole)[0].uid;
     const order = s.cells.map((c) => c.uid);
-    expect(countByStatus(s.cells, {})).toEqual({ blocked: 0, done: 0, working: 0, idle: 11 });
+    expect(countByStatus(s.cells, {})).toEqual(counts({ idle: 11 }));
     expect(nextAttentionUid(s, order, {}, 6)).toBe(8); // steps over the slot at index 7
     expect(zoomedUid({ ...s, expanded: holeUid })).toBeNull();
     expect(moveZoom({ ...s, expanded: 6 }, order, 1).expanded).toBe(8);
@@ -1227,9 +1230,9 @@ describe("pinned pages (sealed workspaces)", () => {
 
   it("attention-sorts INSIDE each page once a workspace is pinned, and across all pages when none is", () => {
     const across = make(running(12), { sortMode: "auto" });
-    expect(orderGrid(across, { 10: "blocked" }).map((c) => c.uid)[0]).toBe(10); // floats onto page 1
+    expect(orderGrid(across, { 10: "approval" }).map((c) => c.uid)[0]).toBe(10); // floats onto page 1
     const sealed = togglePagePin(across, 0);
-    const ordered = orderGrid(sealed, { 10: "blocked" });
+    const ordered = orderGrid(sealed, { 10: "approval" });
     expect(pageSlice(ordered, 0).map((c) => c.uid)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); // page 0 unchanged
     expect(pageSlice(ordered, 1).map((c) => c.uid)[0]).toBe(10); // sorted, but only within page 1
   });
@@ -1320,5 +1323,75 @@ describe("per-window workspaces (?ws=)", () => {
   // smuggle a separator through is refused rather than sanitised into something else's grid.
   it("refuses a name that is not a plain identifier", () => {
     for (const bad of ["?ws=a:b", "?ws=../x", "?ws=-lead", `?ws=${"x".repeat(40)}`]) expect(workspaceFromSearch(bad)).toBeNull();
+  });
+});
+
+// R3 (keymap defaults). The two transforms the un-zoomed grid's keys drive. Everything upstream
+// bound acts on the ZOOMED cell; these are the plain grid's own, so they are the ones that have
+// to answer "what happens at the edge" and "what happens while zoomed".
+describe("keyboard column moves (focusStepUid)", () => {
+  it("moves one column and stops at both ends instead of wrapping", () => {
+    const cells = running(3);
+    expect(focusStepUid(cells, 0, 1)).toBe(1);
+    expect(focusStepUid(cells, 1, 1)).toBe(2);
+    expect(focusStepUid(cells, 2, 1)).toBeNull(); // last column — the key does nothing
+    expect(focusStepUid(cells, 2, -1)).toBe(1);
+    expect(focusStepUid(cells, 0, -1)).toBeNull(); // first column
+  });
+
+  it("enters from the near end when nothing is focused yet", () => {
+    const cells = running(3);
+    expect(focusStepUid(cells, null, 1)).toBe(0);
+    expect(focusStepUid(cells, null, -1)).toBe(2);
+  });
+
+  // A cell on another page, or one already closed, is not a neighbour of anything on screen.
+  it("treats an off-screen origin as no origin", () => {
+    expect(focusStepUid(running(3), 99, 1)).toBe(0);
+  });
+
+  // An empty launch cell is a column but holds no terminal, so focusing it would put the cursor
+  // nowhere and the key would read as dead.
+  it("steps OVER an empty launch cell rather than landing on it", () => {
+    const cells = [cell(0, U(0)), cell(1), cell(2, U(2))];
+    expect(focusStepUid(cells, 0, 1)).toBe(2);
+    expect(focusStepUid(cells, 2, -1)).toBe(0);
+  });
+
+  it("does nothing on a grid with no terminals at all", () => {
+    expect(focusStepUid([cell(0)], null, 1)).toBeNull();
+    expect(focusStepUid([], null, 1)).toBeNull();
+  });
+});
+
+describe("keyboard page moves (stepPage)", () => {
+  const threePages = running(PAGE_SIZE * 2 + 1);
+
+  it("moves one page and stops at both ends instead of wrapping", () => {
+    expect(stepPage(make(threePages, { page: 0 }), 1).page).toBe(1);
+    expect(stepPage(make(threePages, { page: 1 }), 1).page).toBe(2);
+    expect(stepPage(make(threePages, { page: 2 }), 1).page).toBe(2); // last page — stays
+    expect(stepPage(make(threePages, { page: 2 }), -1).page).toBe(1);
+    expect(stepPage(make(threePages, { page: 0 }), -1).page).toBe(0); // first page
+  });
+
+  it("does nothing on a single-page grid", () => {
+    const one = make(running(3), { page: 0 });
+    expect(stepPage(one, 1)).toBe(one); // the same object: nothing to persist
+    expect(stepPage(one, -1)).toBe(one);
+  });
+
+  // Zoom invariant 1: only toggleZoom changes WHETHER the grid is zoomed, and switchPage clears
+  // the zoom. A page key that collapsed the layout would be doing something it never claimed to.
+  it("refuses to act while zoomed, so it can never collapse the zoom", () => {
+    const zoomed = make(threePages, { page: 0, expanded: 0 });
+    expect(stepPage(zoomed, 1)).toBe(zoomed);
+    expect(zoomedUid(stepPage(zoomed, 1))).toBe(0);
+  });
+
+  // It routes through switchPage, so it inherits that behaviour rather than re-implementing it.
+  it("drops an abandoned trailing launch cell on the way, like clicking the tab does", () => {
+    const withLaunch = make([...running(PAGE_SIZE), cell(PAGE_SIZE)], { page: 0 });
+    expect(stepPage(withLaunch, 1).cells).toHaveLength(PAGE_SIZE);
   });
 });

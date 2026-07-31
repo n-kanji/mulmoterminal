@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { gridShortcutFor, isEditableTarget, type ShortcutKeyEvent } from "../../../src/composables/gridShortcut.js";
-import type { Keymap } from "../../../common/keymap.js";
+import { DEFAULT_KEYMAP, keymapWithDefaults, type Keymap } from "../../../common/keymap.js";
 
 const KEYMAP: Keymap = { "zoom-next": "PageDown", "zoom-prev": "PageUp" };
 
@@ -73,6 +73,54 @@ describe("gridShortcutFor", () => {
   it("ignores unbound keys", () => {
     expect(gridShortcutFor(KEYMAP, key({ key: "ArrowDown" }), true)).toBeNull();
     expect(gridShortcutFor(KEYMAP, key({ key: "" }), true)).toBeNull();
+  });
+
+  // R3. The column and page actions are the plain grid's own — they act on the FOCUSED cell or
+  // on the view, not on a zoomed terminal, so gating them on the zoom would make them dead in
+  // the only place they mean anything.
+  describe("column and page actions (R3)", () => {
+    const DEFAULTS = keymapWithDefaults({});
+    // macOS sends the Option-rewritten character; the binding matches on the physical key.
+    const alt = (code: string, char: string) => key({ key: char, code, altKey: true });
+
+    it("resolves the column moves UN-zoomed", () => {
+      expect(gridShortcutFor(DEFAULTS, alt("KeyL", "¬"), false)).toBe("focus-next-column");
+      expect(gridShortcutFor(DEFAULTS, alt("KeyJ", "∆"), false)).toBe("focus-prev-column");
+    });
+
+    it("resolves the page moves UN-zoomed", () => {
+      expect(gridShortcutFor(DEFAULTS, alt("KeyH", "˙"), false)).toBe("page-next");
+      expect(gridShortcutFor(DEFAULTS, alt("KeyU", "¨"), false)).toBe("page-prev");
+    });
+
+    it("resolves them zoomed as well — nothing here needs a zoom to be refused", () => {
+      expect(gridShortcutFor(DEFAULTS, alt("KeyL", "¬"), true)).toBe("focus-next-column");
+      expect(gridShortcutFor(DEFAULTS, alt("KeyH", "˙"), true)).toBe("page-next");
+    });
+
+    // The upstream gate is unchanged: these still need a terminal the grid can name.
+    it("still refuses the zoom-only actions un-zoomed", () => {
+      expect(gridShortcutFor(DEFAULTS, alt("KeyN", "˜"), false)).toBeNull(); // terminal-new-adjacent
+      expect(gridShortcutFor(DEFAULTS, alt("KeyW", "∑"), false)).toBeNull(); // terminal-close
+      expect(gridShortcutFor(DEFAULTS, alt("KeyN", "˜"), true)).toBe("terminal-new-adjacent");
+      expect(gridShortcutFor(DEFAULTS, alt("KeyW", "∑"), true)).toBe("terminal-close");
+    });
+
+    it("lets the ways IN work un-zoomed, as they always did", () => {
+      expect(gridShortcutFor(DEFAULTS, alt("KeyZ", "Ω"), false)).toBe("zoom-toggle");
+      expect(gridShortcutFor(DEFAULTS, alt("KeyA", "å"), false)).toBe("next-attention");
+    });
+
+    it("leaves an Alt chord this fork does not bind to the terminal", () => {
+      expect(DEFAULT_KEYMAP["terminal-new"]).toBeUndefined();
+      expect(gridShortcutFor(DEFAULTS, alt("KeyS", "ß"), false)).toBeNull();
+      expect(gridShortcutFor(DEFAULTS, alt("KeyT", "†"), true)).toBeNull();
+    });
+
+    it("still ignores a keyup and an IME composition on the new bindings", () => {
+      expect(gridShortcutFor(DEFAULTS, { ...alt("KeyL", "¬"), type: "keyup" }, false)).toBeNull();
+      expect(gridShortcutFor(DEFAULTS, { ...alt("KeyL", "¬"), isComposing: true }, false)).toBeNull();
+    });
   });
 });
 

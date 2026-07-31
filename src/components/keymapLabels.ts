@@ -13,6 +13,10 @@ const LABELS: Record<KeymapAction, string> = {
   "terminal-new": "New terminal (at the end)",
   "terminal-new-adjacent": "New terminal next to this one",
   "terminal-close": "Close this terminal",
+  "focus-next-column": "Move the cursor one column right",
+  "focus-prev-column": "Move the cursor one column left",
+  "page-next": "Next page",
+  "page-prev": "Previous page",
 };
 
 export interface KeymapRow {
