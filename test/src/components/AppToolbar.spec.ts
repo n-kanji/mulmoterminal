@@ -29,9 +29,10 @@ describe("AppToolbar per-view buttons", () => {
     await settle();
   });
 
-  it("offers the content surfaces in the single view", async () => {
+  it("offers the content surfaces in the single view (iTerm2 mode: no Chat button)", async () => {
     const labels = labelsOf(await mountAt("/chat"));
-    expect(labels).toEqual(expect.arrayContaining(["Chat", "Grid view", "Collections", "Accounting", "Wiki"]));
+    expect(labels).toEqual(expect.arrayContaining(["Grid view", "Collections", "Accounting", "Wiki"]));
+    expect(labels).not.toContain("Chat");
   });
 
   it("hides the content surfaces in the grid", async () => {
@@ -41,18 +42,22 @@ describe("AppToolbar per-view buttons", () => {
     expect(labels).not.toContain("Wiki");
   });
 
-  // Both views keep the pair that switches between them — hiding either would strand a user
-  // in whichever view they were in.
-  it("keeps the view switch in both views", async () => {
-    expect(labelsOf(await mountAt("/chat"))).toEqual(expect.arrayContaining(["Chat", "Grid view"]));
-    expect(labelsOf(await mountAt("/terminals"))).toEqual(expect.arrayContaining(["Chat", "Grid view"]));
+  // Fork-local (iTerm2 mode): the operator lives in the grid, so the Chat button is hidden
+  // everywhere — a stray deep link into /chat can still come home via Grid view.
+  it("keeps Grid view in both views, and hides Chat in both", async () => {
+    expect(labelsOf(await mountAt("/chat"))).toEqual(expect.arrayContaining(["Grid view"]));
+    expect(labelsOf(await mountAt("/chat"))).not.toContain("Chat");
+    expect(labelsOf(await mountAt("/terminals"))).toEqual(expect.arrayContaining(["Grid view"]));
+    expect(labelsOf(await mountAt("/terminals"))).not.toContain("Chat");
   });
 
-  // The two reference surfaces you consult WHILE supervising, so they sit in the grid's own
-  // nav rather than the single view's content cluster.
-  it.each(["Pull requests", "Worklog"])("offers %s only in the grid", async (label) => {
-    expect(labelsOf(await mountAt("/terminals"))).toContain(label);
-    expect(labelsOf(await mountAt("/chat"))).not.toContain(label);
+  // The reference surface you consult WHILE supervising sits in the grid's own nav rather
+  // than the single view's content cluster. (iTerm2 mode: Worklog is hidden outright.)
+  it("offers Pull requests only in the grid, and Worklog nowhere", async () => {
+    expect(labelsOf(await mountAt("/terminals"))).toContain("Pull requests");
+    expect(labelsOf(await mountAt("/terminals"))).not.toContain("Worklog");
+    expect(labelsOf(await mountAt("/chat"))).not.toContain("Pull requests");
+    expect(labelsOf(await mountAt("/chat"))).not.toContain("Worklog");
   });
 
   it("offers the grid-running controls only in the grid", async () => {
@@ -75,7 +80,7 @@ describe("AppToolbar per-view buttons", () => {
 
     const labels = labelsOf(mount(AppToolbar, { global: { plugins: [router], stubs: { NotificationBell: true, RemoteHostControl: true } } }));
     expect(labels).toContain("Pull requests");
-    expect(labels).toContain("Worklog");
+    expect(labels).not.toContain("Worklog");
     expect(labels).not.toContain("Collections");
   });
 

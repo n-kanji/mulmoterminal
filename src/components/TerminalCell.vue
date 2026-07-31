@@ -73,6 +73,9 @@ const props = defineProps<
     cancellable?: boolean;
     // Manual sort mode: show move buttons to swap this cell with its neighbour.
     reorderable?: boolean;
+    // Fork-local (iTerm2 mode): a toolbar preset chip opened this cell — launch claude
+    // in initialCwd immediately on mount, skipping the launcher form.
+    autoLaunch?: boolean;
   }
 >();
 const emit = defineEmits<
@@ -311,6 +314,18 @@ function launchIn(dir: string | null) {
   recordNextCwd = true;
   loadDiff(); // no-op for a non-worktree dir
 }
+
+// Fork-local (iTerm2 mode): a toolbar preset chip spawned this cell — go straight from
+// chip to a running claude pane in that directory, no launcher form stop. One-shot by
+// construction: `launched` flips on the first fire, and a reloaded cell arrives with its
+// session id (launched=true), so this can never re-launch an existing pane.
+onMounted(() => {
+  if (props.autoLaunch && !launched.value && props.initialCwd) {
+    dirInput.value = props.initialCwd;
+    launchIn(props.initialCwd);
+  }
+});
+
 // The provider/model picked in the launch form, for the session this cell is about to
 // start. Null — the usual case — means the directory's own default decides. Kept for the
 // life of the cell so a relaunch in the same cell repeats the choice.
@@ -852,6 +867,19 @@ watch(status, (s) => emit("status", s), { immediate: true });
 
 const headerText = computed(() => cellHeaderText(aiTitle.value, lastPrompt.value, sessionId.value));
 
+// Fork-local (iTerm2 mode): the always-visible status strip under the header. The
+// operator triages MANY full-height columns at a glance, so "what is this pane doing"
+// cannot live only in the zoomed roster — that shows up exactly when the columns are
+// hidden. AI summary first (it names the task), then the last prompt (what was asked).
+const STRIP_STATUS = {
+  working: "text-[#3b82f6]",
+  blocked: "text-[#f59e0b]",
+  done: "text-[#34d399]",
+  idle: "text-muted",
+} as const;
+const stripStatusClass = computed(() => STRIP_STATUS[status.value]);
+const stripText = computed(() => [aiTitle.value, lastPrompt.value ? `❯ ${lastPrompt.value}` : null].filter(Boolean).join(" · "));
+
 // Per-cell token usage badge: ⇡ total input (fresh + cache) · ⇣ output generated.
 const usageView = computed(() => usageBadge(usage.value));
 const showUsage = computed(() => usageView.value.show);
@@ -1094,6 +1122,12 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         <span class="cell-actions" :class="CELL_ACTIONS">
           <CellChromeButtons :expanded="expanded" @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
+      </div>
+      <!-- Fork-local (iTerm2 mode): per-pane status line — status word + AI summary + last
+           prompt, always visible in the tiled columns. -->
+      <div v-if="!filmstrip" data-testid="cell-status-strip" class="flex h-[22px] flex-none items-center gap-2 overflow-hidden border-b border-b-border px-2">
+        <span class="flex-none font-mono text-[10px] uppercase tracking-wide" :class="stripStatusClass">{{ statusLabel }}</span>
+        <span class="min-w-0 flex-auto truncate font-sans text-[11px] text-secondary" :title="stripText">{{ stripText || "—" }}</span>
       </div>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TerminalView

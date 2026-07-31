@@ -78,6 +78,10 @@ async function copyUpdateCommand(): Promise<void> {
 //     grid keeps the grid's buttons instead of hiding the one just clicked
 //   - which button is HIGHLIGHTED, and whether the grid is the screen: the route itself,
 //     because an open overlay is not the grid even when the grid is underneath
+// Fork-local (iTerm2 mode): the operator supervises many agents in the grid and
+// never uses the single view, the worklog, or the phone companion — those buttons
+// are hidden (not removed, so upstream rebases stay small and this can be flipped).
+const IT2_MODE = true;
 const inGrid = viewIsGrid;
 const onGridRoute = computed(() => route.name === "terminals");
 const inSingle = computed(() => !onGridRoute.value);
@@ -125,7 +129,7 @@ function showPrs(): void {
     <span class="font-sans text-[14px] font-semibold tracking-[0.02em] text-fg">MulmoTerminal</span>
     <nav class="ml-4 flex min-w-0 items-center gap-[3px] overflow-x-auto" aria-label="Views">
       <!-- Both views: the pair that switches between them. -->
-      <LauncherButton icon="chat" title="Chat" label="Chat" :active="chatActive" @click="showChat" />
+      <LauncherButton v-if="!IT2_MODE" icon="chat" title="Chat" label="Chat" :active="chatActive" @click="showChat" />
       <LauncherButton icon="grid_view" title="Grid (multiple terminals)" label="Grid view" :active="onGridRoute" @click="showGrid" />
       <!-- Single view only (#886): the content surfaces. The grid is for supervising agents,
            and every one of these replaces the whole screen anyway. -->
@@ -148,7 +152,7 @@ function showPrs(): void {
       <!-- Grid only (#886): branches under supervision are a grid concern. -->
       <LauncherButton v-if="inGrid" icon="call_merge" title="Pull requests" label="Pull requests" :active="prsActive" @click="showPrs" />
       <LauncherButton
-        v-if="inGrid"
+        v-if="inGrid && !IT2_MODE"
         icon="history_edu"
         title="Worklog — the dev work log in the wiki (#worklog)"
         label="Worklog"
@@ -195,7 +199,7 @@ function showPrs(): void {
       </span>
     </nav>
     <NotificationBell class="ml-auto" />
-    <RemoteHostControl />
+    <RemoteHostControl v-if="!IT2_MODE" />
     <div v-if="updateBadge" ref="updateRoot" class="relative mr-1 flex-none">
       <button
         type="button"

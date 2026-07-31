@@ -33,6 +33,23 @@ tail -f ~/.mulmoterminal/server.log                       # ログ
 - **prRepos**: spacengine/orosy-v2, team-docs, voicewriter, claudecode-notify（横断 PR/Issue ビュー対象）
 - 見た目の追加調整は MulmoTerminal 内の Claude セッションで `/mulmoterminal-config`（対話設定・keymap もこれで安全に書ける）
 
+## iTerm2 モード（2026-07-31・CEO 指示で全面改修）
+
+グリッドを iTerm2 の縦分割の操作モデルに純化した:
+
+1. **縦カラム専用レイアウト** — 段積み（2x2 等）を廃止。全ペインがフルハイトの縦カラムで、
+   増えるたび列が割れる（1ページ最大8列、超えたら次ページ）。27インチ 4K で
+   1スレッドあたりの可読行数を最大化するため（`gridLayout.ts` / `gridTabs.ts`）
+2. **自動ズーム廃止** — セル追加時にズームへ閉じ込めない。ズーム中に追加すると
+   むしろズーム解除してカラムに戻る（`addCell` / `insertCellAfter`）
+3. **プリセット常駐ストリップ** — ツールバー直下に全プリセットのチップが常駐。
+   **1クリックで新カラムが開き claude が自動起動**（ランチャー画面を経由しない。
+   `addCellWithCwd` + TerminalCell `autoLaunch`）
+4. **ペイン常時ステータス行** — 各カラムのヘッダー下に「状態語（色付き）+ AI サマリー +
+   最後の指示」を常時1行表示。claudecode-notify Status pane の各ペイン内蔵版
+5. **不要ボタン非表示** — Chat（単一ビュー）/ Worklog / スマホ連携（RemoteHost）。
+   PR ビューは温存。`AppToolbar.vue` の `IT2_MODE` フラグで一括制御（false で戻せる）
+
 ## この fork 独自のカスタマイズ（ブランチ kanji）
 
 1. **claude-peers 連携** — 素の MulmoTerminal は `claude` を直接 spawn するため、

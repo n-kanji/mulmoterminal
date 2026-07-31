@@ -6,6 +6,7 @@ import {
   resolveCellStatus,
   runningCount,
   addCell,
+  addCellWithCwd,
   setSession,
   setCwd,
   closeCell,
@@ -52,17 +53,17 @@ const make = (cells: Cell[], extra: Partial<GridState> = {}): GridState => ({
 });
 
 describe("pagination helpers", () => {
-  it("pageCount is 1..n in chunks of 9", () => {
+  it("pageCount is 1..n in chunks of PAGE_SIZE (8 columns)", () => {
     expect(pageCount(0)).toBe(1);
-    expect(pageCount(9)).toBe(1);
-    expect(pageCount(10)).toBe(2);
-    expect(pageCount(18)).toBe(2);
-    expect(pageCount(19)).toBe(3);
+    expect(pageCount(8)).toBe(1);
+    expect(pageCount(9)).toBe(2);
+    expect(pageCount(16)).toBe(2);
+    expect(pageCount(17)).toBe(3);
   });
   it("pageSlice returns the page's window", () => {
     const xs = Array.from({ length: 11 }, (_, i) => i);
-    expect(pageSlice(xs, 0)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(pageSlice(xs, 1)).toEqual([9, 10]);
+    expect(pageSlice(xs, 0)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(pageSlice(xs, 1)).toEqual([8, 9, 10]);
   });
   it("runningCount counts non-null sessions", () => {
     expect(runningCount([cell(0, U(0)), cell(1), cell(2, U(2))])).toBe(2);
@@ -87,10 +88,10 @@ describe("addCell", () => {
     expect(runningCount(s.cells)).toBe(81);
     expect(s.cells).toHaveLength(81);
   });
-  it("zooms the new cell when a cell is currently zoomed", () => {
+  it("un-zooms when a cell was zoomed (iTerm2 mode: columns grow sideways, never behind a zoom)", () => {
     const s = addCell(make(running(3), { expanded: 1 }));
     expect(s.cells).toHaveLength(4);
-    expect(s.expanded).toBe(s.cells[3].uid); // the freshly appended cell
+    expect(s.expanded).toBeNull(); // back to the columns so the new pane is visible
   });
   it("leaves the grid un-zoomed when nothing was zoomed", () => {
     expect(addCell(make(running(3))).expanded).toBeNull();
@@ -99,6 +100,30 @@ describe("addCell", () => {
     // zoomedUid treats a dangling `expanded` as not-zoomed, so a new cell must not inherit it.
     const s = addCell(make(running(2), { expanded: 99 }));
     expect(s.expanded).toBe(99); // unchanged; zoomedUid() still resolves it to null
+  });
+});
+
+describe("addCellWithCwd (iTerm2 mode quick launch)", () => {
+  it("appends a launch cell already pointed at the directory and returns its uid", () => {
+    const { state: s, uid } = addCellWithCwd(make(running(2)), "/proj/a");
+    expect(s.cells).toHaveLength(3);
+    expect(uid).toBe(s.cells[2].uid);
+    expect(s.cells[2].session).toBeNull();
+    expect(s.cells[2].cwd).toBe("/proj/a");
+  });
+  it("reuses an already-open trailing launch cell instead of stacking a second", () => {
+    const open = make([...running(2), cell(7)]);
+    const { state: s, uid } = addCellWithCwd(open, "/proj/b");
+    expect(s.cells).toHaveLength(3);
+    expect(uid).toBe(7);
+    expect(s.cells[2].cwd).toBe("/proj/b");
+  });
+  it("un-zooms so the new column is visible, and refuses when full", () => {
+    const zoomed = addCellWithCwd(make(running(3), { expanded: 1 }), "/proj/c");
+    expect(zoomed.state.expanded).toBeNull();
+    const full = addCellWithCwd(make(running(64)), "/proj/d");
+    expect(full.uid).toBe(-1);
+    expect(full.state.cells).toHaveLength(64);
   });
 });
 
@@ -118,15 +143,15 @@ describe("cancelableLaunchUid", () => {
 
 describe("closeCell reflows across pages", () => {
   it("removes a cell and packs later cells forward (page 2 -> page 1)", () => {
-    const s = make(running(10), { page: 0 }); // 10 terminals -> 2 pages
+    const s = make(running(9), { page: 0 }); // 9 terminals -> 2 pages
     expect(pageCount(s.cells.length)).toBe(2);
     const after = closeCell(s, 0); // close the first terminal
-    expect(after.cells).toHaveLength(9); // the 10th flowed back onto page 1
+    expect(after.cells).toHaveLength(8); // the 9th flowed back onto page 1
     expect(pageCount(after.cells.length)).toBe(1);
-    expect(after.cells.map((c) => c.uid)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(after.cells.map((c) => c.uid)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
   it("clamps the active page when a page disappears", () => {
-    const s = make(running(10), { page: 1 });
+    const s = make(running(9), { page: 1 });
     const after = closeCell(s, 0);
     expect(after.page).toBe(0);
   });
@@ -206,10 +231,10 @@ describe("moveZoom (Page Up / Page Down walk the zoom along the filmstrip)", () 
   });
 
   it("collapsing after walking backwards lands on the earlier page", () => {
-    const s = make(running(12), { expanded: 9, page: 1 });
+    const s = make(running(12), { expanded: 8, page: 1 });
     const order = s.cells.map((c) => c.uid);
     const moved = moveZoom(s, order, -1);
-    expect(moved.expanded).toBe(8);
+    expect(moved.expanded).toBe(7);
     expect(toggleZoom(moved, order).page).toBe(0);
   });
 
@@ -269,7 +294,7 @@ describe("toggleZoom (the keyboard's way in and out of the zoom)", () => {
   it("falls back to the page's first cell when the selection is gone", () => {
     const s = make(running(12), { page: 1 });
     const order = s.cells.map((c) => c.uid);
-    expect(toggleZoom(s, order, 99).expanded).toBe(9);
+    expect(toggleZoom(s, order, 99).expanded).toBe(8);
   });
 
   // Regression (caught on a real grid, not by the unit tests or the bots): entering the zoom
@@ -280,7 +305,7 @@ describe("toggleZoom (the keyboard's way in and out of the zoom)", () => {
     const s = make(running(12), { page: 1 });
     const order = s.cells.map((c) => c.uid);
     const after = toggleZoom(s, order);
-    expect(after.expanded).toBe(9); // first cell of page 1, not uid 0
+    expect(after.expanded).toBe(8); // first cell of page 1, not uid 0
     expect(toggleZoom(after, order).page).toBe(1); // and releasing stays on that tab
   });
 
@@ -712,7 +737,7 @@ describe("visibleOrdered (attention-sort the whole list, then page)", () => {
     const page1 = visibleOrdered(s, statusByUid).map((c) => c.uid);
     expect(page1.slice(0, 2)).toEqual([1, 10]); // both blocked cells, base order, up front
     expect(page1).not.toContain(0); // working uid 0 sank to page 2
-    expect(page1).toHaveLength(9);
+    expect(page1).toHaveLength(8);
   });
   it("manual mode leaves the on-screen order untouched", () => {
     const s = make(running(4), { sortMode: "manual" });
@@ -734,8 +759,8 @@ describe("zoomedUid / visibleCells", () => {
   });
   it("visibleCells is the active page's slice when nothing is zoomed", () => {
     const s = make(running(12)); // 2 pages
-    expect(visibleCells(s).map((c) => c.uid)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(visibleCells({ ...s, page: 1 }).map((c) => c.uid)).toEqual([9, 10, 11]);
+    expect(visibleCells(s).map((c) => c.uid)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(visibleCells({ ...s, page: 1 }).map((c) => c.uid)).toEqual([8, 9, 10, 11]);
   });
   it("visibleCells is the WHOLE list while a cell is zoomed (all tabs in the strip)", () => {
     const s = make(running(12), { page: 1, expanded: 10 });
@@ -743,7 +768,7 @@ describe("zoomedUid / visibleCells", () => {
   });
   it("visibleCells falls back to the page slice when expanded is stale", () => {
     const s = make(running(12), { page: 1, expanded: 99 });
-    expect(visibleCells(s).map((c) => c.uid)).toEqual([9, 10, 11]);
+    expect(visibleCells(s).map((c) => c.uid)).toEqual([8, 9, 10, 11]);
   });
 });
 
@@ -927,8 +952,8 @@ describe("zoom invariants (#829)", () => {
   it("releasing the zoom sets the page from the enlarged cell, ignoring where it started", () => {
     for (const [uid, expected] of [
       [0, 0],
-      [8, 0],
-      [9, 1],
+      [7, 0],
+      [8, 1],
       [11, 1],
     ]) {
       const s = make(running(12), { expanded: uid, page: 0 });

@@ -1,71 +1,54 @@
+// Fork-local (iTerm2 mode): the grid is COLUMNS ONLY — every cell is a full-height
+// vertical pane, adding a cell adds a column, and nothing ever stacks into rows.
+// These specs pin that: rows is always 1, and a second row (which would halve the
+// visible transcript lines per pane on the operator's 27" 4K) can never come back
+// silently through a layout table edit.
 import { describe, it, expect } from "vitest";
-import { LAYOUTS, isLayout, dims, trackStyle, layoutForCount } from "../../../src/components/gridLayout.js";
+import { LAYOUTS, MAX_CELLS, isLayout, dims, trackStyle, layoutForCount } from "../../../src/components/gridLayout.js";
 
-describe("gridLayout", () => {
-  it("exposes the layouts smallest→largest", () => {
-    expect(LAYOUTS).toEqual(["1", "2", "2x2", "3x2", "4x2", "3x3"]);
+describe("gridLayout (columns only)", () => {
+  it("exposes the layouts smallest→largest, one per column count", () => {
+    expect(LAYOUTS).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    expect(MAX_CELLS).toBe(8);
   });
 
-  it("isLayout accepts known layouts and rejects everything else", () => {
+  it("isLayout accepts known layouts and rejects everything else — including the old stacked ones", () => {
     expect(isLayout("1")).toBe(true);
-    expect(isLayout("2")).toBe(true);
-    expect(isLayout("3x3")).toBe(true);
-    expect(isLayout("5x5")).toBe(false);
+    expect(isLayout("8")).toBe(true);
+    expect(isLayout("2x2")).toBe(false);
+    expect(isLayout("3x3")).toBe(false);
     expect(isLayout(null)).toBe(false);
     expect(isLayout(42)).toBe(false);
   });
 
-  it("dims returns cols/rows/cellCount", () => {
-    expect(dims("1")).toEqual({ cols: 1, rows: 1, cellCount: 1 });
-    expect(dims("2")).toEqual({ cols: 2, rows: 1, cellCount: 2 });
-    expect(dims("2x2")).toEqual({ cols: 2, rows: 2, cellCount: 4 });
-    expect(dims("3x2")).toEqual({ cols: 3, rows: 2, cellCount: 6 });
-    expect(dims("4x2")).toEqual({ cols: 4, rows: 2, cellCount: 8 });
-    expect(dims("3x3")).toEqual({ cols: 3, rows: 3, cellCount: 9 });
+  it("dims: N columns, always exactly one row", () => {
+    LAYOUTS.forEach((layout) => {
+      const { cols, rows, cellCount } = dims(layout);
+      expect(cols).toBe(Number(layout));
+      expect(rows).toBe(1);
+      expect(cellCount).toBe(cols);
+    });
   });
 
-  it("layoutForCount picks the smallest layout that fits", () => {
+  it("layoutForCount: one column per cell, clamped to 1..MAX_CELLS", () => {
     expect(layoutForCount(1)).toBe("1");
-    expect(layoutForCount(2)).toBe("2");
-    expect(layoutForCount(3)).toBe("2x2");
-    expect(layoutForCount(4)).toBe("2x2");
-    expect(layoutForCount(5)).toBe("3x2");
-    expect(layoutForCount(6)).toBe("3x2");
-    expect(layoutForCount(7)).toBe("4x2");
-    expect(layoutForCount(8)).toBe("4x2");
-    expect(layoutForCount(9)).toBe("3x3");
-  });
-
-  it("layoutForCount clamps out-of-range counts to 1..9", () => {
+    expect(layoutForCount(5)).toBe("5");
+    expect(layoutForCount(8)).toBe("8");
     expect(layoutForCount(0)).toBe("1");
     expect(layoutForCount(-3)).toBe("1");
-    expect(layoutForCount(12)).toBe("3x3");
+    expect(layoutForCount(12)).toBe("8");
   });
 
-  it("trackStyle: one equal track per cell", () => {
-    expect(trackStyle("3x2")).toEqual({
+  it("trackStyle: one equal column track per cell, a single full-height row", () => {
+    expect(trackStyle("3")).toEqual({
       gridTemplateColumns: "1fr 1fr 1fr",
-      gridTemplateRows: "1fr 1fr",
-      gap: "6px",
-    });
-    expect(trackStyle("1")).toEqual({
-      gridTemplateColumns: "1fr",
       gridTemplateRows: "1fr",
       gap: "6px",
     });
-    expect(trackStyle("3x3")).toEqual({
-      gridTemplateColumns: "1fr 1fr 1fr",
-      gridTemplateRows: "1fr 1fr 1fr",
-      gap: "6px",
-    });
-  });
-
-  it("trackStyle: covers every layout", () => {
     LAYOUTS.forEach((layout) => {
-      const { cols, rows } = dims(layout);
       const style = trackStyle(layout);
-      expect(style.gridTemplateColumns.split(" ")).toHaveLength(cols);
-      expect(style.gridTemplateRows.split(" ")).toHaveLength(rows);
+      expect(style.gridTemplateColumns.split(" ")).toHaveLength(dims(layout).cols);
+      expect(style.gridTemplateRows).toBe("1fr");
     });
   });
 });

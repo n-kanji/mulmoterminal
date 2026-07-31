@@ -9,6 +9,7 @@ import { router } from "../router";
 import {
   initialState,
   addCell,
+  addCellWithCwd,
   setSession,
   setCwd,
   setCellAgent,
@@ -321,7 +322,21 @@ function onAddTerminal() {
   if (runningCount(state.value.cells) >= MAX_TERMINALS && !launchOpen.value) return; // surfaced by the disabled button
   state.value = addCell(state.value);
 }
-const onSession = (uid: number, id: string) => (state.value = setSession(state.value, uid, id));
+const onSession = (uid: number, id: string) => {
+  // Fork-local (iTerm2 mode): the quick-launched cell has its session — the one-shot is spent.
+  if (uid === quickLaunchUid.value) quickLaunchUid.value = null;
+  state.value = setSession(state.value, uid, id);
+};
+
+// Fork-local (iTerm2 mode): a preset chip in the permanent strip — one click opens a new
+// column already running claude in that project (addCellWithCwd + TerminalCell autoLaunch).
+const quickLaunchUid = ref<number | null>(null);
+function onQuickLaunch(path: string) {
+  const next = addCellWithCwd(state.value, path);
+  if (next.uid < 0) return; // grid full — the chip does nothing rather than half-launching
+  state.value = next.state;
+  quickLaunchUid.value = next.uid;
+}
 const onCwd = (uid: number, cwd: string) => (state.value = setCwd(state.value, uid, cwd));
 const onAgent = (uid: number, agent: "claude" | "codex") => (state.value = setCellAgent(state.value, uid, agent));
 // Pass the on-screen order so closing the zoomed cell stays zoomed on its filmstrip
@@ -497,10 +512,30 @@ function configureAppearance() {
         {{ p }}
       </button>
     </nav>
+    <!-- Fork-local (iTerm2 mode): the presets as a permanent strip — one click opens a
+         new full-height column already running claude in that project. -->
+    <nav
+      v-if="expandedUid === null && presets.length"
+      class="flex-none flex items-center gap-1 h-[30px] px-4 bg-panel border-b border-border overflow-x-auto"
+      aria-label="Quick launch presets"
+    >
+      <button
+        v-for="p in presets"
+        :key="p.path"
+        type="button"
+        class="inline-flex flex-none cursor-pointer items-center gap-1 rounded-full border border-border bg-base px-2 py-[3px] font-mono text-[11px] leading-none text-muted hover:bg-hover hover:text-fg"
+        :title="`Open a new column in ${p.path}`"
+        :aria-label="`Quick launch ${p.label}`"
+        @click="onQuickLaunch(p.path)"
+      >
+        <span class="material-symbols-outlined text-[13px]" aria-hidden="true">play_arrow</span>{{ p.label }}
+      </button>
+    </nav>
     <TerminalGrid
       class="flex-1 min-h-0 min-w-0"
       :cells="displayCells"
       :expanded-uid="expandedUid"
+      :auto-launch-uid="quickLaunchUid"
       :list-rows="listRows"
       :cancel-uid="cancelUid"
       :default-cwd="defaultCwd"

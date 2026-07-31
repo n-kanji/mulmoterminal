@@ -55,6 +55,9 @@ const props = defineProps<{
   // While a cell is zoomed: cockpit roster (true) vs thumbnail strip (false). Owned by GridView
   // so the toggle can live in the global toolbar rather than float over the stage.
   listMode: boolean;
+  // Fork-local (iTerm2 mode): the cell a toolbar preset chip just opened; that cell
+  // auto-launches claude in its cwd on mount (TerminalCell's autoLaunch).
+  autoLaunchUid?: number | null;
 }>();
 const emit = defineEmits<{
   (e: "session" | "cwd", uid: number, value: string): void;
@@ -321,6 +324,7 @@ watch(
           :open-cwds="openCwds"
           :cancellable="cell.uid === cancelUid"
           :reorderable="reorderable"
+          :auto-launch="cell.uid === autoLaunchUid"
           @toggle-expand="emit('toggle-expand', cell.uid)"
           @session="(id) => emit('session', cell.uid, id)"
           @agent="(a) => emit('agent', cell.uid, a)"

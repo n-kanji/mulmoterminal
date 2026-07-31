@@ -1,5 +1,6 @@
 import type { RunCommand } from "./runCommand";
 import { isRecord } from "../../common/isRecord";
+import { MAX_CELLS } from "./gridLayout";
 
 // The grid is ONE flat, ordered list of terminal cells, split into pages of 9
 // (the tabs). Closing a cell reflows the whole list so later pages pack forward
@@ -56,8 +57,10 @@ export interface GridState {
   sortMode: SortMode;
 }
 
-export const PAGE_SIZE = 9;
-export const MAX_TERMINALS = 81; // 9 pages
+// Fork-local (iTerm2 mode): a page holds MAX_CELLS full-height columns (see
+// gridLayout.ts) — 8, not the stacked grid's 9.
+export const PAGE_SIZE = MAX_CELLS;
+export const MAX_TERMINALS = 64; // 8 pages
 export const STATE_KEY = "grid_v2";
 export const LEGACY_KEY = "grid_state_v1";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -87,10 +90,30 @@ export function addCell(state: GridState): GridState {
   if (runningCount(state.cells) >= MAX_TERMINALS) return state;
   const uid = state.nextUid;
   const cells = [...state.cells, { uid, session: null, cwd: null }];
-  // While a cell is zoomed, promote the new one into the enlarged view so the user
-  // launches it there rather than hunting for it in the filmstrip.
-  const expanded = zoomedUid(state) !== null ? uid : state.expanded;
+  // Fork-local (iTerm2 mode): adding a cell UN-zooms instead of promoting the new
+  // cell into the enlarged view. The operator's model is "columns grow sideways";
+  // promoting kept them trapped fullscreen and hid where the new pane landed.
+  const expanded = zoomedUid(state) !== null ? null : state.expanded;
   return { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded };
+}
+
+// Fork-local (iTerm2 mode): a toolbar preset chip opens a NEW COLUMN already pointed at
+// its directory — the caller then auto-launches claude in it (TerminalCell's autoLaunch),
+// so one click goes straight from chip to running pane with no launcher stop. Reuses an
+// already-open trailing launch cell rather than stacking a second one. Returns the cell's
+// uid so the caller can target the auto-launch; -1 means "full, nothing added".
+export function addCellWithCwd(state: GridState, cwd: string): { state: GridState; uid: number } {
+  const last = state.cells[state.cells.length - 1];
+  if (isLaunchCell(last)) {
+    const cells = state.cells.map((c) => (c.uid === last.uid ? { ...c, cwd } : c));
+    const expanded = zoomedUid(state) !== null ? null : state.expanded;
+    return { state: { ...state, cells, expanded, page: pageCount(cells.length) - 1 }, uid: last.uid };
+  }
+  if (runningCount(state.cells) >= MAX_TERMINALS) return { state, uid: -1 };
+  const uid = state.nextUid;
+  const cells = [...state.cells, { uid, session: null, cwd }];
+  const expanded = zoomedUid(state) !== null ? null : state.expanded;
+  return { state: { ...state, cells, nextUid: state.nextUid + 1, page: pageCount(cells.length) - 1, expanded }, uid };
 }
 
 // The uid of the trailing launch cell that "+ Terminal" (and the launcher's own close button)
@@ -140,7 +163,8 @@ export function insertCellAfter(state: GridState, afterUid: number, cell: Omit<C
   const at = idx >= 0 ? idx + 1 : state.cells.length;
   const uid = state.nextUid;
   const cells = [...state.cells.slice(0, at), { ...cell, uid }, ...state.cells.slice(at)];
-  const expanded = zoomedUid(state) !== null ? uid : state.expanded;
+  // Fork-local (iTerm2 mode): same un-zoom-on-add rule as addCell above.
+  const expanded = zoomedUid(state) !== null ? null : state.expanded;
   return { ...state, cells, nextUid: state.nextUid + 1, page: Math.floor(at / PAGE_SIZE), expanded };
 }
 
