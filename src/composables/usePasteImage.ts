@@ -8,7 +8,7 @@
 // Split into pure pieces because a ClipboardEvent cannot be built faithfully in jsdom: the
 // item-picking rule and the upload are each testable with a plain object / a stubbed fetch,
 // and the component is left with the two lines that wire them together.
-import { PASTE_IMAGE_ROUTE, isPasteImageMime, MAX_PASTE_IMAGE_BYTES, type PasteImageRequest } from "../../common/pasteImage";
+import { PASTE_IMAGE_ROUTE, PASTE_IMAGE_MIMES, isPasteImageMime, MAX_PASTE_IMAGE_BYTES, type PasteImageRequest } from "../../common/pasteImage";
 
 // The parts of DataTransfer this reads. Typed structurally so a spec can hand over a literal —
 // `new DataTransfer()` is not constructible in jsdom, and `items` is not an array.
@@ -86,3 +86,44 @@ const FAILURE_LABEL: Record<PasteImageFailure, string> = {
 };
 
 export const pasteFailureLabel = (reason: PasteImageFailure): string => FAILURE_LABEL[reason];
+
+// ---- Dropped / picked image files (the sibling of the paste path above) ----
+//
+// A drop and the photo button both hand over File objects whose PATH the browser withholds, so
+// they ride the same upload: bytes to the host, path back, path into the pane. Split the same
+// way as the paste half — a pure picker a spec can feed literals, and an async uploader with
+// fetch injected.
+
+/** The images the host will accept, out of a drop's / a picker's file list. */
+export function imageFilesFrom(files: ArrayLike<File> | null | undefined): File[] {
+  const out: File[] = [];
+  if (!files) return out;
+  for (let i = 0; i < files.length; i++) {
+    if (isPasteImageMime(files[i].type)) out.push(files[i]);
+  }
+  return out;
+}
+
+/** The `accept` attribute for a file picker, stating exactly what the host takes — so the OS
+ *  dialog steers the user away from a format that would only fail after the upload. */
+export const IMAGE_PICKER_ACCEPT = PASTE_IMAGE_MIMES.join(",");
+
+export interface UploadImagesOutcome {
+  /** Host paths for every image that made it, in the order given. */
+  paths: string[];
+  /** The last failure, if any image did not make it. */
+  failed: PasteImageFailure | null;
+}
+
+/** Upload several images sequentially (the host writes to one attachment store; parallelism
+ *  buys nothing and interleaves failure messages). Partial success keeps the paths it got. */
+export async function uploadImageFiles(files: File[], fetchImpl: typeof fetch = fetch): Promise<UploadImagesOutcome> {
+  const paths: string[] = [];
+  let failed: PasteImageFailure | null = null;
+  for (const file of files) {
+    const outcome = await uploadPastedImage(file, fetchImpl);
+    if (outcome.ok) paths.push(outcome.path);
+    else failed = outcome.reason;
+  }
+  return { paths, failed };
+}

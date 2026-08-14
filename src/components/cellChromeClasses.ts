@@ -8,7 +8,7 @@
 // styling now, so the specs that select on them aren't coupled to how a cell looks.
 
 export const CELL_FRAME =
-  "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-[var(--cell-border,var(--border))] bg-[var(--cell-bg,var(--bg-base))]";
+  "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border border-[var(--cell-border,var(--border))] bg-[var(--cell-bg,var(--bg-base))]";
 
 export const CELL_HEADER = "flex h-[34px] flex-none items-center gap-2 border-b border-b-border bg-[var(--cell-header-bg,var(--bg-panel))] px-2";
 

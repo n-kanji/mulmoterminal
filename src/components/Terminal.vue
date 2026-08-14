@@ -3,7 +3,8 @@ import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watc
 import { type ITheme } from "@xterm/xterm";
 import { FLIP_MS, shouldRefocusOnZoomChange } from "./cellFlip";
 import { terminalManagesAttention, terminalViewActive } from "./terminalViewActive";
-import { dragCarriesFiles, dropTextFromUriList } from "./dropPaths";
+import { dragCarriesFiles, dropTextFromUriList, toInsertText } from "./dropPaths";
+import { imageFilesFrom, pasteFailureLabel, uploadImageFiles } from "../composables/usePasteImage";
 import { translateUiSentence } from "../utils/translateUi";
 import { useTheme, currentTermTheme, termThemeFor } from "../composables/useTheme";
 import { useDirConfig } from "../composables/useDirConfig";
@@ -363,8 +364,21 @@ function onDrop(e: DragEvent) {
   if (!dt || !dragCarriesFiles(dt.types)) return; // not a file drop — leave text drags alone
   e.preventDefault();
   const text = dropTextFromUriList(dt.getData("text/uri-list") || dt.getData("text/plain"));
-  if (text) insertText(text);
+  if (text) {
+    insertText(text);
+    return;
+  }
+  // No path from the browser — an image still has a route: upload the bytes (the Cmd+V
+  // machinery) and insert the path the host answers with. Only a non-image drop needs the hint.
+  const images = imageFilesFrom(dt.files);
+  if (images.length) void insertDroppedImages(images);
   else showDropHint();
+}
+
+async function insertDroppedImages(images: File[]) {
+  const { paths, failed } = await uploadImageFiles(images);
+  if (paths.length) insertText(toInsertText(paths));
+  if (failed) raiseDropHint(pasteFailureLabel(failed));
 }
 
 function onDragOver(e: DragEvent) {
@@ -384,12 +398,17 @@ const dropHint = ref(false);
 const dropHintText = ref("");
 const DROP_HINT_MS = 6000;
 let dropHintTimer: ReturnType<typeof setTimeout> | undefined;
-async function showDropHint() {
-  const english = hasPickFileButton(headerButtons.value) ? DROP_HINT_PICKER_EN : DROP_HINT_TYPE_EN;
-  dropHintText.value = english; // show immediately; the translation (server-cached) swaps in
+// One owner for the show-then-hide mechanism, so the image-failure path below can't drift
+// from the no-path path in how long a notice stays up.
+function raiseDropHint(text: string) {
+  dropHintText.value = text;
   dropHint.value = true;
   clearTimeout(dropHintTimer);
   dropHintTimer = setTimeout(() => (dropHint.value = false), DROP_HINT_MS);
+}
+async function showDropHint() {
+  const english = hasPickFileButton(headerButtons.value) ? DROP_HINT_PICKER_EN : DROP_HINT_TYPE_EN;
+  raiseDropHint(english); // show immediately; the translation (server-cached) swaps in
   const translated = await translateUiSentence(english, "mulmoterminal-ui");
   if (dropHint.value) dropHintText.value = translated; // ignore if it resolved after the hint hid
 }
@@ -457,7 +476,7 @@ onUnmounted(() => {
     </div>
     <div
       ref="terminalRef"
-      class="min-h-0 flex-1 p-1"
+      class="min-h-0 flex-1 p-0.5"
       :class="{ '[outline:2px_dashed_var(--accent)] [outline-offset:-2px]': dragOver }"
       @dragover="onDragOver"
       @dragleave="dragOver = false"

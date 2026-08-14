@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { bytesToBase64, pasteFailureLabel, pastedImageFile, uploadPastedImage, type ClipboardLike } from "../../../src/composables/usePasteImage";
-import { MAX_PASTE_IMAGE_BYTES, PASTE_IMAGE_ROUTE } from "../../../common/pasteImage";
+import {
+  bytesToBase64,
+  imageFilesFrom,
+  IMAGE_PICKER_ACCEPT,
+  pasteFailureLabel,
+  pastedImageFile,
+  uploadImageFiles,
+  uploadPastedImage,
+  type ClipboardLike,
+} from "../../../src/composables/usePasteImage";
+import { MAX_PASTE_IMAGE_BYTES, PASTE_IMAGE_MIMES, PASTE_IMAGE_ROUTE } from "../../../common/pasteImage";
 
 // A ClipboardEvent's DataTransfer cannot be built faithfully in jsdom (no DataTransfer
 // constructor, and `items` is not an array), which is why the picking rule takes a structural
@@ -90,6 +99,58 @@ describe("uploadPastedImage", () => {
       },
     } as unknown as File;
     expect(await uploadPastedImage(broken, fetchImpl as unknown as typeof fetch)).toEqual({ ok: false, reason: "unreadable" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("imageFilesFrom", () => {
+  // The drop / photo-button sibling of pastedImageFile: a FileList's worth of files, of which
+  // only the host-supported images survive — a dropped PDF must not be uploaded to be 415'd.
+  it("keeps every supported image and drops the rest, in order", () => {
+    const a = png("a.png");
+    const b = new File([], "b.pdf", { type: "application/pdf" });
+    const c = new File([], "c.jpg", { type: "image/jpeg" });
+    expect(imageFilesFrom([a, b, c])).toEqual([a, c]);
+  });
+
+  it("is empty for no files at all", () => {
+    expect(imageFilesFrom(null)).toEqual([]);
+    expect(imageFilesFrom(undefined)).toEqual([]);
+    expect(imageFilesFrom([])).toEqual([]);
+  });
+});
+
+describe("IMAGE_PICKER_ACCEPT", () => {
+  // The picker must steer the user to exactly what the host takes — the two lists are one list.
+  it("names every supported mime and nothing else", () => {
+    expect(IMAGE_PICKER_ACCEPT.split(",")).toEqual([...PASTE_IMAGE_MIMES]);
+  });
+});
+
+describe("uploadImageFiles", () => {
+  const pathFetch = () => {
+    let n = 0;
+    return vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, path: `/w/att/${++n}.png` }) }) as unknown as Response);
+  };
+
+  it("uploads sequentially and returns every path in order", async () => {
+    const fetchImpl = pathFetch();
+    const outcome = await uploadImageFiles([png("a.png"), png("b.png")], fetchImpl as unknown as typeof fetch);
+    expect(outcome).toEqual({ paths: ["/w/att/1.png", "/w/att/2.png"], failed: null });
+  });
+
+  // Partial success keeps its paths: two screenshots dropped, one oversized — the good one
+  // still lands, and `failed` carries the reason for the message.
+  it("keeps the paths it got when one file fails", async () => {
+    const fetchImpl = pathFetch();
+    const huge = { size: MAX_PASTE_IMAGE_BYTES + 1, type: "image/png", arrayBuffer: async () => new ArrayBuffer(0) } as unknown as File;
+    const outcome = await uploadImageFiles([png("a.png"), huge], fetchImpl as unknown as typeof fetch);
+    expect(outcome).toEqual({ paths: ["/w/att/1.png"], failed: "too-large" });
+  });
+
+  it("is empty-handed but not failed for no files", async () => {
+    const fetchImpl = pathFetch();
+    expect(await uploadImageFiles([], fetchImpl as unknown as typeof fetch)).toEqual({ paths: [], failed: null });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

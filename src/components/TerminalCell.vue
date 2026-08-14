@@ -11,6 +11,7 @@ import { relativeTime as relativeTimeFrom, usageBadge } from "./cellDisplay";
 import { applyActivityPush } from "./cellActivity";
 import { preferredLaunchDir, shouldSyncLaunchDir } from "./launchDir";
 import { headerStyleFor, cellStyleFor } from "./cellHeaderStyle";
+import DirBadge from "./DirBadge.vue";
 import GitBranchChip from "./GitBranchChip.vue";
 import ModelContextBadge from "./ModelContextBadge.vue";
 import ModelPicker from "./ModelPicker.vue";
@@ -40,8 +41,8 @@ import {
   STRIP_DOT,
   STRIP_STATUS,
 } from "./cellStatusStyles";
-import { dragCarriesFiles, dropTextFromUriList, toShellArg } from "./dropPaths";
-import { pastedImageFile, pasteFailureLabel, uploadPastedImage } from "../composables/usePasteImage";
+import { dragCarriesFiles, dropTextFromUriList, toInsertText, toShellArg } from "./dropPaths";
+import { IMAGE_PICKER_ACCEPT, imageFilesFrom, pastedImageFile, pasteFailureLabel, uploadImageFiles, uploadPastedImage } from "../composables/usePasteImage";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
 import { CELL_ACTIONS, CELL_BTN, CELL_BTN_BOX, CELL_BTN_INK, CELL_BTN_SIZE, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
@@ -210,11 +211,12 @@ const context = ref<CellContext | null>(null);
 // the project badge, the status dot/activity, and the row-2 tools timeline stay structural.
 const { chips: headerChips } = useHeaderButtons({ cwd, session: sessionId, agent, model: computed(() => context.value?.model ?? null) });
 const ROW1_BUILTIN_CHIPS = new Set(["git", "diff", "ctx", "usage"]);
-// Fork-local (iTerm2 mode): ctx and usage are out of the default header. The model
-// (with its version) sits in the status strip, Claude's own TUI prints Context: % at
-// the bottom of every pane, and the token-transfer chip answered a question the
-// operator never asks. A directory config that explicitly lists them still wins.
-const DEFAULT_CELL_CHIP_IDS = ["git", "diff"];
+// Fork-local (iTerm2 mode): usage stays out of the default header — the token-transfer chip
+// answered a question the operator never asks. ctx (the model) is BACK in (R14): the strip's
+// right-edge badge disappears the moment the strip fills with mission + summary, and "which
+// model is this pane on" must be answerable from the header row too. A directory config that
+// explicitly lists chips still wins.
+const DEFAULT_CELL_CHIP_IDS = ["git", "diff", "ctx"];
 interface CellChipView {
   key: string;
   builtin: string | null;
@@ -821,10 +823,38 @@ function onCellDrop(e: DragEvent) {
   if (!launched.value || !dt || !dragCarriesFiles(dt.types)) return;
   e.preventDefault();
   const text = dropTextFromUriList(dt.getData("text/uri-list") || dt.getData("text/plain"));
-  if (text) insertIntoSlot(`cell-${props.uid}`, text);
-  // Chrome withholds a dropped file's path. Say so — a drop that inserted nothing otherwise
-  // reads as the feature being broken. (The canvas has its own longer hint for the same case.)
-  else showCellMsg("このブラウザはパスを渡しません（クリップは添付ボタンから）");
+  if (text) {
+    insertIntoSlot(`cell-${props.uid}`, text);
+    return;
+  }
+  // Chrome withholds a dropped file's path — but an IMAGE can still ride the paste route:
+  // upload the bytes, insert the path the host answers with. Only a non-image drop (a PDF,
+  // a folder) is left with the hint, because nothing can be done with it.
+  const images = imageFilesFrom(dt.files);
+  if (images.length) void insertUploadedImages(images);
+  else showCellMsg("このブラウザはパスを渡しません（画像以外は添付ボタンから）");
+}
+
+// The shared tail of the drop and the photo button: bytes up, paths in. Partial success still
+// inserts what it got — the failure label then explains the missing one.
+async function insertUploadedImages(images: File[]) {
+  showCellMsg(images.length > 1 ? `画像${images.length}枚を保存中…` : "画像を保存中…", 0);
+  const { paths, failed } = await uploadImageFiles(images);
+  if (paths.length) insertIntoSlot(`cell-${props.uid}`, toInsertText(paths));
+  showCellMsg(failed ? pasteFailureLabel(failed) : "画像のパスを挿入しました");
+}
+
+// R14: the photo button — always on the header, because the operator could not find the
+// attach path behind the toolbar toggle. Opens the OS picker restricted to what the host
+// accepts, then rides the same upload as a drop/paste.
+const photoInput = ref<HTMLInputElement | null>(null);
+
+function onPhotoPick(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const images = imageFilesFrom(input.files);
+  if (images.length) void insertUploadedImages(images);
+  else if (input.files?.length) showCellMsg("この形式の画像は非対応です");
+  input.value = ""; // so picking the same file again re-fires change
 }
 
 // R10: Cmd+V an image into the focused pane. A clipboard image has no path — that is exactly
@@ -994,6 +1024,19 @@ const dirDisplay = computed(() => formatCwd(cwd.value, props.home));
 const headerDir = computed(() => {
   const wt = worktreeLabel(cwd.value);
   return wt ? `⎇ ${wt.repo} (${wt.task})` : dirDisplay.value;
+});
+
+// R14: the directory identity, back on the pixels. The fork moved it to the hover title
+// (the left stripe carrying the color), but with ten columns of the same repo color a hover
+// per pane is exactly the recall cost this UI exists to remove. The configured project name
+// wins; an unconfigured dir shows its basename, so the badge never renders empty.
+const headerDirName = computed(() => {
+  if (dirConfig.value.name) return dirConfig.value.name;
+  const wt = worktreeLabel(cwd.value);
+  if (wt) return `${wt.repo} (${wt.task})`;
+  // split + filter rather than a trailing-separator regex (sonarjs flags the backtracking).
+  const segments = cwd.value?.split(/[/\\]/).filter(Boolean) ?? [];
+  return segments.length ? segments[segments.length - 1] : null;
 });
 
 // Whether THIS pane's durable connection is up. The connection manager keys its slots by the
@@ -1226,7 +1269,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
 
 <template>
   <div
-    class="cell @container/pane relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border bg-[var(--cell-bg,var(--bg-base))]"
+    class="cell @container/pane relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border bg-[var(--cell-bg,var(--bg-base))]"
     :class="[statusClass, cellStatusClass, { 'cell-file-drop [outline:2px_dashed_var(--accent)] [outline-offset:-2px]': fileDragOver }]"
     :style="[cellStyle, stripeStyle]"
     @dragover="onCellDragOver"
@@ -1273,15 +1316,16 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
              model / tokens / custom) don't shrink, so without this they would overflow and
              push the actions past the cell's `overflow: hidden` edge — the buttons must
              stay reachable no matter how much a dir's config crams in here. -->
-        <!-- Fork-local (iTerm2 mode): row 1 is a slim identity row. Path, badge text, dot
-             and session id are GONE from the pixels — the left stripe carries the project
-             color, the strip below carries the status, and cwd · session-id live in the
-             header's hover title. What remains: the config-driven chips (git/diff/…) and
-             the actions. -->
+        <!-- Fork-local (iTerm2 mode): row 1 is a slim identity row. The dot and session id
+             are GONE from the pixels — the strip below carries the status, and cwd ·
+             session-id live in the header's hover title. The directory NAME is back (R14):
+             the stripe-color-only experiment made "which project is this pane" a hover per
+             pane. What renders: dir badge, the config-driven chips (git/diff/ctx/…), actions. -->
         <div data-testid="cell-header-main" class="flex min-w-0 flex-auto items-center gap-1.5 overflow-hidden">
           <!-- Info (git / diff / model / tokens) is dropped on a filmstrip
                thumbnail, leaving only dir + what it's doing + a zoom button. -->
           <template v-if="!filmstrip">
+            <DirBadge :name="headerDirName" :color="dirConfig.badgeColor" />
             <template v-for="chip in cellChips" :key="chip.key">
               <GitBranchChip v-if="chip.builtin === 'git'" :status="gitStatus" :hide-dirty="isWorktreeCell" />
               <button
@@ -1295,7 +1339,15 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                 <span v-if="diff.ahead > 0" data-testid="wt-ahead" class="text-accent">+{{ diff.ahead }}</span>
                 <span v-if="diff.dirty > 0" data-testid="wt-dirty-count" class="text-[var(--warn-text,#e0a030)]">●{{ diff.dirty }}</span>
               </button>
-              <ModelContextBadge v-else-if="chip.builtin === 'ctx' && context" :agent="agent" :model="context.model" :context-tokens="context.contextTokens" />
+              <!-- hide-context: nine narrow columns — the model NAME is the answer here;
+                   Claude's own TUI prints Context % at the bottom of every pane. -->
+              <ModelContextBadge
+                v-else-if="chip.builtin === 'ctx' && context"
+                :agent="agent"
+                :model="context.model"
+                :context-tokens="context.contextTokens"
+                hide-context
+              />
               <span
                 v-else-if="chip.builtin === 'usage' && showUsage"
                 data-testid="cell-usage"
@@ -1320,6 +1372,20 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
              track, so they're always pinned top-right. `.stop` so they don't trigger the
              header's click-to-zoom. -->
         <span class="cell-actions" :class="CELL_ACTIONS">
+          <!-- R14: the photo button, always visible — the operator sends screenshots constantly
+               and the picker must not hide behind the toolbar toggle. -->
+          <button
+            v-if="launched"
+            type="button"
+            data-testid="cell-photo-btn"
+            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
+            title="画像を添付（パスを挿入）"
+            aria-label="Attach an image"
+            @click.stop="photoInput?.click()"
+          >
+            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">add_photo_alternate</span>
+          </button>
+          <input ref="photoInput" type="file" :accept="IMAGE_PICKER_ACCEPT" multiple class="hidden" aria-hidden="true" tabindex="-1" @change="onPhotoPick" />
           <button
             v-if="!expanded"
             type="button"
@@ -1346,11 +1412,13 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         <span v-if="stripLabel" data-testid="cell-strip-state" :class="[CELL_STRIP_WORD, stripStatusClass]" :title="statusLabel">{{ stripLabel }}</span>
         <!-- The mission — why this pane exists — ahead of the summary, dimmer and capped at a
              third of the row: it is read first but must never crowd out what is happening now.
-             Hidden in a narrow column, like the prompt, so the summary keeps a whole line. -->
+             ALWAYS visible (R14): it used to hide below 340px, but narrow columns are this
+             operator's normal case, and "what did I ask this pane to do" is the one thing
+             the strip exists to answer — hiding it exactly where it is needed was backwards. -->
         <span
           v-if="mission"
           data-testid="cell-strip-mission"
-          class="hidden max-w-[34%] flex-none truncate font-sans text-[11px] text-dim @[340px]/pane:inline"
+          class="max-w-[34%] flex-none truncate font-sans text-[11px] text-dim"
           :title="`mission: ${mission}`"
           >[{{ mission }}]</span
         >

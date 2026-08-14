@@ -173,7 +173,8 @@ function showPrs(): void {
 </script>
 
 <template>
-  <header class="flex h-8 flex-none items-center gap-2 border-b border-border bg-panel px-2">
+  <!-- h-7 (R14): every chrome row is paid for out of the panes' reading area. -->
+  <header class="flex h-7 flex-none items-center gap-2 border-b border-border bg-panel px-2">
     <!-- Fork-local (iTerm2 mode): mark only — the app-mode window makes the name obvious,
          and the freed width goes to the preset chips (the row's real protagonist). -->
     <span class="flex-none font-sans text-[12px] font-semibold tracking-[0.02em] text-muted" title="MulmoTerminal">MT</span>

@@ -101,12 +101,37 @@ describe("every grid cell shows the directory's badge", () => {
       },
     });
     await flushPromises();
-    // iTerm2 mode: TerminalCell carries the directory colour as a full-height left
-    // stripe instead of a text badge — zero vertical cost, visible even when the
-    // header truncates. The name stays reachable via the header hover title.
-    expect(w.findComponent(DirBadge).exists()).toBe(false);
+    // R14: the badge is BACK on TerminalCell (the stripe-only experiment made "which
+    // project is this pane" a hover per pane), and the stripe stays — colour at a
+    // glance even when the header truncates.
+    expect(w.findComponent(DirBadge).text()).toBe("PROD");
     expect(w.find(".cell").attributes("style") ?? "").toContain("border-left");
     expect(w.find(".cell").attributes("style") ?? "").toContain("rgb(207, 34, 46)"); // #cf222e, serialized
+    w.unmount();
+  });
+
+  // The R14 fallback: an UNCONFIGURED directory badges its basename, so the pane still says
+  // which project it is — the badge never renders empty on a TerminalCell. A cwd of its own:
+  // useDirConfig caches per directory, so reusing the cwd above would answer "PROD".
+  it("TerminalCell badges the cwd basename when the directory has no name", async () => {
+    serveDirConfig({});
+    const w = mount(TerminalCell, {
+      props: {
+        uid: 4,
+        expanded: false,
+        zoomed: false,
+        initialSessionId: "11111111-1111-1111-1111-111111111111",
+        initialCwd: "/proj/badge-noname",
+        defaultCwd: "/proj/badge-noname",
+        presets: [],
+        home: "/home/me",
+        cancellable: false,
+        openSessionIds: [],
+        openCwds: [],
+      },
+    });
+    await flushPromises();
+    expect(w.findComponent(DirBadge).text()).toBe("badge-noname");
     w.unmount();
   });
 });

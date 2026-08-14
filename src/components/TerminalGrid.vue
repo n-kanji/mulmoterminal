@@ -393,14 +393,16 @@ watch(
   flex: 1;
   min-height: 0;
   display: grid;
-  padding: 6px;
+  padding: 2px;
   box-sizing: border-box;
 }
 
 /* Fork-local (iTerm2 mode): the focused cell no longer scales (see `.focused`), so the
-   grid reserves NO inset for the growth — every recovered pixel goes to the panes. */
+   grid reserves NO inset for the growth — every recovered pixel goes to the panes.
+   R14: 2px, matching the inter-pane gap — the outer frame is not worth more than the
+   separators between panes. */
 .stage:not(.zoomed) .grid {
-  padding: 4px;
+  padding: 2px;
 }
 
 /* Inert until a cell is zoomed. */
@@ -427,7 +429,7 @@ watch(
 }
 
 .stage.zoomed.listmode .zoom-main {
-  padding: 6px 6px 6px 0;
+  padding: 2px 2px 2px 0;
 }
 
 /* Keep the non-expanded cells mounted (connections + metadata stay live) but OFF the visible
@@ -454,7 +456,7 @@ watch(
 }
 
 .stage.zoomed:not(.listmode) .zoom-main {
-  padding: 6px 6px 0;
+  padding: 2px 2px 0;
 }
 
 .stage.zoomed:not(.listmode) .grid {

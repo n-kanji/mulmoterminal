@@ -11,7 +11,10 @@ import type { Freshness } from "./paneFreshness";
 
 const HEADER_FG = "text-[var(--cell-header-fg,inherit)]";
 const CELL_QUIET_BORDER = "border-[var(--cell-border,var(--border))]";
-const CELL_BLOCKED = "border-amber shadow-[0_0_0_2px_color-mix(in_srgb,var(--amber)_55%,transparent)]";
+// R14: the glow rings are gone. A 1px coloured border is enough state vocabulary at 10
+// columns — the 2px shadow ring on top of it read as "highlight everywhere" and ate the
+// calm the grid needs (the operator's words: ハイライトつきすぎ).
+const CELL_BLOCKED = "border-amber";
 const HEADER_QUIET = `bg-[var(--cell-header-bg,var(--bg-panel))] border-b-border ${HEADER_FG}`;
 const HEADER_BLOCKED = "bg-[var(--warn-bg-subtle)] border-b-amber text-warn";
 const STRIP_BLOCKED = "text-[#f59e0b]";
@@ -43,13 +46,13 @@ export const CELL_STATUS: Record<CellStatus, string> = {
   idle: CELL_QUIET_BORDER,
   shell: CELL_QUIET_BORDER,
   working: "border-accent",
-  unread: "border-accent shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_40%,transparent)]",
-  // Approval and question share the amber ring: both mean a turn has STOPPED on the operator,
-  // and the ring's job is to be seen from across a 4K grid — the word says which one it is.
+  unread: "border-accent",
+  // Approval and question share the amber border: both mean a turn has STOPPED on the
+  // operator — the word says which one it is.
   approval: CELL_BLOCKED,
   question: CELL_BLOCKED,
   // Red is used by nothing else here, so a dead pane cannot be misread as a busy one.
-  disconnected: "border-[var(--err)] shadow-[0_0_0_2px_color-mix(in_srgb,var(--err)_45%,transparent)]",
+  disconnected: "border-[var(--err)]",
 };
 
 export const HEADER_STATUS: Record<CellStatus, string> = {

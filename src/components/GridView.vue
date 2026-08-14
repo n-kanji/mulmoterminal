@@ -754,7 +754,7 @@ function configureAppearance() {
     />
     <nav
       v-if="pages > 1 && expandedUid === null"
-      class="flex-none flex items-center gap-1 h-[30px] px-4 bg-panel border-b border-border"
+      class="flex-none flex items-center gap-1 h-[26px] px-2 bg-panel border-b border-border"
       aria-label="Grid tabs"
     >
       <template v-for="p in pages" :key="p">
