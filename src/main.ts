@@ -8,6 +8,7 @@ import "./composables/collectionUi";
 // locale) once, before any manageAccounting card mounts.
 import "./composables/accountingUi";
 import { initTheme } from "./composables/useTheme";
+import { hydrateWebFonts } from "./composables/useWebFonts";
 import { installFileDropGuard } from "./composables/useFileDropGuard";
 import { installPageZoomGuard } from "./composables/usePageZoomGuard";
 import { router } from "./router";
@@ -32,5 +33,9 @@ installPageZoomGuard();
 // shell (route still at the start location) — and TerminalView.onMounted would
 // attach the durable "single" PTY — before the route flips to the grid, leaking a
 // hidden Claude session. router.isReady() guarantees the initial URL is honored first.
+//
+// Host-served web fonts are also awaited (with their own internal timeout): xterm's canvas
+// renderer measures the cell grid at terminal construction, so a face landing after mount
+// would leave already-drawn panes measured against the fallback font.
 const app = createApp(App).use(router);
-router.isReady().then(() => app.mount("#app"));
+Promise.all([router.isReady(), hydrateWebFonts()]).then(() => app.mount("#app"));
