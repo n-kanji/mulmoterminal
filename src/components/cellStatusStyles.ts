@@ -11,12 +11,7 @@ import type { Freshness } from "./paneFreshness";
 
 const HEADER_FG = "text-[var(--cell-header-fg,inherit)]";
 const CELL_QUIET_BORDER = "border-[var(--cell-border,var(--border))]";
-// R14: the glow rings are gone. A 1px coloured border is enough state vocabulary at 10
-// columns — the 2px shadow ring on top of it read as "highlight everywhere" and ate the
-// calm the grid needs (the operator's words: ハイライトつきすぎ).
-const CELL_BLOCKED = "border-amber";
 const HEADER_QUIET = `bg-[var(--cell-header-bg,var(--bg-panel))] border-b-border ${HEADER_FG}`;
-const HEADER_BLOCKED = "bg-[var(--warn-bg-subtle)] border-b-amber text-warn";
 const STRIP_BLOCKED = "text-[#f59e0b]";
 
 /** The state marker the specs assert on. Carries no styling — the tables below do. */
@@ -41,27 +36,27 @@ export const STATUS_LABEL: Record<CellStatus, string> = {
   idle: "Idle",
 };
 
+// R14 second pass: the frame and the header carry NO state colour at all any more — the
+// operator asked for iTerm2-flat separators ("両端1ピクセルぐらい、色のハイライトもいらない").
+// State lives in the strip's word + dot below, which is where the eye already reads it.
+// The one exception is a DEAD pane: a red frame is an error, not a highlight.
 export const CELL_STATUS: Record<CellStatus, string> = {
-  // The quiet states keep the per-dir --cell-border override; the active ones replace it.
   idle: CELL_QUIET_BORDER,
   shell: CELL_QUIET_BORDER,
-  working: "border-accent",
-  unread: "border-accent",
-  // Approval and question share the amber border: both mean a turn has STOPPED on the
-  // operator — the word says which one it is.
-  approval: CELL_BLOCKED,
-  question: CELL_BLOCKED,
-  // Red is used by nothing else here, so a dead pane cannot be misread as a busy one.
+  working: CELL_QUIET_BORDER,
+  unread: CELL_QUIET_BORDER,
+  approval: CELL_QUIET_BORDER,
+  question: CELL_QUIET_BORDER,
   disconnected: "border-[var(--err)]",
 };
 
 export const HEADER_STATUS: Record<CellStatus, string> = {
   idle: HEADER_QUIET,
   shell: HEADER_QUIET,
-  working: `bg-selected border-b-accent ${HEADER_FG}`,
-  unread: `bg-selected border-b-accent ${HEADER_FG}`,
-  approval: HEADER_BLOCKED,
-  question: HEADER_BLOCKED,
+  working: HEADER_QUIET,
+  unread: HEADER_QUIET,
+  approval: HEADER_QUIET,
+  question: HEADER_QUIET,
   disconnected: `bg-[var(--err-bg)] border-b-[var(--err)] text-[var(--err-text,var(--err))]`,
 };
 

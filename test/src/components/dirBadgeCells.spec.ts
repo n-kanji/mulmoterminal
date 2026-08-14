@@ -102,11 +102,11 @@ describe("every grid cell shows the directory's badge", () => {
     });
     await flushPromises();
     // R14: the badge is BACK on TerminalCell (the stripe-only experiment made "which
-    // project is this pane" a hover per pane), and the stripe stays — colour at a
-    // glance even when the header truncates.
+    // project is this pane" a hover per pane). The 3px left stripe is gone with it —
+    // the badge carries both the colour and the name, and the stripe thickened every
+    // pane's left edge (the operator's 枠が太い complaint).
     expect(w.findComponent(DirBadge).text()).toBe("PROD");
-    expect(w.find(".cell").attributes("style") ?? "").toContain("border-left");
-    expect(w.find(".cell").attributes("style") ?? "").toContain("rgb(207, 34, 46)"); // #cf222e, serialized
+    expect(w.find(".cell").attributes("style") ?? "").not.toContain("border-left");
     w.unmount();
   });
 

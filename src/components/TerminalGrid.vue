@@ -393,16 +393,16 @@ watch(
   flex: 1;
   min-height: 0;
   display: grid;
-  padding: 2px;
+  padding: 1px;
   box-sizing: border-box;
 }
 
 /* Fork-local (iTerm2 mode): the focused cell no longer scales (see `.focused`), so the
    grid reserves NO inset for the growth — every recovered pixel goes to the panes.
-   R14: 2px, matching the inter-pane gap — the outer frame is not worth more than the
+   R14: 1px, matching the inter-pane gap — the outer frame is not worth more than the
    separators between panes. */
 .stage:not(.zoomed) .grid {
-  padding: 2px;
+  padding: 1px;
 }
 
 /* Inert until a cell is zoomed. */
@@ -484,9 +484,11 @@ watch(
 
 /* Fork-local (iTerm2 mode): focus is a RING, not a scale — the operator asked for the
    zoom's reserved margin back, and a ring still answers "which pane receives my keys"
-   (mis-typing into the wrong session is the one focus accident that matters). */
+   (mis-typing into the wrong session is the one focus accident that matters).
+   R14 second pass: NEUTRAL, not accent-coloured — the operator asked for zero colour
+   highlights on the frames; a slightly brighter grey line still marks the focused pane. */
 .stage:not(.zoomed) .grid > .focused {
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 35%, transparent);
   z-index: 5;
 }
 

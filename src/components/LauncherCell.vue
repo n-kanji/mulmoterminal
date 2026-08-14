@@ -84,9 +84,8 @@ const headerStyle = computed(() => headerStyleFor(dirConfig.value.headerColor, d
 const cellStyle = computed(() =>
   cellStyleFor(dirConfig.value.cellColor, dirConfig.value.cellBorderColor, dirConfig.value.dotColor, dirConfig.value.buttonColor),
 );
-// The directory's colour as a full-height left stripe, like the Claude cell's — the two kinds
-// of pane must read as the same project from the corner of the eye.
-const stripeStyle = computed(() => (dirConfig.value.badgeColor ? { borderLeft: `3px solid ${dirConfig.value.badgeColor}` } : {}));
+// R14 second pass: the left stripe is gone here too, in step with the Claude cell — the
+// DirBadge carries the project colour, and the stripe was part of the 枠が太い complaint.
 const statusClass = computed(() => STATUS_CLASS[status.value]);
 const cellStatusClass = computed(() => CELL_STATUS[status.value]);
 const headerStatusClass = computed(() => HEADER_STATUS[status.value]);
@@ -115,7 +114,7 @@ function relaunch() {
   <div
     class="cell @container/pane relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border bg-[var(--cell-bg,var(--bg-base))]"
     :class="[statusClass, cellStatusClass]"
-    :style="[cellStyle, stripeStyle]"
+    :style="cellStyle"
   >
     <!-- Row 1 — identity: the directory, its badge, and the actions. Same 24px row the Claude
          cell uses, so the two kinds of pane line up across a grid. -->

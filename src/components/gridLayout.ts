@@ -34,7 +34,7 @@ export function layoutForCount(count: number): Layout {
 export function trackStyle(layout: Layout) {
   const { cols } = dims(layout);
   const tracks = Array.from({ length: cols }, () => "1fr").join(" ");
-  // 2px, iTerm2-thin (R14): the separators are for parsing columns apart, not for breathing —
+  // 1px, iTerm2-thin (R14): the separators are for parsing columns apart, not for breathing —
   // at 10 columns every gap pixel is paid ten times over.
-  return { gridTemplateColumns: tracks, gridTemplateRows: "1fr", gap: "2px" };
+  return { gridTemplateColumns: tracks, gridTemplateRows: "1fr", gap: "1px" };
 }

@@ -1120,13 +1120,12 @@ function commitRename() {
 }
 const cancelRename = () => (renaming.value = false);
 
-// Row 1 shows no path/badge/id anymore (identity lives in the left stripe + hover);
-// everything is still one hover away for debugging and resume.
+// cwd + session id, one hover away for debugging and resume (the header shows the
+// DirBadge, not the full path).
 const headerTitle = computed(() => [cwd.value, sessionId.value].filter(Boolean).join(" · "));
-// The directory's color as a full-height stripe on the pane's left edge: zero vertical
-// cost, survives header truncation, and reads in peripheral vision. The 3 remaining
-// border sides keep carrying the state color.
-const stripeStyle = computed(() => (dirConfig.value.badgeColor ? { borderLeft: `3px solid ${dirConfig.value.badgeColor}` } : {}));
+// R14 second pass: the 3px left stripe is gone — the DirBadge carries the project colour
+// AND its name in the header now, and the stripe was a third of the "枠が太い" the
+// operator kept seeing (3px stripe + 1px border on every pane's left edge).
 // The old row 3 (Terminal.vue's header: Skill / attach / folders / voice / timeline) is
 // hidden in the tiles and summoned per-cell with the header's "…" — capability moved
 // behind one click, not removed. Zoomed cells always show it.
@@ -1271,7 +1270,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
   <div
     class="cell @container/pane relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border bg-[var(--cell-bg,var(--bg-base))]"
     :class="[statusClass, cellStatusClass, { 'cell-file-drop [outline:2px_dashed_var(--accent)] [outline-offset:-2px]': fileDragOver }]"
-    :style="[cellStyle, stripeStyle]"
+    :style="cellStyle"
     @dragover="onCellDragOver"
     @dragleave="onCellDragLeave"
     @drop="onCellDrop"
@@ -1385,7 +1384,20 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">add_photo_alternate</span>
           </button>
-          <input ref="photoInput" type="file" :accept="IMAGE_PICKER_ACCEPT" multiple class="hidden" aria-hidden="true" tabindex="-1" @change="onPhotoPick" />
+          <!-- @click.stop: the programmatic photoInput.click() dispatches a real click that
+               would bubble to the header's click-to-zoom — Finder opening AND the pane
+               maximizing was the reported bug. -->
+          <input
+            ref="photoInput"
+            type="file"
+            :accept="IMAGE_PICKER_ACCEPT"
+            multiple
+            class="hidden"
+            aria-hidden="true"
+            tabindex="-1"
+            @click.stop
+            @change="onPhotoPick"
+          />
           <button
             v-if="!expanded"
             type="button"
@@ -1457,17 +1469,9 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           :title="lastPrompt ?? ''"
           >{{ stripPrompt }}</span
         >
-        <!-- Model + context % pinned at the strip's right edge — the header's ctx chip
-             truncates first in a narrow column, and "which model is this pane on" must
-             survive at every width (the operator's iTerm2 statusline showed it). -->
-        <ModelContextBadge
-          v-if="context"
-          class="flex-none tabular-nums"
-          :agent="agent"
-          :model="context.model"
-          :context-tokens="context.contextTokens"
-          hide-context
-        />
+        <!-- The strip's model badge is GONE (R14): the header's ctx chip is back in the
+             default set, and two rows both saying "Opus 5" was the operator's first
+             complaint about the change. The strip keeps the row for status + mission. -->
       </div>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TerminalView

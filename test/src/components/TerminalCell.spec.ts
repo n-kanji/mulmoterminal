@@ -845,8 +845,9 @@ describe("TerminalCell", () => {
       const u = String(url);
       if (u.includes("/api/scripts")) return { ok: true, json: async () => ({ cwd: "/p", scripts: [] }) };
       if (u.includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
-      // iTerm2 mode dropped usage from the default chips — these tests opt back in.
-      if (u.includes("/api/header")) return { ok: true, json: async () => ({ buttons: [], chips: [{ kind: "builtin", id: "usage" }] }) };
+      // R14: the model badge lives in the HEADER's ctx chip (the strip copy is gone) —
+      // this test lists ctx explicitly and reads it there.
+      if (u.includes("/api/header")) return { ok: true, json: async () => ({ buttons: [], chips: [{ kind: "builtin", id: "ctx" }] }) };
       return {
         ok: true,
         json: async () => ({ working: false, waiting: false, lastPrompt: null, context: { model: "claude-opus-4-20250514", contextTokens: 70_000 } }),
@@ -854,9 +855,9 @@ describe("TerminalCell", () => {
     }) as unknown as typeof fetch;
     const w = mountCell(id);
     await flushPromises();
-    const badge = w.find('[data-testid="model-badge"]');
+    const badge = w.find('[data-testid="cell-header-main"] [data-testid="model-badge"]');
     expect(badge.exists()).toBe(true);
-    // iTerm2 mode: the strip badge carries model + version only — Claude's own TUI
+    // The header badge carries model + version only (hide-context) — Claude's own TUI
     // prints the Context % at the bottom of the pane. Tokens stay in the tooltip.
     expect(badge.text()).toBe("Opus 4");
     expect(badge.attributes("title")).toContain("70,000 / 200,000 (35%)");
@@ -895,11 +896,11 @@ describe("TerminalCell", () => {
     await flushPromises();
     expect(w.find('[data-testid="cell-hdr-chip"]').text()).toBe("prod"); // custom chip renders its substituted text
     expect(w.find('[data-testid="cell-usage"]').exists()).toBe(true); // usage is listed
-    // ctx omitted from the chip list → hidden in the HEADER despite context set. The
-    // status STRIP's copy stays regardless (iTerm2 mode: which model a pane runs must
-    // survive at every width and every chip config).
+    // ctx omitted from the chip list → no model badge anywhere: hidden in the HEADER,
+    // and the strip's copy is GONE outright (R14 — two rows both saying the model was
+    // the operator's first complaint after the header chip returned).
     expect(w.find('[data-testid="cell-header-main"] [data-testid="model-badge"]').exists()).toBe(false);
-    expect(w.find('[data-testid="cell-status-strip"] [data-testid="model-badge"]').exists()).toBe(true);
+    expect(w.find('[data-testid="cell-status-strip"] [data-testid="model-badge"]').exists()).toBe(false);
   });
 
   it("renders duplicate built-in chips without key collisions", async () => {
