@@ -32,6 +32,7 @@ import {
   CELL_STRIP,
   CELL_STRIP_DOT,
   CELL_STRIP_MAIN,
+  CELL_STRIP_ROW2,
   CELL_STRIP_WORD,
   FRESHNESS_DOT,
   FRESHNESS_TITLE,
@@ -1087,19 +1088,27 @@ const stripStatusClass = computed(() => STRIP_STATUS[status.value]);
 const stripDotClass = computed(() => FRESHNESS_DOT[freshness.value] ?? STRIP_DOT[status.value]);
 const stripDotTitle = computed(() => FRESHNESS_TITLE[freshness.value]);
 const stripLabel = computed(() => paneStateWord(status.value));
-const stripPrompt = computed(() => (lastPrompt.value ? `❯ ${lastPrompt.value}` : ""));
 
-// R10 — the pane's NAME, and why it outranks the AI summary.
+// R10 — the pane's NAME, and why it outranks everything else in row 1.
 //
 // The summary answers "what is happening right now" and is rewritten every turn. With four
 // panes open on one repo, that is the one thing which cannot tell them apart: they all say
 // something plausible about the same project. A name the operator typed is stable and is the
-// answer to "which pane is this", so when there is one it takes the row's flexible slot and
-// the summary steps back into the hover title. Nothing is lost — the summary is one hover away
-// and the terminal underneath is showing the same work.
+// answer to "which pane is this". Below it, the MISSION (auto-seeded server-side from the
+// pane's first meaningful prompt) answers "what did I ask this pane to do" — the recall the
+// operator actually loses across twenty columns. The AI summary is row 1's last resort.
 const named = computed(() => !!props.name);
-const stripMain = computed(() => cellMsg.value || props.name || aiTitle.value || "—");
-const stripMainTitle = computed(() => (props.name && aiTitle.value ? `${props.name} — ${aiTitle.value}` : (props.name ?? aiTitle.value ?? "")));
+const stripMain = computed(() => cellMsg.value || props.name || mission.value || aiTitle.value || "—");
+const stripMainTitle = computed(() => [props.name, mission.value && `mission: ${mission.value}`, aiTitle.value].filter(Boolean).join(" — "));
+// Row 2 — what is happening NOW: the AI summary unless row 1 already shows it, else the
+// last prompt. Never repeats row 1; empty hides the row (an idle pane stays one line).
+const stripLine2 = computed(() => {
+  const line1 = stripMain.value;
+  for (const text of [aiTitle.value, lastPrompt.value]) {
+    if (text && text !== line1) return text;
+  }
+  return "";
+});
 
 // Double-clicking the identity text opens the rename in place. Deliberately NOT on the header
 // row above: a click there zooms the cell, so a double-click would zoom and un-zoom on its way
@@ -1413,65 +1422,49 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           <CellChromeButtons :expanded="expanded" @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
-      <!-- Fork-local (iTerm2 mode): per-pane status line — status word + mission + AI summary +
-           last prompt, always visible in the tiled columns. Still ONE 22px row: the mission
-           takes space from the summary rather than adding a line, because rows are the scarce
-           resource in a column and readable lines per column is the top UI metric here. -->
-      <div v-if="!filmstrip" data-testid="cell-status-strip" :class="CELL_STRIP">
-        <span :class="[CELL_STRIP_DOT, stripDotClass]" :title="stripDotTitle" aria-hidden="true" />
-        <!-- No word at all for a pane with nothing to ask (common/paneState): the summary
-             takes the space rather than a placeholder taking a column-width of it. -->
-        <span v-if="stripLabel" data-testid="cell-strip-state" :class="[CELL_STRIP_WORD, stripStatusClass]" :title="statusLabel">{{ stripLabel }}</span>
-        <!-- The mission — why this pane exists — ahead of the summary, dimmer and capped at a
-             third of the row: it is read first but must never crowd out what is happening now.
-             ALWAYS visible (R14): it used to hide below 340px, but narrow columns are this
-             operator's normal case, and "what did I ask this pane to do" is the one thing
-             the strip exists to answer — hiding it exactly where it is needed was backwards. -->
-        <span
-          v-if="mission"
-          data-testid="cell-strip-mission"
-          class="max-w-[34%] flex-none truncate font-sans text-[11px] text-dim"
-          :title="`mission: ${mission}`"
-          >[{{ mission }}]</span
-        >
-        <!-- The one flexible element of the row (P0-3): the pane's NAME if it has one, else the
-             AI summary — brightest text in the pane chrome, dynamic info above static (P1-4).
-             Double-click to rename in place; Enter commits, Esc cancels, blur commits. -->
-        <input
-          v-if="renaming"
-          ref="nameInput"
-          v-model="nameDraft"
-          data-testid="cell-strip-name-input"
-          class="min-w-0 flex-auto rounded-[3px] border border-accent bg-input px-1 py-0 font-sans text-[12px] leading-[16px] text-fg outline-none"
-          :maxlength="MAX_CELL_NAME"
-          aria-label="Pane name"
-          spellcheck="false"
-          @keydown.enter.prevent="commitRename"
-          @keydown.esc.prevent="cancelRename"
-          @blur="commitRename"
-          @dblclick.stop
-        />
-        <span
-          v-else
-          data-testid="cell-strip-summary"
-          :class="[CELL_STRIP_MAIN, named ? 'font-medium' : '']"
-          :data-named="named ? 'true' : undefined"
-          :title="stripMainTitle"
-          @dblclick.stop="startRename"
-          >{{ stripMain }}</span
-        >
-        <!-- The last prompt only when the column can afford it whole — never half-truncated
-             into noise next to a half-truncated summary (P0-4). -->
-        <span
-          v-if="stripPrompt"
-          data-testid="cell-strip-prompt"
-          class="hidden max-w-[38%] flex-none truncate font-sans text-[11px] text-dim @[340px]/pane:inline"
-          :title="lastPrompt ?? ''"
-          >{{ stripPrompt }}</span
-        >
-        <!-- The strip's model badge is GONE (R14): the header's ctx chip is back in the
-             default set, and two rows both saying "Opus 5" was the operator's first
-             complaint about the change. The strip keeps the row for status + mission. -->
+      <!-- R14 third pass — TWO rows, one message each (the operator's call, mirroring the
+           claudecode-notify Status pane the iTerm2 setup had). One 22px row holding three
+           fragments gave each ~8 readable characters in a narrow column; nothing was
+           legible. Row 1: why the pane exists — name / mission (auto-seeded from the first
+           meaningful prompt, server-side) / AI summary. Row 2: what is happening now — the
+           AI summary or the last prompt, whichever row 1 didn't use; hidden when empty so
+           an idle pane pays 22px, not 42. -->
+      <div v-if="!filmstrip" data-testid="cell-status-strip" class="flex flex-none flex-col">
+        <div :class="CELL_STRIP">
+          <span :class="[CELL_STRIP_DOT, stripDotClass]" :title="stripDotTitle" aria-hidden="true" />
+          <!-- No word at all for a pane with nothing to ask (common/paneState): the text
+               takes the space rather than a placeholder taking a column-width of it. -->
+          <span v-if="stripLabel" data-testid="cell-strip-state" :class="[CELL_STRIP_WORD, stripStatusClass]" :title="statusLabel">{{ stripLabel }}</span>
+          <!-- The row's one flexible element: NAME if the operator set one, else the mission,
+               else the AI summary. Double-click to rename in place; Enter commits, Esc
+               cancels, blur commits. -->
+          <input
+            v-if="renaming"
+            ref="nameInput"
+            v-model="nameDraft"
+            data-testid="cell-strip-name-input"
+            class="min-w-0 flex-auto rounded-[3px] border border-accent bg-input px-1 py-0 font-sans text-[12px] leading-[16px] text-fg outline-none"
+            :maxlength="MAX_CELL_NAME"
+            aria-label="Pane name"
+            spellcheck="false"
+            @keydown.enter.prevent="commitRename"
+            @keydown.esc.prevent="cancelRename"
+            @blur="commitRename"
+            @dblclick.stop
+          />
+          <span
+            v-else
+            data-testid="cell-strip-summary"
+            :class="[CELL_STRIP_MAIN, named ? 'font-medium' : '']"
+            :data-named="named ? 'true' : undefined"
+            :title="stripMainTitle"
+            @dblclick.stop="startRename"
+            >{{ stripMain }}</span
+          >
+        </div>
+        <div v-if="stripLine2" data-testid="cell-strip-prompt" :class="CELL_STRIP_ROW2" :title="stripLine2">
+          <span class="min-w-0 flex-auto truncate">❯ {{ stripLine2 }}</span>
+        </div>
       </div>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TerminalView

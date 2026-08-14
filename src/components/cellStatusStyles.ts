@@ -103,3 +103,6 @@ export const CELL_STRIP_DOT = "h-1.5 w-1.5 flex-none rounded-full";
 export const CELL_STRIP_WORD = "flex-none font-sans text-[11px] font-medium tracking-wide";
 /** The row's one flexible element — the pane's own text (name / summary / what it runs). */
 export const CELL_STRIP_MAIN = "min-w-0 flex-auto truncate font-sans text-[12px] text-fg";
+/** The Claude cell's SECOND strip row — what is happening now (R14). Shorter than row 1
+ *  (no rename input lives here) and dimmer: row 1 is identity, this is commentary. */
+export const CELL_STRIP_ROW2 = "flex h-[20px] flex-none items-center overflow-hidden border-b border-b-border px-1.5 font-sans text-[11px] text-dim";

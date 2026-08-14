@@ -8,9 +8,10 @@ import { dirConfigWriteTarget } from "../config/dir-config.js";
 import { activityHookEffects, pushKindFor, resolveHookCwd, resolveHookSessionId, waitKindFor } from "../session/activity-hook.js";
 import { headerHookEffect } from "../session/header-hook.js";
 import { lastPrompts, lastResponses, ptys } from "../session/registry.js";
+import { missionOf, normalizeMission, setMission } from "../session/mission-store.js";
 import { latestUserPrompt } from "../session/session-reads.js";
 import { notifyTaskFinished } from "../session/task-push.js";
-import { preferredHeaderPrompt } from "../session/transcript.js";
+import { isTrivialPrompt, preferredHeaderPrompt } from "../session/transcript.js";
 import { failPendingTranslation } from "../session/translation-worker.js";
 import type { SessionActivityDeps } from "../session/session-activity-deps.js";
 import { publishesDirConfig, toolHookRecord } from "../session/tool-hook.js";
@@ -89,6 +90,18 @@ async function trackPromptForHeader(sessionId: string, prompt: string, cwd: stri
   lastPrompts.set(sessionId, preferredHeaderPrompt(lastPrompts.get(sessionId) ?? null, prompt));
 }
 
+// R14: a pane's mission fills itself. Nothing ever wrote the mission store in practice —
+// the operator does not stop mid-thought to curl a label — so the strip's mission line was
+// permanently empty. The FIRST meaningful prompt of a pane IS its mission in the operator's
+// own words, so it is recorded as such; a trivial ack ("続けて", "ok") never becomes one.
+// First-write-wins: once set (here or via PUT /api/session/:id/mission), later prompts
+// don't move it — the mission is why the pane exists, not what it heard last.
+function seedMissionFromPrompt(sessionId: string, prompt: string): void {
+  if (missionOf(sessionId)) return;
+  if (isTrivialPrompt(prompt)) return;
+  setMission(sessionId, normalizeMission(prompt), (id) => ptys.has(id));
+}
+
 // `/clear` restarts the conversation, so the header must stop showing the pre-clear prompt. Blank it
 // (empty string beats the `?? transcriptPrompt` fallback in /api/session, so the old transcript can't
 // resurface) and publish; the next UserPromptSubmit sets the new query. `forgetTitle` drops the AI title
@@ -112,6 +125,7 @@ async function applyHeaderHooks(deps: HookDeps, sessionId: string, event: string
   if (!effect) return;
   if (effect.kind === "prompt") {
     await trackPromptForHeader(sessionId, effect.text, cwd);
+    seedMissionFromPrompt(sessionId, effect.text);
     deps.noteTitleTurn(sessionId, effect.text);
     return;
   }

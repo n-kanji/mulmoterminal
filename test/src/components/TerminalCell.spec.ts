@@ -588,26 +588,28 @@ describe("TerminalCell", () => {
 
   // The mission — why this column exists — is written over HTTP by the agent in the pane, and
   // arrives on the same row as the flags. It must survive the turn-by-turn churn around it.
+  // R14 third pass: the mission owns strip ROW 1 (after a user-set name), and the AI
+  // summary steps down to row 2 — one message per row, each readable at full width.
   describe("the status strip's mission", () => {
-    const mission = (w: ReturnType<typeof mount>) => {
-      const el = w.find('[data-testid="cell-strip-mission"]');
-      return el.exists() ? el.text() : "";
-    };
-
-    it("shows a mission the server pushed, marked off from the summary", async () => {
+    it("takes row 1, pushing the summary down to row 2", async () => {
       const id = "22222222-2222-2222-2222-222222222222";
       const w = mountCell(id);
       await flushPromises();
       captured?.({ id, mission: "keep the release branch green", aiTitle: "fixing the parser" });
       await nextTick();
-      expect(mission(w)).toBe("[keep the release branch green]");
-      expect(summaryText(w)).toBe("fixing the parser");
+      expect(summaryText(w)).toBe("keep the release branch green");
+      expect(promptText(w)).toBe("fixing the parser");
     });
 
-    it("is absent until one is set", async () => {
-      const w = mountCell("22222222-2222-2222-2222-222222222222");
+    it("row 1 falls back to the summary until a mission is set", async () => {
+      const id = "22222222-2222-2222-2222-222222222222";
+      const w = mountCell(id);
       await flushPromises();
-      expect(mission(w)).toBe("");
+      captured?.({ id, aiTitle: "fixing the parser" });
+      await nextTick();
+      expect(summaryText(w)).toBe("fixing the parser");
+      // Row 2 never repeats row 1 — with nothing else to say it stays hidden.
+      expect(w.find('[data-testid="cell-strip-prompt"]').exists()).toBe(false);
     });
 
     // The point of the layer: the summary is rewritten every turn, the mission is not.
@@ -619,18 +621,19 @@ describe("TerminalCell", () => {
       await nextTick();
       captured?.({ id, working: true, aiTitle: "running the tests" });
       await nextTick();
-      expect(mission(w)).toBe("[keep the release branch green]");
+      expect(summaryText(w)).toBe("keep the release branch green");
+      expect(promptText(w)).toBe("running the tests");
     });
 
     it("clears on an explicit null (the way a blank PUT clears it)", async () => {
       const id = "22222222-2222-2222-2222-222222222222";
       const w = mountCell(id);
       await flushPromises();
-      captured?.({ id, mission: "keep the release branch green" });
+      captured?.({ id, mission: "keep the release branch green", aiTitle: "fixing the parser" });
       await nextTick();
       captured?.({ id, mission: null });
       await nextTick();
-      expect(mission(w)).toBe("");
+      expect(summaryText(w)).toBe("fixing the parser");
     });
   });
 
