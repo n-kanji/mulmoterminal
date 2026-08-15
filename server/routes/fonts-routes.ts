@@ -75,11 +75,21 @@ export function mountFontsRoutes(app: Express): void {
   });
 
   app.get("/api/fonts/:file", (req, res) => {
-    const file = req.params.file;
+    // Express 5 hands the param through percent-encoded; decode defensively (a malformed
+    // sequence falls back to the raw value, which then simply won't match a file).
+    const raw = req.params.file;
+    let file = raw;
+    try {
+      file = decodeURIComponent(raw);
+    } catch {
+      // keep raw
+    }
     if (!isServableFontFile(file)) return res.status(404).json({ error: "not found" });
+    // `root` rather than a joined absolute path: send() then owns the containment check
+    // (a name that escaped the dir is refused by the library, belt to our own suspenders).
     // Immutable-ish cache: a face change in practice arrives as a new filename; a day keeps
     // reloads free without pinning a replaced file forever.
-    res.sendFile(path.join(FONTS_DIR, file), { maxAge: "1d" }, (err) => {
+    res.sendFile(file, { root: FONTS_DIR, maxAge: "1d" }, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: "not found" });
     });
   });
