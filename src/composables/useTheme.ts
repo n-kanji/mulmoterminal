@@ -24,9 +24,13 @@ export const THEMES: Theme[] = [
     id: "claude",
     label: "Claude",
     swatch: { base: "#262624", panel: "#2b2a27", accent: "#d97757" },
+    // R14: foreground/white sit a step DOWN from brightWhite on purpose. Normal text is a
+    // calm grey; bold jumps to brightWhite (drawBoldTextInBrightColors, xterm's default) —
+    // the same normal/bold hierarchy iTerm2 renders. With everything at one bright cream
+    // the operator read the grid as "a wall of dense white".
     term: {
       background: "#262624",
-      foreground: "#e8e6dc",
+      foreground: "#c9c6bb",
       cursor: "#d97757",
       selectionBackground: "#4a463e",
       black: "#3a3936",
@@ -36,7 +40,7 @@ export const THEMES: Theme[] = [
       blue: "#7aa2d8",
       magenta: "#b58fd8",
       cyan: "#72b3ac",
-      white: "#cfccc1",
+      white: "#b8b5aa",
       brightBlack: "#807d73",
       brightRed: "#ec8a7f",
       brightGreen: "#98cb90",
@@ -54,9 +58,10 @@ export const THEMES: Theme[] = [
     id: "midnight",
     label: "Midnight",
     swatch: { base: "#1a1a2e", panel: "#16213e", accent: "#4a8cff" },
+    // Same normal/bold split as the claude theme: dim normal, brightWhite for bold.
     term: {
       background: "#1a1a2e",
-      foreground: "#e0e0e0",
+      foreground: "#c2c4ca",
       cursor: "#e0e0e0",
       selectionBackground: "#3a3a5e",
       black: "#32324a",
@@ -66,7 +71,7 @@ export const THEMES: Theme[] = [
       blue: "#7a9dd4",
       magenta: "#a98fd4",
       cyan: "#74b0b8",
-      white: "#c8c8d4",
+      white: "#b0b2be",
       brightBlack: "#74748c",
       brightRed: "#e39a93",
       brightGreen: "#a3cba3",

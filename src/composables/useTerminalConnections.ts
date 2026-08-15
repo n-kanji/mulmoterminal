@@ -321,11 +321,12 @@ function buildTerminal(swallowedMouseModes: Set<number>, font: TerminalFont): Te
     // unreadable at xterm's default 1.0. Box-drawing verticals get small gaps at
     // this height; the operator reads prose all day and draws boxes never.
     lineHeight: 1.35,
-    // R14: bold text keeps its own colour instead of jumping to the bright variant. Claude's
-    // TUI bolds half of every screen, and bold + brightened-to-near-white on a dark canvas
-    // read as "everything is bold and glaring" (the canvas renderer has no thin-strokes
-    // rendering to soften it the way iTerm2 does).
-    drawBoldTextInBrightColors: false,
+    // R14 second thought: bold DOES jump to the bright variant (xterm's default). Turning
+    // this off flattened bold and normal into one weight-and-colour ("太字とノーマルの差が
+    // ない"), because synthetic emboldening alone barely reads at 14px. The glare that
+    // motivated turning it off is fixed at the source instead: every theme now keeps its
+    // normal foreground a step DIMMER than brightWhite, so bold pops without anything
+    // reaching pure #ffffff.
     // Treat macOS Option as Meta so Claude's Alt bindings reach the PTY — Alt+Enter
     // (newline), Alt+B/F (word nav), Alt+Backspace (delete word). The cost is Option
     // dead-key accent entry (é etc.), which a coding terminal doesn't need.
