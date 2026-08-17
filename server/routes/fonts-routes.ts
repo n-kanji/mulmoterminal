@@ -57,21 +57,6 @@ export function fontFaceFromFilename(file: string): WebFontFace | null {
   };
 }
 
-// TEMPORARY (R14 IME debug, 2026-08-17): collects keyboard/composition events from a page
-// opened with ?imedebug (src/main.ts counterpart) into ~/.mulmoterminal/ime-debug.log, so the
-// operator doesn't have to drive DevTools to diagnose the Japanese-IME failure. Remove both
-// halves once the cause is found.
-export function mountImeDebugRoute(app: Express): void {
-  app.post("/api/ime-debug", async (req, res) => {
-    const lines = Array.isArray(req.body?.lines) ? req.body.lines.filter((l: unknown) => typeof l === "string") : [];
-    if (lines.length) {
-      const file = path.join(MULMOTERMINAL_HOME, "ime-debug.log");
-      await fs.appendFile(file, lines.map((l: string) => `${new Date().toISOString()} ${l}`).join("\n") + "\n").catch(() => {});
-    }
-    res.json({ ok: true });
-  });
-}
-
 export function mountFontsRoutes(app: Express): void {
   // The list the client turns into FontFace registrations. A missing directory is the
   // common case (nothing configured) and answers an empty list, never an error.
