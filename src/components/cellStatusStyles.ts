@@ -25,6 +25,19 @@ export const STATUS_CLASS: Record<CellStatus, string> = {
   idle: "is-idle",
 };
 
+/** One sentence per state for the strip's hover card (R14): what the word MEANS and what,
+ *  if anything, the operator should do — the compact words alone were read as jargon
+ *  (「質問って俺に聞いてるの?」was a real question). */
+export const STATE_EXPLAINER: Record<CellStatus, string> = {
+  approval: "Claudeが操作の許可(Yes/No)を待っています",
+  question: "Claudeがあなたへの質問で止まっています",
+  unread: "返答が完了しました。ペインをクリックすると既読になります",
+  working: "Claudeが作業中です",
+  disconnected: "接続が切れています(プロセス終了か通信断)",
+  shell: "シェルペイン(エージェントなし)",
+  idle: "待機中です",
+};
+
 /** The hover title: the same six words, spelled out. */
 export const STATUS_LABEL: Record<CellStatus, string> = {
   approval: "Waiting for your approval",

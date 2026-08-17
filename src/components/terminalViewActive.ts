@@ -9,8 +9,13 @@ export function terminalManagesAttention(command: boolean, launcher: boolean): b
 }
 
 // Whether this terminal is the user's actively-viewed pane while shown: a grid
-// dev-terminal cell counts only while zoomed (so unfocused cells can surface
-// blocked/done); the single view counts whenever it's on screen.
-export function terminalViewActive(devTerminal: boolean, expanded: boolean): boolean {
-  return devTerminal ? expanded : true;
+// dev-terminal cell counts while zoomed OR while it holds keyboard focus; the single
+// view counts whenever it's on screen.
+//
+// Focus counts (R14): the operator reads and replies in the TILED grid — expanding is
+// the exception, not the reading flow — so "unread" cleared only on zoom meant every
+// read pane stayed 完了・未読 forever. Clicking into a tile is the read signal that
+// actually happens. An unfocused, unzoomed cell still surfaces blocked/done (#321).
+export function terminalViewActive(devTerminal: boolean, expanded: boolean, focused = false): boolean {
+  return devTerminal ? expanded || focused : true;
 }

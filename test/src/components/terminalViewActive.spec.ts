@@ -22,4 +22,12 @@ describe("terminalViewActive", () => {
     expect(terminalViewActive(true, false)).toBe(false);
     expect(terminalViewActive(true, true)).toBe(true);
   });
+
+  // R14: clicking into a tile is how the operator actually reads in the grid — focus
+  // counts as viewing, so 完了・未読 clears without zooming. Unfocused stays inactive.
+  it("a grid dev-terminal cell is also active while it holds keyboard focus", () => {
+    expect(terminalViewActive(true, false, true)).toBe(true);
+    expect(terminalViewActive(true, false, false)).toBe(false);
+    expect(terminalViewActive(true, true, false)).toBe(true);
+  });
 });

@@ -38,6 +38,7 @@ import {
   FRESHNESS_TITLE,
   HEADER_STATUS,
   STATUS_CLASS,
+  STATE_EXPLAINER,
   STATUS_LABEL,
   STRIP_DOT,
   STRIP_STATUS,
@@ -1110,6 +1111,46 @@ const stripLine2 = computed(() => {
   return "";
 });
 
+// R14: the strip's hover card — the full, wrapped versions of everything the two truncated
+// rows can only hint at, plus a plain-language line for what the state word means. The
+// native `title` tooltips were the previous answer and failed in practice: browser-timed,
+// one fragment at a time, and invisible over a canvas the operator is already mousing.
+// Teleported to <body> because the cell clips its own overflow; pointer-events-none so the
+// card can never trap the pointer (leaving the strip always hides it).
+const HOVER_CARD_DELAY_MS = 250;
+const HOVER_CARD_W = 460;
+const hoverCard = ref<{ x: number; y: number; age: string } | null>(null);
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+function hoverAge(): string {
+  const t = lastActivityAt.value;
+  if (!t) return "";
+  const minutes = Math.floor((Date.now() - t) / 60_000);
+  if (minutes < 1) return "たった今";
+  if (minutes < 60) return `${minutes}分前から`;
+  return `${Math.floor(minutes / 60)}時間前から`;
+}
+
+function onStripEnter(e: MouseEvent) {
+  const el = e.currentTarget instanceof HTMLElement ? e.currentTarget : null;
+  if (!el) return;
+  if (hoverTimer) clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => {
+    const r = el.getBoundingClientRect();
+    hoverCard.value = { x: Math.max(4, Math.min(r.left, window.innerWidth - HOVER_CARD_W - 8)), y: r.bottom + 4, age: hoverAge() };
+  }, HOVER_CARD_DELAY_MS);
+}
+
+function onStripLeave() {
+  if (hoverTimer) clearTimeout(hoverTimer);
+  hoverTimer = null;
+  hoverCard.value = null;
+}
+onUnmounted(() => {
+  if (hoverTimer) clearTimeout(hoverTimer);
+});
+const stateExplainer = computed(() => STATE_EXPLAINER[status.value]);
+
 // Double-clicking the identity text opens the rename in place. Deliberately NOT on the header
 // row above: a click there zooms the cell, so a double-click would zoom and un-zoom on its way
 // to the input — this row has no click action to fight with, and it is where the name shows.
@@ -1429,7 +1470,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
            meaningful prompt, server-side) / AI summary. Row 2: what is happening now — the
            AI summary or the last prompt, whichever row 1 didn't use; hidden when empty so
            an idle pane pays 22px, not 42. -->
-      <div v-if="!filmstrip" data-testid="cell-status-strip" class="flex flex-none flex-col">
+      <div v-if="!filmstrip" data-testid="cell-status-strip" class="flex flex-none flex-col" @mouseenter="onStripEnter" @mouseleave="onStripLeave">
         <div :class="CELL_STRIP">
           <span :class="[CELL_STRIP_DOT, stripDotClass]" :title="stripDotTitle" aria-hidden="true" />
           <!-- No word at all for a pane with nothing to ask (common/paneState): the text
@@ -1466,6 +1507,26 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           <span class="min-w-0 flex-auto truncate">❯ {{ stripLine2 }}</span>
         </div>
       </div>
+      <!-- The strip's hover card (R14): everything the truncated rows hold, whole. -->
+      <Teleport to="body">
+        <div
+          v-if="hoverCard"
+          data-testid="cell-strip-hovercard"
+          class="pointer-events-none fixed z-50 flex w-[460px] max-w-[92vw] flex-col gap-1 rounded-md border border-border bg-panel p-3 font-sans text-[12px] leading-relaxed text-fg shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
+          :style="{ left: `${hoverCard.x}px`, top: `${hoverCard.y}px` }"
+        >
+          <div class="flex items-baseline gap-2">
+            <span v-if="stripLabel" :class="stripStatusClass" class="flex-none font-semibold">{{ stripLabel }}</span>
+            <span class="min-w-0 text-dim"
+              >{{ stateExplainer }}<template v-if="hoverCard.age">（{{ hoverCard.age }}）</template></span
+            >
+          </div>
+          <div v-if="name" class="line-clamp-2"><span class="text-dim">名前: </span>{{ name }}</div>
+          <div v-if="mission" class="line-clamp-3"><span class="text-dim">ミッション: </span>{{ mission }}</div>
+          <div v-if="aiTitle" class="line-clamp-3"><span class="text-dim">いま: </span>{{ aiTitle }}</div>
+          <div v-if="lastPrompt" class="line-clamp-3"><span class="text-dim">直近の指示: </span>{{ lastPrompt }}</div>
+        </div>
+      </Teleport>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TerminalView
         ref="termRef"

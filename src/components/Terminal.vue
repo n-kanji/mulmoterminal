@@ -279,7 +279,16 @@ watch(
 // Report to the server whether this terminal is the user's actively-viewed pane, so
 // an unfocused grid cell can surface blocked/done and a viewed one stays suppressed.
 const managesAttention = computed(() => terminalManagesAttention(!!props.command, !!props.launcher));
-const viewActive = computed(() => terminalViewActive(!!props.devTerminal, !!props.expanded));
+// Keyboard focus on this terminal counts as viewing it (terminalViewActive): clicking a
+// tile is how the operator actually reads in the grid, and it must clear 完了・未読.
+const hostFocused = ref(false);
+function onHostFocusOut(e: FocusEvent) {
+  // focusout fires on every INTERNAL focus move too; only a departure counts.
+  const root = e.currentTarget instanceof HTMLElement ? e.currentTarget : null;
+  const to = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+  if (!root || !to || !root.contains(to)) hostFocused.value = false;
+}
+const viewActive = computed(() => terminalViewActive(!!props.devTerminal, !!props.expanded, hostFocused.value));
 function pushView(active: boolean) {
   if (managesAttention.value) conn.sendView(slotKey, active);
 }
@@ -481,6 +490,8 @@ onUnmounted(() => {
       @dragover="onDragOver"
       @dragleave="dragOver = false"
       @drop="onDrop"
+      @focusin="hostFocused = true"
+      @focusout="onHostFocusOut"
     />
     <Transition
       enter-active-class="transition-opacity duration-200 ease-[ease]"
