@@ -7,14 +7,14 @@ import { SESSION_ID_RE } from "../config/env.js";
 import { dirConfigWriteTarget } from "../config/dir-config.js";
 import { activityHookEffects, pushKindFor, resolveHookCwd, resolveHookSessionId, waitKindFor } from "../session/activity-hook.js";
 import { headerHookEffect } from "../session/header-hook.js";
-import { lastPrompts, lastResponses, ptys } from "../session/registry.js";
+import { lastPrompts, lastResponses, liveTasks, ptys } from "../session/registry.js";
 import { missionOf, normalizeMission, setMission } from "../session/mission-store.js";
 import { latestUserPrompt } from "../session/session-reads.js";
 import { notifyTaskFinished } from "../session/task-push.js";
 import { isTrivialPrompt, preferredHeaderPrompt } from "../session/transcript.js";
 import { failPendingTranslation } from "../session/translation-worker.js";
 import type { SessionActivityDeps } from "../session/session-activity-deps.js";
-import { publishesDirConfig, toolHookRecord } from "../session/tool-hook.js";
+import { publishesDirConfig, todoInProgressLabel, toolHookRecord } from "../session/tool-hook.js";
 import { noteSessionAlias } from "../session/session-alias.js";
 
 // The header shows one line, so a longer prompt is stored truncated rather than in full.
@@ -65,6 +65,17 @@ async function handleToolHook(deps: HookDeps, sessionId: string, event: string, 
   const record = toolHookRecord(event, p);
   if (record?.phase === "start") await deps.recordToolCallStart(sessionId, record.call);
   if (record?.phase === "end") await deps.recordToolCallEnd(sessionId, record.call);
+  // R14: mirror the agent's in_progress task as the pane's LIVE task (the claudecode-notify
+  // trick — no LLM, updates the moment the agent touches its list). Only a CHANGE publishes:
+  // TodoWrite's Pre and Post both carry the same input, and an unchanged push per tool call
+  // would double every row on the socket for nothing.
+  if (event === "PreToolUse" || event === "PostToolUse") {
+    const live = todoInProgressLabel(p.tool_name, p.tool_input);
+    if (live && liveTasks.get(sessionId) !== live) {
+      liveTasks.set(sessionId, live);
+      deps.publishActivity(sessionId);
+    }
+  }
   // A SUCCESSFUL write to <dir>/.mulmoterminal.json is the live-reload signal: the hook that already
   // reports every tool call tells the client to re-read that directory's config, so no fs watchers.
   // `cwd` is the request-wide resolved cwd (body.cwd over the spawn dir) — a relative file_path
@@ -111,6 +122,7 @@ function seedMissionFromPrompt(sessionId: string, prompt: string): void {
 function clearHeaderPrompt(deps: HookDeps, sessionId: string): void {
   lastPrompts.set(sessionId, "");
   lastResponses.set(sessionId, "");
+  liveTasks.delete(sessionId);
   deps.forgetTitle(sessionId);
   deps.publishActivity(sessionId);
 }
@@ -159,6 +171,9 @@ async function handleHookRequest(deps: HookDeps, req: Request, res: Response) {
     // pty — so tracking an id with no pty (any well-formed uuid may be posted here) would never be
     // reclaimed. A session whose pty is gone simply reports no phase, as it does before its first tool.
     if (entry) deps.noteWorkPhase(sessionId, event, typeof body.tool_name === "string" ? body.tool_name : undefined);
+    // The live task describes the turn that is ENDING — drop it before the Stop publish
+    // below, so 完了・未読 doesn't keep captioning the pane with mid-turn state.
+    if (event === "Stop") liveTasks.delete(sessionId);
     handleActivityHook(deps, sessionId, event, active, typeof body.message === "string" ? body.message : "", body.notification_type);
     await handleToolHook(deps, sessionId, event, body, cwd);
     // A hidden translation worker that ends its turn while still pending never called

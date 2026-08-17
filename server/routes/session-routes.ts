@@ -17,6 +17,7 @@ import {
   devTerminalSessions,
   devTerminalSessionsHydrated,
   lastPrompts,
+  liveTasks,
   lastResponses,
   ptys,
   translationWorkerIds,
@@ -73,7 +74,7 @@ async function sessionDetail(req: Request<{ id: string }>, res: Response, freshe
     { lastPrompt: transcriptPrompt, lastResponse: transcriptResponse },
     activity.get(id) ?? {},
   );
-  res.json({ id, cwd, ...view, usage, context, workPhase });
+  res.json({ id, cwd, ...view, usage, context, workPhase, liveTask: liveTasks.get(id) ?? null });
 }
 
 // Attention state (working / waiting / event) for an explicit set of session ids.

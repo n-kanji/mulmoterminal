@@ -75,13 +75,16 @@ export interface SessionRow {
   lastPrompt: string | null;
   aiTitle: string | null;
   lastResponse: string | null;
+  /** The agent's in_progress task (TodoWrite mirror) — what is happening RIGHT NOW,
+   *  mid-turn, without waiting for the turn-end AI summary. Null outside a turn. */
+  liveTask: string | null;
 }
 
 export function sessionRow(
   id: string,
   activity: Activity | undefined,
   cwd: string | null,
-  texts: { lastPrompt?: string; aiTitle?: string; lastResponse?: string; mission?: string | null },
+  texts: { lastPrompt?: string; aiTitle?: string; lastResponse?: string; mission?: string | null; liveTask?: string | null },
 ): SessionRow {
   const a = activity ?? {};
   return {
@@ -96,6 +99,7 @@ export function sessionRow(
     lastPrompt: texts.lastPrompt ?? null,
     aiTitle: texts.aiTitle ?? null,
     lastResponse: texts.lastResponse ?? null,
+    liveTask: texts.liveTask ?? null,
   };
 }
 

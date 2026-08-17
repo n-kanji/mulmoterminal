@@ -57,3 +57,25 @@ export function toolHookRecord(event: string, payload: ToolHookPayload): ToolHoo
 export function publishesDirConfig(event: string): boolean {
   return event === "PostToolUse";
 }
+
+// R14: the strip's LIVE task — claudecode-notify's trick, ported. A TodoWrite call carries
+// the agent's whole task list in its input; the in_progress entry's activeForm ("Running
+// tests") is a human-written line of what is happening RIGHT NOW, refreshed every time the
+// agent touches its list — no LLM, no turn-end wait, which is why the iTerm2-era status pane
+// felt live and the AI summary here felt stale. `content` (and `subject`, its newer name)
+// back it up for a payload written without an activeForm.
+function isRecordValue(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+export function todoInProgressLabel(toolName: unknown, toolInput: unknown): string | null {
+  if (toolName !== "TodoWrite" || !isRecordValue(toolInput) || !Array.isArray(toolInput.todos)) return null;
+  for (const todo of toolInput.todos) {
+    if (!isRecordValue(todo) || todo.status !== "in_progress") continue;
+    for (const key of ["activeForm", "content", "subject"]) {
+      const text = todo[key];
+      if (typeof text === "string" && text.trim()) return text.trim();
+    }
+  }
+  return null;
+}

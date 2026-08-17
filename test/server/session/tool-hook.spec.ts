@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
 
-import { publishesDirConfig, toolHookRecord } from "../../../server/session/tool-hook.js";
+import { publishesDirConfig, todoInProgressLabel, toolHookRecord } from "../../../server/session/tool-hook.js";
 
 const payload = { tool_use_id: "t1", tool_name: "Edit", tool_input: { file: "a.ts" }, duration_ms: 42 };
 
@@ -57,5 +57,35 @@ describe("publishesDirConfig", () => {
 
   it.each([["PreToolUse"], ["Stop"], ["SessionStart"]])("does not reload on %s", (event) => {
     expect(publishesDirConfig(event)).toBe(false);
+  });
+});
+
+describe("todoInProgressLabel", () => {
+  const todos = (list: unknown[]) => ({ todos: list });
+
+  it("mirrors the in_progress todo's activeForm — the live line the strip shows mid-turn", () => {
+    expect(
+      todoInProgressLabel(
+        "TodoWrite",
+        todos([
+          { content: "Fix the bug", status: "completed", activeForm: "Fixing the bug" },
+          { content: "Run the tests", status: "in_progress", activeForm: "Running the tests" },
+          { content: "Ship it", status: "pending", activeForm: "Shipping" },
+        ]),
+      ),
+    ).toBe("Running the tests");
+  });
+
+  it("falls back to content, then subject, when activeForm is absent or blank", () => {
+    expect(todoInProgressLabel("TodoWrite", todos([{ content: "Run tests", status: "in_progress", activeForm: "  " }]))).toBe("Run tests");
+    expect(todoInProgressLabel("TodoWrite", todos([{ subject: "Run tests", status: "in_progress" }]))).toBe("Run tests");
+  });
+
+  it("is null for another tool, a malformed payload, or a list with nothing in progress", () => {
+    expect(todoInProgressLabel("Bash", todos([{ content: "x", status: "in_progress" }]))).toBeNull();
+    expect(todoInProgressLabel("TodoWrite", null)).toBeNull();
+    expect(todoInProgressLabel("TodoWrite", { todos: "nope" })).toBeNull();
+    expect(todoInProgressLabel("TodoWrite", todos([{ content: "x", status: "pending" }]))).toBeNull();
+    expect(todoInProgressLabel("TodoWrite", todos(["junk", { status: "in_progress" }]))).toBeNull();
   });
 });

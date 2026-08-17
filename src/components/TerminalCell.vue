@@ -197,6 +197,9 @@ const lastPrompt = ref<string | null>(null);
 // the header because a raw follow-up prompt goes stale ("ok") or context-dependent once
 // the session is a back-and-forth. Null until the server generates/pushes one.
 const aiTitle = ref<string | null>(null);
+// The agent's in_progress task, mirrored live from TodoWrite hooks (R14) — updates
+// MID-turn, unlike the AI summary above which waits for the turn to end. Null outside a turn.
+const liveTask = ref<string | null>(null);
 
 // Cumulative token usage for this session (from /api/session/:id, refreshed when a
 // turn finishes). Null until first fetched.
@@ -274,6 +277,7 @@ function applyActivity(d: ActivityMsg) {
       mission: mission.value,
       lastPrompt: lastPrompt.value,
       aiTitle: aiTitle.value,
+      liveTask: liveTask.value,
     },
     d,
   );
@@ -285,6 +289,7 @@ function applyActivity(d: ActivityMsg) {
   mission.value = next.mission;
   lastPrompt.value = next.lastPrompt;
   aiTitle.value = next.aiTitle;
+  liveTask.value = next.liveTask;
 }
 
 // This session's detail, or nothing to apply. Nothing covers three cases the callers all
@@ -936,6 +941,7 @@ function teardown() {
   activityEvent.value = null;
   lastPrompt.value = null;
   aiTitle.value = null;
+  liveTask.value = null;
   usage.value = null;
   context.value = null;
   cwd.value = props.defaultCwd;
@@ -1101,11 +1107,12 @@ const stripLabel = computed(() => paneStateWord(status.value));
 const named = computed(() => !!props.name);
 const stripMain = computed(() => cellMsg.value || props.name || mission.value || aiTitle.value || "—");
 const stripMainTitle = computed(() => [props.name, mission.value && `mission: ${mission.value}`, aiTitle.value].filter(Boolean).join(" — "));
-// Row 2 — what is happening NOW: the AI summary unless row 1 already shows it, else the
-// last prompt. Never repeats row 1; empty hides the row (an idle pane stays one line).
+// Row 2 — what is happening NOW: the LIVE task first (the TodoWrite mirror updates
+// mid-turn), then the AI summary unless row 1 already shows it, then the last prompt.
+// Never repeats row 1; empty hides the row (an idle pane stays one line).
 const stripLine2 = computed(() => {
   const line1 = stripMain.value;
-  for (const text of [aiTitle.value, lastPrompt.value]) {
+  for (const text of [liveTask.value, aiTitle.value, lastPrompt.value]) {
     if (text && text !== line1) return text;
   }
   return "";
@@ -1523,7 +1530,8 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           </div>
           <div v-if="name" class="line-clamp-2"><span class="text-dim">名前: </span>{{ name }}</div>
           <div v-if="mission" class="line-clamp-3"><span class="text-dim">ミッション: </span>{{ mission }}</div>
-          <div v-if="aiTitle" class="line-clamp-3"><span class="text-dim">いま: </span>{{ aiTitle }}</div>
+          <div v-if="liveTask" class="line-clamp-3"><span class="text-dim">作業中: </span>{{ liveTask }}</div>
+          <div v-if="aiTitle" class="line-clamp-3"><span class="text-dim">要約: </span>{{ aiTitle }}</div>
           <div v-if="lastPrompt" class="line-clamp-3"><span class="text-dim">直近の指示: </span>{{ lastPrompt }}</div>
         </div>
       </Teleport>

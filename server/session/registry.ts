@@ -61,6 +61,7 @@ export const aiTitles = new Map<string, string>(); // id -> AI title
 // the last few lines of the agent's most recent reply, refreshed when
 // a turn ends (waiting), so the roster can show "what it just said" without the terminal open.
 export const lastResponses = new Map<string, string>(); // id -> last assistant text (truncated)
+export const liveTasks = new Map<string, string>(); // id -> in_progress task label (TodoWrite mirror; cleared at Stop)
 
 export const titleTurnCounts = new Map<string, number>(); // id -> user turns since last title
 export const titlePending = new Set<string>(); // ids whose next Stop should (re)generate a title

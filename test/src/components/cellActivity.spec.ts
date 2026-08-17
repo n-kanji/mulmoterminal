@@ -11,6 +11,7 @@ const shown: CellActivityState = {
   mission: "keep the release branch green",
   lastPrompt: "fix the login bug",
   aiTitle: "Login fix",
+  liveTask: "running the tests",
 };
 
 describe("applyActivityPush", () => {
@@ -39,6 +40,15 @@ describe("applyActivityPush", () => {
     expect(applyActivityPush(shown, { aiTitle: null })).toMatchObject({ lastPrompt: "fix the login bug", aiTitle: null });
   });
 
+  // The live task (TodoWrite mirror, R14) follows the text rule: absent = no news, null =
+  // the turn ended and the server cleared it — a finished pane must not keep captioning
+  // itself with mid-turn state.
+  it("keeps the live task a push says nothing about, and clears it on an explicit null", () => {
+    expect(applyActivityPush(shown, {})).toMatchObject({ liveTask: "running the tests" });
+    expect(applyActivityPush(shown, { liveTask: null })).toMatchObject({ liveTask: null });
+    expect(applyActivityPush(shown, { liveTask: "writing the fix" })).toMatchObject({ liveTask: "writing the fix" });
+  });
+
   it("keeps the event when the push omits it, and clears it on an explicit null", () => {
     expect(applyActivityPush(shown, {}).event).toBe("Stop");
     expect(applyActivityPush(shown, { event: null }).event).toBeNull();
@@ -55,6 +65,7 @@ describe("applyActivityPush", () => {
       mission: "keep the release branch green",
       lastPrompt: "fix the login bug",
       aiTitle: "Login fix",
+      liveTask: "running the tests",
     });
   });
 

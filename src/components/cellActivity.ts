@@ -23,6 +23,7 @@ export interface ActivityPush {
   mission?: string | null;
   lastPrompt?: string | null;
   aiTitle?: string | null;
+  liveTask?: string | null;
 }
 
 export interface CellActivityState {
@@ -34,6 +35,8 @@ export interface CellActivityState {
   mission: string | null;
   lastPrompt: string | null;
   aiTitle: string | null;
+  /** The agent's in_progress task, mirrored live from its TodoWrite calls (R14). */
+  liveTask: string | null;
 }
 
 export function applyActivityPush(previous: CellActivityState, push: ActivityPush): CellActivityState {
@@ -46,6 +49,9 @@ export function applyActivityPush(previous: CellActivityState, push: ActivityPus
     mission: push.mission !== undefined ? push.mission : previous.mission,
     lastPrompt: push.lastPrompt !== undefined ? push.lastPrompt : previous.lastPrompt,
     aiTitle: push.aiTitle !== undefined ? push.aiTitle : previous.aiTitle,
+    // Same absent-vs-null rule as the texts above; the server clears it with an explicit
+    // null at Stop, so a finished pane never keeps captioning itself with mid-turn state.
+    liveTask: push.liveTask !== undefined ? push.liveTask : previous.liveTask,
   };
 }
 

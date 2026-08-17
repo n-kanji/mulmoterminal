@@ -22,6 +22,7 @@ import {
   lastPrompts,
   lastResponses,
   lastTitleAttemptMs,
+  liveTasks,
   claimActivityOwnership,
   lastTitledUserTurns,
   launchChoices,
@@ -140,6 +141,7 @@ function reap(deps: SessionLifecycleDeps, id: string) {
   launchChoices.delete(id); // the picked backend dies with the session that used it
   lastPrompts.delete(id); // don't leak prompt text for torn-down sessions
   lastResponses.delete(id); // ditto, and keep this map from growing across closed sessions
+  liveTasks.delete(id); // the live task dies with the session
   deps.forgetTitle(id);
   deps.sessionActivityPublisher.forget(id); // drop the phone's copy so its picker has no ghosts
   deps.forgetWorkPhase(id); // the live turn dies with the session
@@ -180,6 +182,7 @@ function publishActivity(deps: SessionLifecycleDeps, id: string) {
     aiTitle: aiTitles.get(id),
     lastResponse: lastResponses.get(id),
     mission: missionOf(id),
+    liveTask: liveTasks.get(id) ?? null,
   });
   deps.sessionActivityPublisher.publish(id, { working: row.working, waiting: row.waiting, event: row.event, workPhase: deps.workPhaseOf(id) });
   deps.publish(SESSIONS_CHANNEL, row);

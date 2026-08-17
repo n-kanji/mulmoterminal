@@ -151,6 +151,7 @@ describe("sessionRow", () => {
       lastPrompt: null,
       aiTitle: null,
       lastResponse: null,
+      liveTask: null,
     });
   });
 
