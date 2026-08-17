@@ -27,7 +27,7 @@ import { mountGitRemoteRoute } from "../git/gitRemote.js";
 import { mountWorktreeRoutes } from "../git/worktree-routes.js";
 import { mountPickFileRoute } from "../files/pick-file.js";
 import { mountPasteImageRoute } from "../files/paste-image.js";
-import { mountFontsRoutes } from "./fonts-routes.js";
+import { mountFontsRoutes, mountImeDebugRoute } from "./fonts-routes.js";
 import { createSaveAttachment } from "../backends/remoteHost/attachmentStore.js";
 import { mountCommandSummaryRoute } from "../session/command-summary.js";
 import { mountCostRoute } from "../session/cost.js";
@@ -264,6 +264,7 @@ function mountSessionFacingRoutes(app: Express, deps: AppRouteDeps): void {
   // User-supplied web fonts (GET /api/fonts + /api/fonts/:file) from ~/.mulmoterminal/fonts/,
   // so the terminal face doesn't depend on what the VIEWING machine has installed.
   mountFontsRoutes(app);
+  mountImeDebugRoute(app); // TEMPORARY — see fonts-routes.ts
 
   // POST /api/command/summarize runs `claude -p` headless over a Run cell's captured
   // terminal output and returns a short Errors/Warnings/cause/fix summary (issue #246).
