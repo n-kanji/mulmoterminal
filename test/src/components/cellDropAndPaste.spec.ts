@@ -4,6 +4,7 @@ import { nextTick } from "vue";
 import TerminalCell from "../../../src/components/TerminalCell.vue";
 import { CELL_DRAG_MIME } from "../../../src/components/gridTabs";
 import { PASTE_IMAGE_ROUTE } from "../../../common/pasteImage";
+import { ATTACH_FILE_ROUTE } from "../../../common/attachFile";
 
 // R10 — the WHOLE pane takes a file drop, and Cmd+V over it uploads a clipboard image and
 // inserts the saved path. Both end in the same place: text typed into this cell's terminal.
@@ -35,11 +36,13 @@ const SESSION = "11111111-1111-1111-1111-111111111111";
 const UID = 4;
 const SLOT = `cell-${UID}`;
 
-// jsdom has no DataTransfer constructor, so the drag payload is a stand-in with the two things
-// the handlers read.
-const fileDrag = (uriList: string) => ({
+// jsdom has no DataTransfer constructor, so the drag payload is a stand-in with the things
+// the handlers read: the uri-list (browsers that share paths) and the File objects (browsers
+// that don't — Chrome — where the bytes are uploaded instead).
+const fileDrag = (uriList: string, files: File[] = []) => ({
   types: ["Files"],
   dropEffect: "",
+  files,
   getData: (type: string) => (type === "text/uri-list" ? uriList : ""),
 });
 const columnDrag = () => ({ types: [CELL_DRAG_MIME], dropEffect: "", getData: () => String(UID) });
@@ -53,6 +56,10 @@ beforeEach(() => {
     if (u === PASTE_IMAGE_ROUTE) {
       posted.push(JSON.parse(String(init?.body)));
       return { ok: true, json: async () => ({ ok: true, path: "/w/data/attachments/2026/08/a.png" }) };
+    }
+    if (u === ATTACH_FILE_ROUTE) {
+      posted.push(JSON.parse(String(init?.body)));
+      return { ok: true, json: async () => ({ ok: true, path: "/w/data/attachments/2026/08/notes-abc.md" }) };
     }
     if (u.includes("/api/session/")) return { ok: true, json: async () => ({ working: false, waiting: false }) };
     return { ok: true, json: async () => ({}) };
@@ -124,19 +131,49 @@ describe("dropping a file anywhere on the pane", () => {
     expect(w.find(".cell").classes()).not.toContain("cell-file-drop");
   });
 
-  // Chrome withholds a dropped file's path. A drop that inserts nothing otherwise reads as the
-  // feature being broken.
-  it("says so when the browser withheld the path", async () => {
+  // Chrome withholds a dropped file's path — but hands over the File itself, so the bytes ride
+  // the attach route and the saved copy's path is inserted. This is the .md-onto-a-pane case
+  // the route exists for.
+  it("uploads a pathless drop's file and inserts the path the host saved it at", async () => {
+    const w = await mountCell();
+    const md = new File([new Uint8Array([35])], "notes.md", { type: "" }); // type "" — how Chrome reports a .md
+    await w.find(".cell").trigger("drop", { dataTransfer: fileDrag("", [md]) });
+    await flushPromises();
+    expect(posted).toEqual([{ fileName: "notes.md", dataBase64: expect.any(String) }]);
+    expect(inserted).toEqual([{ key: SLOT, text: "/w/data/attachments/2026/08/notes-abc.md" }]);
+    expect(stripText(w)).toContain("挿入");
+  });
+
+  // A drag that said "Files" but delivered neither a path nor any File objects: nothing can be
+  // done, and a drop that inserts nothing otherwise reads as the feature being broken.
+  it("says so when the browser handed over nothing at all", async () => {
     const w = await mountCell();
     await w.find(".cell").trigger("drop", { dataTransfer: fileDrag("") });
     expect(inserted).toEqual([]);
-    expect(stripText(w)).toContain("パス");
+    expect(stripText(w)).toContain("ファイル");
   });
 
   it("does nothing on a cell that has not launched yet (there is no terminal to type into)", async () => {
     const w = await mountCell({ initialSessionId: null });
     await w.find(".cell").trigger("drop", { dataTransfer: fileDrag("file:///w/notes.md") });
     expect(inserted).toEqual([]);
+  });
+});
+
+describe("the header attach button", () => {
+  // R14, generalised: the picker takes ANY file (the accept attribute is gone), and a picked
+  // .md rides the same upload as a drop.
+  it("uploads a picked file of any type and inserts the saved path", async () => {
+    const w = await mountCell();
+    expect(w.find('[data-testid="cell-attach-btn"]').exists()).toBe(true);
+    const input = w.find('input[type="file"]');
+    expect(input.attributes("accept")).toBeUndefined();
+    const md = new File([new Uint8Array([35])], "notes.md", { type: "" });
+    Object.defineProperty(input.element, "files", { value: [md] });
+    await input.trigger("change");
+    await flushPromises();
+    expect(posted).toEqual([{ fileName: "notes.md", dataBase64: expect.any(String) }]);
+    expect(inserted).toEqual([{ key: SLOT, text: "/w/data/attachments/2026/08/notes-abc.md" }]);
   });
 });
 

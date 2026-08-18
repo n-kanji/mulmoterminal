@@ -1,15 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   bytesToBase64,
-  imageFilesFrom,
-  IMAGE_PICKER_ACCEPT,
+  filesFrom,
   pasteFailureLabel,
   pastedImageFile,
-  uploadImageFiles,
+  uploadAttachmentFile,
+  uploadAttachmentFiles,
   uploadPastedImage,
   type ClipboardLike,
 } from "../../../src/composables/usePasteImage";
-import { MAX_PASTE_IMAGE_BYTES, PASTE_IMAGE_MIMES, PASTE_IMAGE_ROUTE } from "../../../common/pasteImage";
+import { MAX_PASTE_IMAGE_BYTES, PASTE_IMAGE_ROUTE } from "../../../common/pasteImage";
+import { ATTACH_FILE_ROUTE, MAX_ATTACH_FILE_BYTES } from "../../../common/attachFile";
 
 // A ClipboardEvent's DataTransfer cannot be built faithfully in jsdom (no DataTransfer
 // constructor, and `items` is not an array), which is why the picking rule takes a structural
@@ -103,54 +104,94 @@ describe("uploadPastedImage", () => {
   });
 });
 
-describe("imageFilesFrom", () => {
-  // The drop / photo-button sibling of pastedImageFile: a FileList's worth of files, of which
-  // only the host-supported images survive — a dropped PDF must not be uploaded to be 415'd.
-  it("keeps every supported image and drops the rest, in order", () => {
+describe("filesFrom", () => {
+  // The drop / attach-button sibling of pastedImageFile — but unlike the paste it takes EVERY
+  // file: a dropped .md is exactly what the attach route exists for, and its `type` is often
+  // "" in Chrome, so any filter here would throw away the main case.
+  it("keeps every file, whatever its type, in order", () => {
     const a = png("a.png");
     const b = new File([], "b.pdf", { type: "application/pdf" });
-    const c = new File([], "c.jpg", { type: "image/jpeg" });
-    expect(imageFilesFrom([a, b, c])).toEqual([a, c]);
+    const c = new File([], "notes.md", { type: "" });
+    expect(filesFrom([a, b, c])).toEqual([a, b, c]);
   });
 
   it("is empty for no files at all", () => {
-    expect(imageFilesFrom(null)).toEqual([]);
-    expect(imageFilesFrom(undefined)).toEqual([]);
-    expect(imageFilesFrom([])).toEqual([]);
+    expect(filesFrom(null)).toEqual([]);
+    expect(filesFrom(undefined)).toEqual([]);
+    expect(filesFrom([])).toEqual([]);
   });
 });
 
-describe("IMAGE_PICKER_ACCEPT", () => {
-  // The picker must steer the user to exactly what the host takes — the two lists are one list.
-  it("names every supported mime and nothing else", () => {
-    expect(IMAGE_PICKER_ACCEPT.split(",")).toEqual([...PASTE_IMAGE_MIMES]);
+describe("uploadAttachmentFile", () => {
+  const okFetch = () =>
+    vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, path: "/w/data/attachments/2026/08/notes-a.md" }) }) as unknown as Response);
+  const md = (name = "notes.md") => new File([new Uint8Array([35, 32])], name, { type: "" }); // type "" — how Chrome reports a .md
+
+  it("posts the bytes keyed on FILENAME (no MIME — Chrome reports none for .md)", async () => {
+    const fetchImpl = okFetch();
+    const outcome = await uploadAttachmentFile(md(), fetchImpl as unknown as typeof fetch);
+    expect(outcome).toEqual({ ok: true, path: "/w/data/attachments/2026/08/notes-a.md" });
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(ATTACH_FILE_ROUTE);
+    expect(JSON.parse(String(init.body))).toEqual({ fileName: "notes.md", dataBase64: bytesToBase64(new Uint8Array([35, 32])) });
+  });
+
+  it("refuses an oversized file without calling the server", async () => {
+    const fetchImpl = okFetch();
+    const huge = { size: MAX_ATTACH_FILE_BYTES + 1, name: "big.bin", arrayBuffer: async () => new ArrayBuffer(0) } as unknown as File;
+    expect(await uploadAttachmentFile(huge, fetchImpl as unknown as typeof fetch)).toEqual({ ok: false, reason: "too-large" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  // A dropped FOLDER also arrives as a File; reading it throws. It must land on `unreadable`
+  // (whose label speaks of a file, not an image), not on a crash or a bogus upload.
+  it("reports a dropped folder (unreadable bytes) instead of posting an empty body", async () => {
+    const fetchImpl = okFetch();
+    const folder = {
+      size: 0,
+      name: "docs",
+      arrayBuffer: async () => {
+        throw new Error("is a directory");
+      },
+    } as unknown as File;
+    expect(await uploadAttachmentFile(folder, fetchImpl as unknown as typeof fetch)).toEqual({ ok: false, reason: "unreadable" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reports a failure when the host refuses or is unreachable", async () => {
+    const refused = vi.fn(async () => ({ ok: false, json: async () => ({}) }) as unknown as Response);
+    expect(await uploadAttachmentFile(md(), refused as unknown as typeof fetch)).toEqual({ ok: false, reason: "upload-failed" });
+    const offline = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    expect(await uploadAttachmentFile(md(), offline as unknown as typeof fetch)).toEqual({ ok: false, reason: "upload-failed" });
   });
 });
 
-describe("uploadImageFiles", () => {
+describe("uploadAttachmentFiles", () => {
   const pathFetch = () => {
     let n = 0;
-    return vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, path: `/w/att/${++n}.png` }) }) as unknown as Response);
+    return vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, path: `/w/att/${++n}.md` }) }) as unknown as Response);
   };
 
   it("uploads sequentially and returns every path in order", async () => {
     const fetchImpl = pathFetch();
-    const outcome = await uploadImageFiles([png("a.png"), png("b.png")], fetchImpl as unknown as typeof fetch);
-    expect(outcome).toEqual({ paths: ["/w/att/1.png", "/w/att/2.png"], failed: null });
+    const outcome = await uploadAttachmentFiles([png("a.png"), new File([], "b.md")], fetchImpl as unknown as typeof fetch);
+    expect(outcome).toEqual({ paths: ["/w/att/1.md", "/w/att/2.md"], failed: null });
   });
 
-  // Partial success keeps its paths: two screenshots dropped, one oversized — the good one
-  // still lands, and `failed` carries the reason for the message.
+  // Partial success keeps its paths: two files dropped, one oversized — the good one still
+  // lands, and `failed` carries the reason for the message.
   it("keeps the paths it got when one file fails", async () => {
     const fetchImpl = pathFetch();
-    const huge = { size: MAX_PASTE_IMAGE_BYTES + 1, type: "image/png", arrayBuffer: async () => new ArrayBuffer(0) } as unknown as File;
-    const outcome = await uploadImageFiles([png("a.png"), huge], fetchImpl as unknown as typeof fetch);
-    expect(outcome).toEqual({ paths: ["/w/att/1.png"], failed: "too-large" });
+    const huge = { size: MAX_ATTACH_FILE_BYTES + 1, name: "big.bin", arrayBuffer: async () => new ArrayBuffer(0) } as unknown as File;
+    const outcome = await uploadAttachmentFiles([png("a.png"), huge], fetchImpl as unknown as typeof fetch);
+    expect(outcome).toEqual({ paths: ["/w/att/1.md"], failed: "too-large" });
   });
 
   it("is empty-handed but not failed for no files", async () => {
     const fetchImpl = pathFetch();
-    expect(await uploadImageFiles([], fetchImpl as unknown as typeof fetch)).toEqual({ paths: [], failed: null });
+    expect(await uploadAttachmentFiles([], fetchImpl as unknown as typeof fetch)).toEqual({ paths: [], failed: null });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
 
-import { ATTACHMENTS_DIR, extensionForMime, yearMonthUtc } from "../../../../server/backends/remoteHost/attachment-path.js";
+import { ATTACHMENTS_DIR, attachmentNameParts, extensionForMime, yearMonthUtc } from "../../../../server/backends/remoteHost/attachment-path.js";
 
 describe("extensionForMime", () => {
   it.each([
@@ -70,5 +70,40 @@ describe("yearMonthUtc", () => {
 describe("ATTACHMENTS_DIR", () => {
   it("is the workspace-relative attachments root", () => {
     expect(ATTACHMENTS_DIR).toBe("data/attachments");
+  });
+});
+
+describe("attachmentNameParts", () => {
+  // The attach-file route's naming rule. This is the ONE security-sensitive derivation on the
+  // path from a client string to a filename on disk, so the hostile shapes are pinned first.
+  it.each([
+    ["../../etc/passwd.md", "passwd", ".md"], // traversal → basename only
+    ["..\\..\\x.md", "x", ".md"], // Windows-style traversal too
+    ["a/b/c.txt", "c", ".txt"], // any path → its basename
+    [".env", "env", ""], // a leading dot is not an extension marker
+    ["..", "file", ""], // nothing left → the fallback stem
+    ["", "file", ""],
+  ])("defuses %j to %j + %j", (name, stem, ext) => {
+    expect(attachmentNameParts(name)).toEqual({ stem, ext });
+  });
+
+  it.each([
+    ["企画書.md", "企画書", ".md"], // non-ASCII survives — the insert shell-quotes it
+    ["notes.MD", "notes", ".md"], // extension lower-cased
+    ["a b.md", "a b", ".md"], // spaces survive, same reason as 企画書
+    ["archive.tar.gz", "archive.tar", ".gz"], // only the LAST extension is the extension
+    ["Makefile", "Makefile", ""], // extensionless stays extensionless — no guessed .bin
+    ["name..md", "name", ".md"], // stray dots don't survive at the stem's edge
+    ['we:*?"<>|ird.md', "weird", ".md"], // Windows-reserved punctuation stripped
+    ["a\u0000b\u001fc.md", "abc", ".md"], // control characters stripped
+    ["file.superlongextension", "file.superlongextension", ""], // >10 chars is not an extension
+  ])("keeps what identifies %j (→ %j + %j)", (name, stem, ext) => {
+    expect(attachmentNameParts(name)).toEqual({ stem, ext });
+  });
+
+  it("caps a runaway stem without touching the extension", () => {
+    const { stem, ext } = attachmentNameParts(`${"x".repeat(200)}.md`);
+    expect(stem).toBe("x".repeat(64));
+    expect(ext).toBe(".md");
   });
 });

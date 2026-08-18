@@ -52,8 +52,11 @@ export function base64Bytes(data: string): number {
 }
 
 /** Base64 as the browser's btoa/FileReader produce it. Rejects a data: URL prefix and any
- *  stray whitespace rather than silently writing a corrupt file. */
+ *  stray whitespace rather than silently writing a corrupt file. Shared with attachFile.ts,
+ *  whose payloads come from the same bytesToBase64. */
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+export const isBareBase64 = (data: string): boolean => BASE64_RE.test(data);
 
 export type PasteImageDecision = { ok: true; request: PasteImageRequest } | { ok: false; status: number; error: string };
 

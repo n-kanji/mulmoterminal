@@ -44,4 +44,25 @@ describe("createSaveAttachment", () => {
     const saved = await save(Buffer.from("x").toString("base64"), "application/x-unknown");
     expect(saved.relativePath.endsWith(".bin")).toBe(true);
   });
+
+  // The attach-file route: a client-supplied name keeps its sanitised stem + extension (the
+  // inserted path then still says WHAT the file is), with the UUID for uniqueness. The MIME is
+  // ignored for naming — Chrome reports none for .md, which is what this parameter exists for.
+  it("names by the client's filename when one is given, stem and extension intact", async () => {
+    ws = mkdtempSync(path.join(tmpdir(), "mt-att-"));
+    const fixed = new Date(Date.UTC(2026, 6, 5));
+    const save = createSaveAttachment(ws, () => fixed);
+    const saved = await save(Buffer.from("# note").toString("base64"), "application/octet-stream", "企画書.md");
+    expect(saved.relativePath).toMatch(/^data\/attachments\/2026\/07\/企画書-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.md$/);
+    expect(readFileSync(path.join(ws, saved.relativePath)).toString()).toBe("# note");
+  });
+
+  it("defuses a hostile filename instead of writing outside the partition", async () => {
+    ws = mkdtempSync(path.join(tmpdir(), "mt-att-"));
+    const fixed = new Date(Date.UTC(2026, 6, 5));
+    const save = createSaveAttachment(ws, () => fixed);
+    const saved = await save(Buffer.from("x").toString("base64"), "application/octet-stream", "../../etc/passwd.md");
+    expect(saved.relativePath).toMatch(/^data\/attachments\/2026\/07\/passwd-[0-9a-f-]{36}\.md$/);
+    expect(existsSync(path.join(ws, saved.relativePath))).toBe(true);
+  });
 });

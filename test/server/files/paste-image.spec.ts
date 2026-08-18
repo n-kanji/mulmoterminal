@@ -1,3 +1,5 @@
+// @vitest-environment node
+// (the route module imports node:path, which jsdom cannot resolve)
 import { describe, it, expect, vi } from "vitest";
 import type { Express } from "express";
 import { mountPasteImageRoute, type PasteImageDeps } from "../../../server/files/paste-image.js";

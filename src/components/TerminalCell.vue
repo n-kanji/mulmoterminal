@@ -44,7 +44,7 @@ import {
   STRIP_STATUS,
 } from "./cellStatusStyles";
 import { dragCarriesFiles, dropTextFromUriList, toInsertText, toShellArg } from "./dropPaths";
-import { IMAGE_PICKER_ACCEPT, imageFilesFrom, pastedImageFile, pasteFailureLabel, uploadImageFiles, uploadPastedImage } from "../composables/usePasteImage";
+import { filesFrom, pastedImageFile, pasteFailureLabel, uploadAttachmentFiles, uploadPastedImage } from "../composables/usePasteImage";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
 import { CELL_ACTIONS, CELL_BTN, CELL_BTN_BOX, CELL_BTN_INK, CELL_BTN_SIZE, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
@@ -834,33 +834,34 @@ function onCellDrop(e: DragEvent) {
     insertIntoSlot(`cell-${props.uid}`, text);
     return;
   }
-  // Chrome withholds a dropped file's path — but an IMAGE can still ride the paste route:
-  // upload the bytes, insert the path the host answers with. Only a non-image drop (a PDF,
-  // a folder) is left with the hint, because nothing can be done with it.
-  const images = imageFilesFrom(dt.files);
-  if (images.length) void insertUploadedImages(images);
-  else showCellMsg("このブラウザはパスを渡しません（画像以外は添付ボタンから）");
+  // Chrome withholds a dropped file's path — but the FILE can still ride the attach route:
+  // upload the bytes, insert the path of the copy the host answers with. Only a drop that
+  // carried no files at all is left with the hint, because nothing can be done with it.
+  const files = filesFrom(dt.files);
+  if (files.length) void insertUploadedFiles(files);
+  else showCellMsg("このブラウザはドロップからファイルを渡しませんでした");
 }
 
-// The shared tail of the drop and the photo button: bytes up, paths in. Partial success still
-// inserts what it got — the failure label then explains the missing one.
-async function insertUploadedImages(images: File[]) {
-  showCellMsg(images.length > 1 ? `画像${images.length}枚を保存中…` : "画像を保存中…", 0);
-  const { paths, failed } = await uploadImageFiles(images);
+// The shared tail of the drop and the attach button: bytes up, paths in. Partial success
+// still inserts what it got — the failure label then explains the missing one. NOTE the
+// inserted path is a COPY under data/attachments/, not the original file.
+async function insertUploadedFiles(files: File[]) {
+  showCellMsg(files.length > 1 ? `ファイル${files.length}件を保存中…` : "ファイルを保存中…", 0);
+  const { paths, failed } = await uploadAttachmentFiles(files);
   if (paths.length) insertIntoSlot(`cell-${props.uid}`, toInsertText(paths));
-  showCellMsg(failed ? pasteFailureLabel(failed) : "画像のパスを挿入しました");
+  showCellMsg(failed ? pasteFailureLabel(failed) : "ファイルのパスを挿入しました");
 }
 
-// R14: the photo button — always on the header, because the operator could not find the
-// attach path behind the toolbar toggle. Opens the OS picker restricted to what the host
-// accepts, then rides the same upload as a drop/paste.
-const photoInput = ref<HTMLInputElement | null>(null);
+// R14: the attach button — always on the header, because the operator could not find the
+// attach path behind the toolbar toggle. Opens the OS picker (any file — a .md carries the
+// context an agent is fed as often as a screenshot does), then rides the same upload as a
+// drop. The toolbar's paperclip (pick-file) remains the way to insert a REAL path.
+const attachInput = ref<HTMLInputElement | null>(null);
 
-function onPhotoPick(e: Event) {
+function onAttachPick(e: Event) {
   const input = e.target as HTMLInputElement;
-  const images = imageFilesFrom(input.files);
-  if (images.length) void insertUploadedImages(images);
-  else if (input.files?.length) showCellMsg("この形式の画像は非対応です");
+  const files = filesFrom(input.files);
+  if (files.length) void insertUploadedFiles(files);
   input.value = ""; // so picking the same file again re-fires change
 }
 
@@ -1428,33 +1429,25 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
              track, so they're always pinned top-right. `.stop` so they don't trigger the
              header's click-to-zoom. -->
         <span class="cell-actions" :class="CELL_ACTIONS">
-          <!-- R14: the photo button, always visible — the operator sends screenshots constantly
-               and the picker must not hide behind the toolbar toggle. -->
+          <!-- R14: the attach button, always visible — the operator sends screenshots and
+               context files constantly and the picker must not hide behind the toolbar
+               toggle. Any file: the host copies it into the attachment store and the copy's
+               path is inserted. -->
           <button
             v-if="launched"
             type="button"
-            data-testid="cell-photo-btn"
+            data-testid="cell-attach-btn"
             class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
-            title="画像を添付（パスを挿入）"
-            aria-label="Attach an image"
-            @click.stop="photoInput?.click()"
+            title="ファイルを添付（パスを挿入）"
+            aria-label="Attach a file"
+            @click.stop="attachInput?.click()"
           >
-            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">add_photo_alternate</span>
+            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">attach_file</span>
           </button>
-          <!-- @click.stop: the programmatic photoInput.click() dispatches a real click that
+          <!-- @click.stop: the programmatic attachInput.click() dispatches a real click that
                would bubble to the header's click-to-zoom — Finder opening AND the pane
                maximizing was the reported bug. -->
-          <input
-            ref="photoInput"
-            type="file"
-            :accept="IMAGE_PICKER_ACCEPT"
-            multiple
-            class="hidden"
-            aria-hidden="true"
-            tabindex="-1"
-            @click.stop
-            @change="onPhotoPick"
-          />
+          <input ref="attachInput" type="file" multiple class="hidden" aria-hidden="true" tabindex="-1" @click.stop @change="onAttachPick" />
           <button
             v-if="!expanded"
             type="button"

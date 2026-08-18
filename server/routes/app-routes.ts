@@ -27,6 +27,7 @@ import { mountGitRemoteRoute } from "../git/gitRemote.js";
 import { mountWorktreeRoutes } from "../git/worktree-routes.js";
 import { mountPickFileRoute } from "../files/pick-file.js";
 import { mountPasteImageRoute } from "../files/paste-image.js";
+import { mountAttachFileRoute } from "../files/attach-file.js";
 import { mountFontsRoutes } from "./fonts-routes.js";
 import { createSaveAttachment } from "../backends/remoteHost/attachmentStore.js";
 import { mountCommandSummaryRoute } from "../session/command-summary.js";
@@ -255,10 +256,18 @@ function mountSessionFacingRoutes(app: Express, deps: AppRouteDeps): void {
   // GRID-ONLY (dev_tool), R10: POST /api/paste-image saves an image pasted over a pane into
   // the shared workspace attachment store and answers with its absolute path, which the cell
   // inserts into the terminal. Same store as the phone's chat uploads — see files/paste-image.ts.
+  // R14: POST /api/attach-file is its any-file sibling (drop / the header attach button), which
+  // names the saved copy from the client's filename instead of a MIME whitelist.
+  const saveAttachment = createSaveAttachment(CLAUDE_CWD);
   mountPasteImageRoute(app, {
     workspace: CLAUDE_CWD,
     isAllowedOrigin: deps.isAllowedOrigin,
-    saveAttachment: createSaveAttachment(CLAUDE_CWD),
+    saveAttachment,
+  });
+  mountAttachFileRoute(app, {
+    workspace: CLAUDE_CWD,
+    isAllowedOrigin: deps.isAllowedOrigin,
+    saveAttachment,
   });
 
   // User-supplied web fonts (GET /api/fonts + /api/fonts/:file) from ~/.mulmoterminal/fonts/,

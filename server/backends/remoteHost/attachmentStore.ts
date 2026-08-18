@@ -9,7 +9,7 @@
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { ATTACHMENTS_DIR, extensionForMime, yearMonthUtc } from "./attachment-path.js";
+import { ATTACHMENTS_DIR, attachmentNameParts, extensionForMime, yearMonthUtc } from "./attachment-path.js";
 
 export interface SavedAttachment {
   relativePath: string;
@@ -19,11 +19,15 @@ export interface SavedAttachment {
 // A saver bound to the workspace root. `now` is injected so a test gets a stable
 // partition directory.
 export function createSaveAttachment(workspaceRoot: string, now: () => Date = () => new Date()) {
-  return async function saveAttachment(base64Data: string, mimeType: string): Promise<SavedAttachment> {
+  return async function saveAttachment(base64Data: string, mimeType: string, fileName?: string): Promise<SavedAttachment> {
     const partition = yearMonthUtc(now());
     // Full UUID, not an 8-hex (32-bit) prefix: rename() silently overwrites on a name
     // clash, and 32 bits collides at realistic upload counts (birthday bound ~77k files).
-    const filename = `${randomUUID()}${extensionForMime(mimeType)}`;
+    // A client-supplied name (the attach-file route) keeps its sanitised stem + extension —
+    // the inserted path then still says WHAT the file is — with the UUID for uniqueness.
+    // MIME-only callers (paste, phone uploads) name by type as before.
+    const named = fileName === undefined ? null : attachmentNameParts(fileName);
+    const filename = named ? `${named.stem}-${randomUUID()}${named.ext}` : `${randomUUID()}${extensionForMime(mimeType)}`;
     const relativePath = path.posix.join(ATTACHMENTS_DIR, partition, filename);
     const absPath = path.join(workspaceRoot, ATTACHMENTS_DIR, partition, filename);
     await mkdir(path.dirname(absPath), { recursive: true });

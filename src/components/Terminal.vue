@@ -4,7 +4,7 @@ import { type ITheme } from "@xterm/xterm";
 import { FLIP_MS, shouldRefocusOnZoomChange } from "./cellFlip";
 import { terminalManagesAttention, terminalViewActive } from "./terminalViewActive";
 import { dragCarriesFiles, dropTextFromUriList, toInsertText } from "./dropPaths";
-import { imageFilesFrom, pasteFailureLabel, uploadImageFiles } from "../composables/usePasteImage";
+import { filesFrom, pasteFailureLabel, uploadAttachmentFiles } from "../composables/usePasteImage";
 import { translateUiSentence } from "../utils/translateUi";
 import { useTheme, currentTermTheme, termThemeFor } from "../composables/useTheme";
 import { useDirConfig } from "../composables/useDirConfig";
@@ -377,15 +377,15 @@ function onDrop(e: DragEvent) {
     insertText(text);
     return;
   }
-  // No path from the browser — an image still has a route: upload the bytes (the Cmd+V
-  // machinery) and insert the path the host answers with. Only a non-image drop needs the hint.
-  const images = imageFilesFrom(dt.files);
-  if (images.length) void insertDroppedImages(images);
+  // No path from the browser — the FILE still has a route: upload the bytes and insert the
+  // path of the copy the host answers with. Only a drop that carried no files needs the hint.
+  const files = filesFrom(dt.files);
+  if (files.length) void insertDroppedFiles(files);
   else showDropHint();
 }
 
-async function insertDroppedImages(images: File[]) {
-  const { paths, failed } = await uploadImageFiles(images);
+async function insertDroppedFiles(files: File[]) {
+  const { paths, failed } = await uploadAttachmentFiles(files);
   if (paths.length) insertText(toInsertText(paths));
   if (failed) raiseDropHint(pasteFailureLabel(failed));
 }
@@ -396,13 +396,13 @@ function onDragOver(e: DragEvent) {
   dragOver.value = true;
 }
 
-// Shown when a file was dropped but the browser withheld its path — the drop can't do
-// anything, so tell the user how to insert the path rather than leaving the failed drop
-// looking like nothing happened. The guidance depends on the header: point at the file picker
-// only when it's actually present (buttons are configurable and it can be removed), otherwise
-// fall back to advice that always holds.
-const DROP_HINT_PICKER_EN = "This browser doesn't share a dropped file's path. Use the paperclip button in the header (Insert a file path) instead.";
-const DROP_HINT_TYPE_EN = "This browser doesn't share a dropped file's path — type or paste the path instead.";
+// Shown when a drag said "Files" but the drop handed over neither a path nor any File
+// objects — nothing can be done with it, so tell the user how to insert the path rather than
+// leaving the failed drop looking like nothing happened. The guidance depends on the header:
+// point at the file picker only when it's actually present (buttons are configurable and it
+// can be removed), otherwise fall back to advice that always holds.
+const DROP_HINT_PICKER_EN = "This browser didn't hand over the dropped files. Use the paperclip button in the header (Insert a file path) instead.";
+const DROP_HINT_TYPE_EN = "This browser didn't hand over the dropped files — type or paste the path instead.";
 const dropHint = ref(false);
 const dropHintText = ref("");
 const DROP_HINT_MS = 6000;
