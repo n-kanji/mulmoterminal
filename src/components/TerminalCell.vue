@@ -1425,9 +1425,11 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                per row, and row 1 has nothing worth truncating). -->
           <span class="min-w-0 flex-auto" />
         </div>
-        <!-- Expand/restore + close stay on row 1 (the info row) and OUTSIDE the info
-             track, so they're always pinned top-right. `.stop` so they don't trigger the
-             header's click-to-zoom. -->
+        <!-- The action buttons (attach / toolbar toggle / fork / restore-when-expanded /
+             close) stay on row 1 (the info row) and OUTSIDE the info track, so they're
+             always pinned top-right. The hand-rolled buttons here use `.stop`;
+             CellChromeButtons relies on shouldZoomOnHeaderClick declining clicks inside
+             any button (see its own comment). -->
         <span class="cell-actions" :class="CELL_ACTIONS">
           <!-- R14: the attach button, always visible — the operator sends screenshots and
                context files constantly and the picker must not hide behind the toolbar

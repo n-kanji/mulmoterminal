@@ -477,8 +477,8 @@ onUnmounted(() => {
         >
           <span class="material-symbols-outlined text-[18px]" aria-hidden="true">{{ voiceIcon() }}</span>
         </button>
-        <!-- The file-path picker and file explorer are now DEFAULT_BUTTONS (server-resolved into
-             headerButtons above), so the user can drop/reorder/replace them via config. -->
+        <!-- The file explorer is a DEFAULT_BUTTONS entry (server-resolved into headerButtons
+             above), so the user can drop/reorder/replace it via config. -->
         <!-- A grid cell injects its own actions (GitHub / timeline / reorder / zoom /
              close) here, so all the icon buttons live on this one header row. -->
         <slot name="header-actions" />

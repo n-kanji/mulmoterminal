@@ -1792,8 +1792,10 @@ describe("TerminalCell", () => {
     expect(w.emitted("toggle-expand")).toBeUndefined();
   });
 
-  it("emits toggle-expand once — not twice — when the expand button is clicked in the tiled grid", async () => {
-    const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj" });
+  // The tiled grid no longer has an Expand button (fork took its spot) — the filmstrip
+  // still does, and its header click also zooms, so the no-double-fire guard is pinned there.
+  it("emits toggle-expand once — not twice — when the expand button is clicked on a filmstrip thumbnail", async () => {
+    const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj", zoomed: true, expanded: false });
     await flushPromises();
     await w.find('[aria-label="Expand terminal"]').trigger("click");
     expect(w.emitted("toggle-expand")).toHaveLength(1); // the button, not the button + the header
