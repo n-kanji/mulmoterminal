@@ -1460,7 +1460,22 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">more_horiz</span>
           </button>
-          <CellChromeButtons :expanded="expanded" @toggle-expand="emit('toggle-expand')" @close="close" />
+          <!-- Fork sits where the Expand arrow used to be: the operator forks conversations
+               often and expands almost never (header click-to-zoom still expands). Claude
+               only (codex has no --fork-session), and only once there is a conversation
+               to branch. `.stop` so it doesn't trigger the header's click-to-zoom. -->
+          <button
+            v-if="sessionId && agent !== 'codex'"
+            type="button"
+            data-testid="cell-fork"
+            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
+            title="Fork this conversation into a new column (claude --resume --fork-session)"
+            aria-label="Fork this session into a new column"
+            @click.stop="emit('fork')"
+          >
+            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">call_split</span>
+          </button>
+          <CellChromeButtons :expanded="expanded" hide-expand @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
       <!-- R14 third pass — TWO rows, one message each (the operator's call, mirroring the
@@ -1695,23 +1710,8 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
             <span v-if="copyLabels.prompt">{{ copyLabels.prompt }}</span>
             <span v-else class="material-symbols-outlined" aria-hidden="true">format_quote</span>
           </button>
-          <!-- Fork-local (iTerm2 mode, R12): `claude --resume <this session> --fork-session`
-               in the column right beside this one — the command the operator was typing by
-               hand. Claude only (codex has no equivalent), and only once there is a
-               conversation to branch. Lives on this row, not row 1: the tiled columns must
-               not grow another always-visible control. -->
-          <button
-            v-if="sessionId && agent !== 'codex'"
-            type="button"
-            data-testid="cell-fork"
-            class="cell-btn"
-            :class="CELL_BTN"
-            title="Fork this conversation into a new column (claude --resume --fork-session)"
-            aria-label="Fork this session into a new column"
-            @click="emit('fork')"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">call_split</span>
-          </button>
+          <!-- Fork moved to row 1 (in the Expand arrow's old spot) — it is the more-used
+               control and must not hide behind the toolbar toggle. -->
           <button
             v-if="sessionId && agent !== 'codex'"
             class="cell-btn"

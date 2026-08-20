@@ -141,9 +141,10 @@ describe("mergeHeaderConfig", () => {
 });
 
 describe("DEFAULT_BUTTONS", () => {
-  it("is the starter set (picker, reveal, in-app files, new terminal, PR, GitHub) as config buttons", () => {
-    expect(DEFAULT_BUTTONS.map((b) => b.id)).toEqual(["pick-file", "reveal", "files", "terminal", "pr", "gh"]);
-    expect(DEFAULT_BUTTONS.find((b) => b.id === "pick-file")?.open).toEqual({ pickFile: true });
+  it("is the starter set (reveal, in-app files, new terminal, PR, GitHub) as config buttons", () => {
+    // No pick-file by default: the cell's always-visible attach button covers it; a
+    // path-inserting picker button remains available via config (open.pickFile).
+    expect(DEFAULT_BUTTONS.map((b) => b.id)).toEqual(["reveal", "files", "terminal", "pr", "gh"]);
     expect(DEFAULT_BUTTONS.find((b) => b.id === "reveal")?.open).toEqual({ reveal: "${dir}" });
     expect(DEFAULT_BUTTONS.find((b) => b.id === "files")?.open).toEqual({ files: "${dir}" });
     expect(DEFAULT_BUTTONS.find((b) => b.id === "terminal")?.open).toEqual({ terminal: "${dir}" });

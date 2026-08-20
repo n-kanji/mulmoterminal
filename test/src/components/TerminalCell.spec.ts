@@ -1692,13 +1692,15 @@ describe("TerminalCell", () => {
     expect(w.find('[data-testid="ccx-remove"]').text()).toContain("Discard");
   });
 
-  it("row 1 keeps ... + expand/close; row 2 (tools) is hidden until the ... summons it", async () => {
+  it("row 1 keeps ... + fork/close; row 2 (tools) is hidden until the ... summons it", async () => {
     const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj" });
     await flushPromises();
     const header = w.find(".cell-header");
     expect(header.find(".cell-dir").exists()).toBe(false); // identity moved to stripe + hover title
     expect(header.find(".cell-close").exists()).toBe(true);
-    expect(header.find('[aria-label="Expand terminal"]').exists()).toBe(true);
+    // Fork took the Expand arrow's spot (the header's click-to-zoom still expands).
+    expect(header.find('[data-testid="cell-fork"]').exists()).toBe(true);
+    expect(header.find('[aria-label="Expand terminal"]').exists()).toBe(false);
     const tools = header.find('[aria-label="Toggle the terminal tool bar"]');
     expect(tools.exists()).toBe(true);
     // Row 2 (timeline etc.) is hidden in the tiles...
@@ -1708,7 +1710,7 @@ describe("TerminalCell", () => {
     expect(w.find('[aria-label="Show activity timeline"]').exists()).toBe(true);
   });
 
-  it("pins expand + close outside the info track so crowded header info can't push them off", async () => {
+  it("pins fork + close outside the info track so crowded header info can't push them off", async () => {
     const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj" });
     await flushPromises();
     // The info (dot / dir / chips / prompt) lives in the shrinkable, clipping track…
@@ -1716,7 +1718,7 @@ describe("TerminalCell", () => {
     // …while the actions are a SIBLING of it, so they can never be pushed out of the cell.
     expect(w.find(".cell-header > .cell-actions").exists()).toBe(true);
     expect(w.find('[data-testid="cell-header-main"] .cell-actions').exists()).toBe(false);
-    expect(w.find('.cell-actions [aria-label="Expand terminal"]').exists()).toBe(true);
+    expect(w.find('.cell-actions [data-testid="cell-fork"]').exists()).toBe(true);
     expect(w.find(".cell-actions .cell-close").exists()).toBe(true);
   });
 
@@ -1962,15 +1964,22 @@ describe("TerminalCell", () => {
       expect(empty.find('[data-testid="cell-fork"]').exists()).toBe(false);
     });
 
-    // Design principle 2: the tiled columns must not grow another always-visible control.
-    it("lives on the toolbar row that the ellipsis summons, not on the always-visible rows", async () => {
+    // Fork replaced the Expand arrow on row 1 (operator request: forking is frequent,
+    // expanding is not — the header's click-to-zoom still expands). It must be reachable
+    // in the tiles WITHOUT summoning the toolbar row.
+    it("lives on the always-visible row 1, in the Expand arrow's old spot", async () => {
       const w = mountCell(id, { initialCwd: "/home/me/proj" }); // tiled: no toolbar row
       await flushPromises();
-      expect(w.find('[data-testid="cell-fork"]').exists()).toBe(false);
+      expect(w.find('.cell-actions [data-testid="cell-fork"]').exists()).toBe(true);
+      expect(w.find('[aria-label="Expand terminal"]').exists()).toBe(false);
+    });
 
-      await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click");
+    it("does not also zoom the cell when clicked (row 1's header click zooms)", async () => {
+      const w = mountCell(id, { initialCwd: "/home/me/proj" });
       await flushPromises();
-      expect(w.find('[data-testid="cell-fork"]').exists()).toBe(true);
+      await w.find('[data-testid="cell-fork"]').trigger("click");
+      expect(w.emitted("fork")).toHaveLength(1);
+      expect(w.emitted("toggle-expand")).toBeUndefined();
     });
 
     // The one-shot rule, cell side: the request rides the socket URL until the server names the

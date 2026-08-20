@@ -440,7 +440,6 @@ onUnmounted(() => {
       class="flex items-center gap-3 bg-[var(--cell-header-bg,var(--bg-panel))] px-4 py-2 font-sans text-[14px] text-[var(--cell-header-fg,var(--text))]"
       :style="headerStyle"
     >
-      <span class="font-semibold">Terminal</span>
       <span
         v-if="dirName"
         class="max-w-[16ch] truncate rounded-[10px] px-2 py-px text-[11px] font-semibold leading-[1.6]"
@@ -449,7 +448,9 @@ onUnmounted(() => {
         >{{ dirName }}</span
       >
       <GitBranchChip :status="gitStatus" />
-      <span class="rounded-[4px] px-2 py-0.5 text-[12px]" :class="statusClass">{{ status }}</span>
+      <!-- The status badge only earns its pixels when something is WRONG — "connected" is
+           the steady state and said nothing (the row itself being alive says it). -->
+      <span v-if="status !== 'connected'" class="rounded-[4px] px-2 py-0.5 text-[12px]" :class="statusClass">{{ status }}</span>
       <RunMenu v-if="runMenu" :cwd="serverCwd" @run="(c) => emit('run', c)" />
       <SkillMenu v-if="runMenu" :cwd="serverCwd" @skill="onSkill" />
       <div class="ml-auto inline-flex items-center gap-1">

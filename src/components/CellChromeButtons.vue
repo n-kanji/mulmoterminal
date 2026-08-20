@@ -11,12 +11,16 @@
 // inside a button (shouldZoomOnHeaderClick), and stopping here would only hide that.
 import { CELL_BTN, CELL_CLOSE_BTN } from "./cellChromeClasses";
 
-defineProps<{ expanded: boolean }>();
+// hideExpand drops the collapsed-state Expand button (the header's click-to-zoom still
+// expands) — the terminal cell trades it for the fork button, which is used far more.
+// Restore is NEVER hidden: an expanded cell must always offer the way back.
+defineProps<{ expanded: boolean; hideExpand?: boolean }>();
 const emit = defineEmits<{ (e: "toggle-expand" | "close"): void }>();
 </script>
 
 <template>
   <button
+    v-if="expanded || !hideExpand"
     class="cell-btn"
     :class="CELL_BTN"
     :title="expanded ? 'Restore' : 'Expand'"

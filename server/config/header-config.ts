@@ -37,7 +37,10 @@ export interface HeaderConfig {
 // their own shorter set. `pr`/`gh` are gated to git repos (`when: isGitRepo`) and `pr` is dropped when
 // the branch has no open PR, so they self-hide where they don't apply.
 export const DEFAULT_BUTTONS: HeaderButton[] = [
-  { id: "pick-file", icon: "attach_file", label: "Insert a file path", run: "open", open: { pickFile: true } },
+  // No default pick-file button: the cell's always-visible attach button (row 1) covers
+  // the everyday "hand this file to the agent" path, so a second paperclip on the
+  // toolbar row read as a duplicate. The in-app picker that inserts a REAL path (no
+  // attachment-store copy) is still available — configure a button with `pickFile`.
   { id: "reveal", icon: "folder", label: "Reveal in the file manager", run: "open", open: { reveal: "${dir}" } },
   { id: "files", icon: "folder_open", label: "Browse files in the app", run: "open", open: { files: "${dir}" } },
   { id: "terminal", icon: "terminal", label: "New terminal here", run: "open", open: { terminal: "${dir}" } },
