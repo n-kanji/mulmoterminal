@@ -19,6 +19,7 @@ import { executeHtmlDispatch } from "@mulmoclaude/html-plugin";
 import { artifactsFileOps } from "./artifacts.js";
 import { publishFileChange } from "./fileChange.js";
 import { statFileOr404 } from "./statFileOr404.js";
+import { respondFileError } from "../files/errorDoc.js";
 import { streamFileToResponse } from "./streamFile.js";
 import { isWithin } from "../infra/path-within.js";
 
@@ -82,14 +83,14 @@ export function mountHtmlPreviewRoute(app: Express, deps: { workspace: string })
     const rel = req.params[0] ?? "";
     const abs = path.resolve(root, rel);
     if (!isWithin(root, abs)) {
-      res.status(403).json({ error: "path escapes artifacts/html" });
+      respondFileError(req, res, 403, "path escapes artifacts/html", rel);
       return;
     }
     if (!abs.toLowerCase().endsWith(".html")) {
-      res.status(400).json({ error: "not an .html file" });
+      respondFileError(req, res, 400, "not an .html file", rel);
       return;
     }
-    const stat = statFileOr404(res, abs);
+    const stat = statFileOr404(req, res, abs);
     if (!stat) return;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("X-Content-Type-Options", "nosniff");

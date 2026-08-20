@@ -21,6 +21,7 @@ import path from "node:path";
 import os from "node:os";
 import type { Express, Request, Response } from "express";
 import { statFileOr404 } from "./statFileOr404.js";
+import { respondFileError } from "../files/errorDoc.js";
 import { parseByteRange } from "./byte-range.js";
 import { rawServingPlan } from "./rawServingPlan.js";
 import { streamFileToResponse } from "./streamFile.js";
@@ -32,7 +33,7 @@ export function mountFilesRoutes(app: Express, deps: { workspace: string; sessio
   app.get("/api/files/raw", (req: Request, res: Response) => {
     const rel = typeof req.query.path === "string" ? req.query.path : "";
     if (!rel) {
-      res.status(400).json({ error: "`path` query is required" });
+      respondFileError(req, res, 400, "`path` query is required");
       return;
     }
     // Base: the `?cwd=` dir only if it's the root or a live session's cwd (else the
@@ -40,7 +41,7 @@ export function mountFilesRoutes(app: Express, deps: { workspace: string; sessio
     const cwd = typeof req.query.cwd === "string" ? req.query.cwd : null;
     const base = authorizedServingBase(cwd, root, deps.sessionCwds());
     if (base === null) {
-      res.status(403).json({ error: "cwd is not an active session directory" });
+      respondFileError(req, res, 403, "cwd is not an active session directory", rel);
       return;
     }
     // Contain `path` within the base — tilde-expand, reject `..`/absolute escapes
@@ -48,15 +49,15 @@ export function mountFilesRoutes(app: Express, deps: { workspace: string; sessio
     // serves is never refused by the other.
     const abs = resolveContained(base, rel, os.homedir());
     if (!abs) {
-      res.status(403).json({ error: "path escapes the serving root" });
+      respondFileError(req, res, 403, "path escapes the serving root", rel);
       return;
     }
-    const stat = statFileOr404(res, abs);
+    const stat = statFileOr404(req, res, abs);
     if (!stat) return;
 
     const plan = rawServingPlan(abs, stat.size);
     if (plan.tooLarge) {
-      res.status(413).json({ error: `file too large (${stat.size} bytes)` });
+      respondFileError(req, res, 413, `file too large (${stat.size} bytes)`, rel);
       return;
     }
 

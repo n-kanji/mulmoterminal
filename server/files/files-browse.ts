@@ -13,6 +13,7 @@ import type { Express, Request, Response } from "express";
 import os from "node:os";
 import { resolveBase, resolveContained } from "./pathContainment.js";
 import { htmlDoc, jsonHtmlDoc, tableHtmlDoc, delimiterForExtension } from "./renderedDoc.js";
+import { respondFileError } from "./errorDoc.js";
 
 // Cap on the bytes served to the editor / accepted on write — a text editor, not a
 // blob store. Large/binary files are refused rather than streamed into a textarea.
@@ -61,7 +62,7 @@ const browseRel = (req: Request): string => (typeof req.query.path === "string" 
 function containedFor(req: Request, res: Response, defaultCwd: string): string | null {
   const abs = resolveContained(browseBase(req, defaultCwd), browseRel(req), os.homedir());
   if (!abs) {
-    res.status(403).json({ error: "path escapes the project root" });
+    respondFileError(req, res, 403, "path escapes the project root", browseRel(req));
     return null;
   }
   return abs;
@@ -71,21 +72,21 @@ type RenderDoc = (text: string, title: string) => string | Promise<string>;
 
 // The file's text, or null with the response already answered. Shared by the rendered views
 // so "directory / too large / missing" reads the same from every one of them.
-function readTextOr4xx(res: Response, abs: string): string | null {
+function readTextOr4xx(req: Request, res: Response, abs: string): string | null {
   try {
     const stat = fs.statSync(abs);
     if (stat.isDirectory()) {
-      res.status(400).json({ error: "not a file" });
+      respondFileError(req, res, 400, "not a file", abs);
       return null;
     }
     // The same cap as /text and /write: a huge file must not be read and parsed into memory.
     if (stat.size > MAX_EDIT_BYTES) {
-      res.status(413).json({ error: "file too large" });
+      respondFileError(req, res, 413, "file too large", abs);
       return null;
     }
     return fs.readFileSync(abs, "utf8");
   } catch {
-    res.status(404).json({ error: "not found" });
+    respondFileError(req, res, 404, "not found", abs);
     return null;
   }
 }
@@ -97,7 +98,7 @@ function mountRenderedRoute(app: Express, routePath: string, defaultCwd: string,
   app.get(routePath, async (req, res) => {
     const abs = containedFor(req, res, defaultCwd);
     if (!abs) return;
-    const text = readTextOr4xx(res, abs);
+    const text = readTextOr4xx(req, res, abs);
     if (text === null) return;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("X-Content-Type-Options", "nosniff");
