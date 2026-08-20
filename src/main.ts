@@ -10,6 +10,7 @@ import "./composables/accountingUi";
 import { initTheme } from "./composables/useTheme";
 import { hydrateWebFonts } from "./composables/useWebFonts";
 import { installFileDropGuard } from "./composables/useFileDropGuard";
+import { installMouseNavGuard } from "./composables/useMouseNavGuard";
 import { installPageZoomGuard } from "./composables/usePageZoomGuard";
 import { router } from "./router";
 import App from "./App.vue";
@@ -27,6 +28,11 @@ installFileDropGuard();
 // layout and xterm's fit out from under the user. Same window-level shape as the drop guard;
 // keyboard zoom stays available for anyone who wants it on purpose.
 installPageZoomGuard();
+
+// The browser's back/forward mouse buttons would history-navigate the SPA away from every
+// live session. Same window-level shape as the two guards above. See useMouseNavGuard.ts
+// for why a mouse that normally never sends these can start doing so (Logi + secure input).
+installMouseNavGuard();
 
 // Mount only AFTER the router's initial (async) navigation resolves. On a hard
 // reload / deep-link to /terminals, mounting eagerly would first render the single
