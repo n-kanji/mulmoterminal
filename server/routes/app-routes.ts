@@ -34,6 +34,7 @@ import { mountCommandSummaryRoute } from "../session/command-summary.js";
 import { mountCostRoute } from "../session/cost.js";
 import { mountCollectionRoutes } from "../backends/collections.js";
 import { mountGoogleRoutes } from "../backends/google.js";
+import { mountClaudeAccountRoutes } from "../backends/claude-account.js";
 import { mountWikiRoutes } from "../backends/wiki.js";
 import { mountAccountingRoutes } from "../backends/accounting.js";
 import { mountFeedsRoutes } from "../backends/feeds.js";
@@ -293,6 +294,12 @@ function mountSessionFacingRoutes(app: Express, deps: AppRouteDeps): void {
   // which is exactly the local-browser case; `mulmoterminal google login` is the
   // fallback for remote setups. Same-origin guarded; tokens never reach a response.
   mountGoogleRoutes(app, { isAllowedOrigin: deps.isAllowedOrigin });
+
+  // GET /api/claude-account + POST .../switch|logout — the toolbar's Claude account chip.
+  // Swaps the Claude Code Keychain credentials between snapshotted accounts (macOS local
+  // only, `security` CLI). State-changing posts are origin-guarded like the other
+  // local-action routes.
+  mountClaudeAccountRoutes(app, { isAllowedOrigin: deps.isAllowedOrigin });
 
   // Sidebar listing, one session's detail, the grid's attention poll, the tool timeline and
   // codex's own sessions (see routes/session-routes.ts).
