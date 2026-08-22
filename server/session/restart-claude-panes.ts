@@ -19,30 +19,76 @@
 // pty reaped, their next viewer cold-resumes onto the new credentials. Hidden background
 // workers (translation etc.) are excluded by `hiddenSessions` — nothing ever reconnects
 // those, so a restart would just kill them.
-import { ptys, hiddenSessions } from "./registry.js";
+//
+// The "carry on" nudge is SELECTIVE (operator request): the fleet holds panes that are
+// deliberately parked or simply finished, and twenty agents self-directing on a blanket
+// "続けて" is noise and tokens. Only a pane the switch actually interrupted gets one — it
+// was mid-turn (`working`), or its screen shows Claude Code's limit banner (the turn ended,
+// but only because the OLD account ran dry). Everything else restarts silently and waits.
+import { activity, ptys, hiddenSessions } from "./registry.js";
+import { tmuxCaptureStyledPane } from "../infra/tmux.js";
+import { parseStyledRows, rowsToScreen } from "./screen-rows.js";
 import { queueResumeNudge } from "./resume-nudge.js";
 import type { PtyEntry } from "./types.js";
 
-// Typed into each restarted pane once claude is back up, so the fleet resumes work without
-// the operator visiting twenty panes. Japanese because that is the language the operator
-// runs their agents in.
+// Typed into each nudged pane once claude is back up, so interrupted work resumes without
+// the operator visiting each pane. Japanese because that is the language the operator runs
+// their agents in.
 export const RESTART_NUDGE_TEXT = "アカウントを切り替えて再起動しました。中断していた作業があれば、そのまま続けてください。";
+
+// Claude Code's limit banner, as it renders near the input box — "5-hour limit reached ∙
+// resets 3am", "Weekly limit reached", "Approaching 5-hour limit", "usage limit". A
+// heuristic on purpose: a miss just means one pane restarts quietly and the operator pokes
+// it; a false hit means one unnecessary "carry on".
+const LIMIT_RE = /limit reached|usage limit|approaching[^\n]*limit/i;
+// Only the bottom of the (visible) screen: the banner lives by the input box, and matching
+// the whole pane would false-positive on conversations that merely TALK about limits.
+const LIMIT_TAIL_ROWS = 15;
+
+// The nudge decision, pure and tested. `screenText` is the pane's visible screen (plain
+// text), or null when there is none to read (no tmux — e.g. a sandbox pane).
+export function paneNeedsNudge(working: boolean, screenText: string | null): boolean {
+  if (working) return true;
+  if (!screenText) return false;
+  const tail = screenText.split("\n").slice(-LIMIT_TAIL_ROWS).join("\n");
+  return LIMIT_RE.test(tail);
+}
+
+// The live decision for one pane. Reads the screen only when the working flag alone does
+// not already answer, and BEFORE the pane is reaped (the capture needs the tmux session).
+function defaultNudgeFor(id: string): string | null {
+  const working = !!activity.get(id)?.working;
+  const styled = working ? null : tmuxCaptureStyledPane(id);
+  const screen = styled ? rowsToScreen(parseStyledRows(styled)) : null;
+  return paneNeedsNudge(working, screen) ? RESTART_NUDGE_TEXT : null;
+}
+
+export interface FleetRestart {
+  restarted: number;
+  nudged: number;
+}
 
 export function restartClaudePanes(
   reap: (id: string) => void,
-  nudge: string | null,
+  nudgeFor: (id: string) => string | null = defaultNudgeFor,
   entries: Map<string, PtyEntry> = ptys,
   hidden: Set<string> = hiddenSessions,
-): number {
+): FleetRestart {
   let restarted = 0;
+  let nudged = 0;
   // Snapshot the entries: reap deletes from the live map mid-iteration.
   for (const [id, entry] of [...entries]) {
     if (entry.agent !== "claude" || hidden.has(id)) continue;
+    // Decide the nudge while the pane is still alive — it may need the screen.
+    const nudge = nudgeFor(id);
     const ws = entry.ws;
     // Detach the socket first — the pty exit this reap causes must read as a DROP to the
     // client (reconnect), never as an EXIT (permanent).
     entry.ws = null;
-    if (nudge) queueResumeNudge(id, nudge);
+    if (nudge) {
+      queueResumeNudge(id, nudge);
+      nudged += 1;
+    }
     reap(id);
     try {
       ws?.close();
@@ -51,5 +97,5 @@ export function restartClaudePanes(
     }
     restarted += 1;
   }
-  return restarted;
+  return { restarted, nudged };
 }

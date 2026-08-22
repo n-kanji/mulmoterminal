@@ -10,8 +10,9 @@ import { useClaudeAccount } from "../composables/useClaudeAccount";
 const { current, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin } = useClaudeAccount();
 
 // Default ON: the whole point of switching (a usage limit hit) is moving the EXISTING
-// panes — each restarts and resumes its own conversation on the new account. Off = the
-// conservative v1 behaviour, new panes only.
+// panes — each restarts and resumes its own conversation on the new account. The
+// auto-continue is selective server-side (working / limit-stuck panes only), so parked or
+// finished panes come back quiet. Off = the conservative v1 behaviour, new panes only.
 const restartPanes = ref(true);
 
 const root = useTemplateRef<HTMLElement>("root");
@@ -64,7 +65,7 @@ async function pick(email: string): Promise<void> {
            talking in — each pane resumes its own conversation on the new account. -->
       <label class="mb-1 flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-[11px] text-muted hover:bg-hover">
         <input v-model="restartPanes" type="checkbox" class="accent-[var(--accent)]" :disabled="busy" />
-        Restart existing panes and continue their work (off: new panes only)
+        Restart existing panes — auto-continue only the working / limit-stuck ones (off: new panes only)
       </label>
       <button
         v-for="email in listed"

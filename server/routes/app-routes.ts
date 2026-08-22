@@ -35,7 +35,7 @@ import { mountCostRoute } from "../session/cost.js";
 import { mountCollectionRoutes } from "../backends/collections.js";
 import { mountGoogleRoutes } from "../backends/google.js";
 import { mountClaudeAccountRoutes } from "../backends/claude-account.js";
-import { restartClaudePanes, RESTART_NUDGE_TEXT } from "../session/restart-claude-panes.js";
+import { restartClaudePanes } from "../session/restart-claude-panes.js";
 import { mountWikiRoutes } from "../backends/wiki.js";
 import { mountAccountingRoutes } from "../backends/accounting.js";
 import { mountFeedsRoutes } from "../backends/feeds.js";
@@ -303,7 +303,7 @@ function mountSessionFacingRoutes(app: Express, deps: AppRouteDeps): void {
   // like the other local-action routes.
   mountClaudeAccountRoutes(app, {
     isAllowedOrigin: deps.isAllowedOrigin,
-    restartPanes: () => restartClaudePanes(deps.reap, RESTART_NUDGE_TEXT),
+    restartPanes: () => restartClaudePanes(deps.reap),
   });
 
   // Sidebar listing, one session's detail, the grid's attention poll, the tool timeline and

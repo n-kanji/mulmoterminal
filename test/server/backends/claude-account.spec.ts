@@ -43,7 +43,7 @@ const claudeJson = (email: string) => JSON.stringify({ oauthAccount: { emailAddr
 const snapshotFor = (email: string, credentials = `creds-${email}`) =>
   JSON.stringify({ credentials, oauthAccount: { emailAddress: email }, savedAt: "2026-08-01T00:00:00Z" });
 
-const appWith = (io: ClaudeAccountIo, allowOrigin = true, restartPanes?: () => number) => {
+const appWith = (io: ClaudeAccountIo, allowOrigin = true, restartPanes?: () => { restarted: number; nudged: number }) => {
   const app = express();
   app.use(express.json());
   mountClaudeAccountRoutes(app, { isAllowedOrigin: () => allowOrigin, restartPanes }, io);
@@ -130,7 +130,7 @@ describe("POST /api/claude-account/switch", () => {
     });
     const res = await request(appWith(io)).post("/api/claude-account/switch").send({ email: "b@x.co" });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, current: "b@x.co", restartedPanes: 0 });
+    expect(res.body).toEqual({ ok: true, current: "b@x.co", restartedPanes: 0, nudgedPanes: 0 });
     // live slot now holds b's credentials
     expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("stored-creds-of-b");
     // a's live pair was snapshotted before the overwrite
@@ -193,23 +193,23 @@ describe("pane restarts", () => {
       files: { [CLAUDE_JSON]: claudeJson("a@x.co") },
     });
 
-  it("switch restarts the fleet only when asked, AFTER the swap, and reports the count", async () => {
+  it("switch restarts the fleet only when asked, AFTER the swap, and reports the counts", async () => {
     const { io, keychain } = switchable();
     const restartPanes = vi.fn(() => {
       // Restart must see the swapped credentials — a pane resumed before the swap would
       // come back on the OLD account.
       expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("creds-b@x.co");
-      return 3;
+      return { restarted: 3, nudged: 1 };
     });
     const res = await request(appWith(io, true, restartPanes))
       .post("/api/claude-account/switch")
       .send({ email: "b@x.co", restartPanes: true });
-    expect(res.body).toEqual({ ok: true, current: "b@x.co", restartedPanes: 3 });
+    expect(res.body).toEqual({ ok: true, current: "b@x.co", restartedPanes: 3, nudgedPanes: 1 });
     expect(restartPanes).toHaveBeenCalledOnce();
   });
 
   it("switch without the flag, a no-op switch, and a failed switch never restart", async () => {
-    const restartPanes = vi.fn(() => 3);
+    const restartPanes = vi.fn(() => ({ restarted: 3, nudged: 3 }));
     const { io } = switchable();
     // Order matters against the shared io: the no-op (a@x.co IS current) and the 404 first,
     // then a real switch with the flag absent.
@@ -227,13 +227,13 @@ describe("pane restarts", () => {
 
   it("POST /restart-panes restarts on the current account; 0 when unavailable; origin-guarded", async () => {
     const { io } = switchable();
-    const restartPanes = vi.fn(() => 2);
+    const restartPanes = vi.fn(() => ({ restarted: 2, nudged: 1 }));
     const res = await request(appWith(io, true, restartPanes))
       .post("/api/claude-account/restart-panes")
       .send({});
-    expect(res.body).toEqual({ ok: true, restartedPanes: 2 });
+    expect(res.body).toEqual({ ok: true, restartedPanes: 2, nudgedPanes: 1 });
     const bare = await request(appWith(io)).post("/api/claude-account/restart-panes").send({});
-    expect(bare.body).toEqual({ ok: true, restartedPanes: 0 });
+    expect(bare.body).toEqual({ ok: true, restartedPanes: 0, nudgedPanes: 0 });
     expect(
       (
         await request(appWith(io, false, restartPanes))

@@ -47,9 +47,17 @@ close without an exit frame is the one teardown the client already survives (ser
 restart): it auto-reconnects with ?session=<id>, finds no live pty/tmux, and cold-resumes —
 a fresh `claude --resume` that reads the swapped Keychain, same conversation. A one-line
 nudge (session/resume-nudge.ts — keyed to the killed session's id, single use, 120s TTL) is
-typed and submitted through the existing draft-injection once claude is back up, so the
-fleet resumes work without the operator visiting each pane. Detached panes restart too:
-their live pty would otherwise both keep the old account and swallow the next reattach.
+typed and submitted through the existing draft-injection once claude is back up, so
+interrupted work resumes without the operator visiting each pane. Detached panes restart
+too: their live pty would otherwise both keep the old account and swallow the next reattach.
+
+The nudge is SELECTIVE (operator request — the fleet holds deliberately-parked and
+finished panes, and a blanket "続けて" across twenty agents is noise and tokens): only a
+pane the switch actually interrupted gets one — it was mid-turn (the `activity` working
+flag), or its visible screen's tail shows Claude Code's limit banner (tmux capture +
+screen-rows, `paneNeedsNudge`). Everything else restarts silently onto the new account and
+waits. The banner match is a deliberate heuristic: a miss restarts one pane quietly, a
+false hit types one harmless "carry on".
 
 On switch this is opt-out (checkbox, default on); POST /api/claude-account/restart-panes
 runs it standalone (switch done elsewhere, or with the box unticked). Restarting includes
@@ -59,8 +67,10 @@ snapshot (revoked refresh token) is still not a failure mode to code around: the
 
 Verified live (2026-08-22, dev instance on :34599): restart-panes on a real pane —
 conversation replayed, nudge auto-submitted, claude carried on with full context, cell
-never showed an exit; and a logout → switch-back roundtrip through the real Keychain +
-~/.claude.json (oauthAccount restored field-complete, file intact).
+never showed an exit; a logout → switch-back roundtrip through the real Keychain +
+~/.claude.json (oauthAccount restored field-complete, file intact); and the selective
+nudge — an IDLE pane restarted quietly (restartedPanes:1, nudgedPanes:0, no exit frame,
+conversation replayed, no auto-typed message; ws-protocol-level E2E).
 
 ## Pieces
 

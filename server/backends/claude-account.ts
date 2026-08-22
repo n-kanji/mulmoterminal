@@ -184,12 +184,15 @@ function isNotFound(e: unknown): boolean {
 
 interface ClaudeAccountRouteOptions {
   isAllowedOrigin: (origin: string | undefined, remoteAddress: string | undefined) => boolean;
-  // Restart every visible claude pane so it resumes its conversation on the freshly-swapped
-  // credentials (session/restart-claude-panes.ts), returning how many restarted. Injected —
-  // this module owns credentials, not the session registry. Absent (tests that don't care)
+  // Restart every claude pane so it resumes its conversation on the freshly-swapped
+  // credentials (session/restart-claude-panes.ts): how many restarted, and how many of those
+  // got the auto-continue nudge (only the working / limit-stuck ones). Injected — this
+  // module owns credentials, not the session registry. Absent (tests that don't care)
   // means "restart is unavailable" and restart requests report 0.
-  restartPanes?: () => number;
+  restartPanes?: () => { restarted: number; nudged: number };
 }
+
+const NO_RESTART = { restarted: 0, nudged: 0 };
 
 export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restartPanes }: ClaudeAccountRouteOptions, io: ClaudeAccountIo = realIo()): void {
   // Current identity + the stored account list. `current` comes from ~/.claude.json every
@@ -224,7 +227,8 @@ export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restar
   app.post("/api/claude-account/restart-panes", (req, res) => {
     if (!guard(req, res, isAllowedOrigin)) return;
     try {
-      res.json({ ok: true, restartedPanes: restartPanes ? restartPanes() : 0 });
+      const fleet = restartPanes ? restartPanes() : NO_RESTART;
+      res.json({ ok: true, restartedPanes: fleet.restarted, nudgedPanes: fleet.nudged });
     } catch (e) {
       res.status(500).json({ error: message(e) });
     }
@@ -258,7 +262,13 @@ export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restar
 }
 
 // The switch itself, once the request has passed the guard and named a target.
-async function handleSwitch(io: ClaudeAccountIo, req: Request, res: Response, target: string, restartPanes?: () => number): Promise<void> {
+async function handleSwitch(
+  io: ClaudeAccountIo,
+  req: Request,
+  res: Response,
+  target: string,
+  restartPanes?: () => { restarted: number; nudged: number },
+): Promise<void> {
   const claudeJsonRaw = await io.readFile(io.claudeJsonPath);
   const currentEmail = emailOf(readOauthAccount(claudeJsonRaw));
   if (target === currentEmail) return void res.json({ ok: true, current: currentEmail });
@@ -285,8 +295,8 @@ async function handleSwitch(io: ClaudeAccountIo, req: Request, res: Response, ta
   // in-process for life, so without this the twenty existing panes — the ones stuck on
   // the old account's usage limit — would stay stuck. Restart-and-resume puts each one
   // back into its own conversation on the new account.
-  const restarted = isRecord(req.body) && req.body.restartPanes === true && restartPanes ? restartPanes() : 0;
-  res.json({ ok: true, current: target, restartedPanes: restarted });
+  const fleet = isRecord(req.body) && req.body.restartPanes === true && restartPanes ? restartPanes() : NO_RESTART;
+  res.json({ ok: true, current: target, restartedPanes: fleet.restarted, nudgedPanes: fleet.nudged });
 }
 
 // Snapshot the live credentials under the current account's entry and return the index with
