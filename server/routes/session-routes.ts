@@ -31,6 +31,7 @@ import {
   readSessionSummary,
   sessionLastTurn,
   sessionTimeline,
+  sessionTurns,
 } from "../session/session-reads.js";
 import { formatHandoff, type HandoffShape } from "../session/handoff-text.js";
 import { projectSessionsDir } from "../session/project-dir.js";
@@ -136,6 +137,17 @@ async function toolTimeline(req: Request, res: Response) {
   res.json(await sessionTimeline(cwd, session));
 }
 
+// Fork-local (iTerm2 mode): the reading view's turns — the conversation with every tool
+// record dropped, so the earlier replies a long turn buried under logs are readable
+// without scrolling the raw terminal. Claude transcripts only (the view mirrors fork's
+// availability); same session/cwd validation as the timeline.
+async function transcriptTurns(req: Request, res: Response) {
+  const { session } = req.query;
+  if (typeof session !== "string" || !SESSION_ID_RE.test(session)) return res.status(400).json({ error: "invalid session id" });
+  const cwd = resolveWorkspace(typeof req.query.cwd === "string" ? req.query.cwd : null);
+  res.json(await sessionTurns(cwd, session));
+}
+
 // A session's last completed exchange, already rendered as the text to paste into ANOTHER
 // session's input box (#550). Reading the agent's own log instead of the terminal's screen
 // buffer is the whole point: no ANSI frames, no spinner debris, no lines lost to scrollback,
@@ -229,6 +241,7 @@ export function mountSessionRoutes(app: Express, deps: SessionRouteDeps): void {
   app.put("/api/session/:id/mission", (req, res) => putMission(req, res, deps.publishActivity));
   app.get("/api/activity", activitySnapshot);
   app.get("/api/transcript/timeline", toolTimeline);
+  app.get("/api/transcript/turns", transcriptTurns);
   app.get("/api/transcript/last-turn", lastTurn);
   app.get("/api/sessions", sessionList);
   app.get("/api/codex/sessions", codexSessionList);

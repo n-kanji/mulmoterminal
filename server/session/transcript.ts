@@ -71,10 +71,10 @@ export function aiTitleFromParsed(records: Record<string, unknown>[]): string | 
 }
 export const aiTitleFromJsonl = (raw: string): string | null => aiTitleFromParsed(parseJsonl(raw));
 
-export interface ConversationTurn {
-  role: "user" | "assistant";
-  text: string;
-}
+// The turn shape lives in common/ (it is the /api/transcript/turns wire type the reading
+// view renders); re-exported here so the server-side readers keep one import site.
+export type { ConversationTurn } from "../../common/conversationTurn.js";
+import type { ConversationTurn } from "../../common/conversationTurn.js";
 
 // The joined text of an assistant turn's content: only "text" blocks (tool_use blocks
 // carry no prose a title would use). A plain-string content is returned as-is.

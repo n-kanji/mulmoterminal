@@ -60,7 +60,8 @@ The header of a running cell has two rows. Together they capture that agent's **
 ![A running cell (two-row header)](../images/grid-one-cell.png)
 
 - **Row 1 (info):** status dot, directory, git chip (`⎇ branch ●changes`), **model / context size**,
-  what that agent is **doing right now**, attach, fork (branch the conversation into a new column), and close.
+  what that agent is **doing right now**, attach, read (the conversation rendered without tool logs),
+  fork (branch the conversation into a new column), and close.
   Expand by clicking the header's empty space.
 - **Row 2 (controls):** 📂 reveal in the file manager, 📁 the in-app file browser (the default
   buttons — [replaceable in config](config.html#header)), GitHub, and the **timeline 🕘** (tool-call history).

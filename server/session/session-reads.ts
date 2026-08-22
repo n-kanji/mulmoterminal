@@ -26,6 +26,8 @@ import {
   latestTurnContextFromParsed,
   timelineFromJsonl,
   currentTurnToolNamesFromParsed,
+  conversationTurnsFromParsed,
+  type ConversationTurn,
   type SessionUsage,
   type LatestTurnContext,
   type TimelineEvent,
@@ -168,6 +170,22 @@ export async function sessionTimeline(cwd: string, id: string): Promise<{ events
     return { events: all.slice(-TIMELINE_MAX_EVENTS), truncated: all.length > TIMELINE_MAX_EVENTS };
   } catch {
     return { events: [], truncated: false };
+  }
+}
+
+// Fork-local (iTerm2 mode): the reading view's data — ordered prompt/reply turns with
+// every tool record already dropped (conversationTurnsFromParsed), capped to the most
+// recent turns so a months-old session doesn't ship megabytes. The cap slices TURNS,
+// not bytes: a truncated view still starts at a turn boundary. Claude only — the
+// reading view mirrors the fork button's availability.
+const TURNS_MAX = 80;
+export async function sessionTurns(cwd: string, id: string): Promise<{ turns: ConversationTurn[]; truncated: boolean }> {
+  try {
+    const raw = await fs.readFile(path.join(projectSessionsDir(cwd), `${id}.jsonl`), "utf8");
+    const all = conversationTurnsFromParsed(parseJsonl(raw));
+    return { turns: all.slice(-TURNS_MAX), truncated: all.length > TURNS_MAX };
+  } catch {
+    return { turns: [], truncated: false }; // no transcript on disk yet
   }
 }
 

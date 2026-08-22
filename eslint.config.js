@@ -51,6 +51,7 @@ export default [
       "src/components/TerminalGrid.vue", //       parent-state x descendant layout machine + FLIP @keyframes
       "src/components/GuiPanel.vue", //           `.frame + .frame` sibling-combinator spacing
       "src/components/WikiPageView.vue", //       :deep into v-html markdown
+      "src/components/TranscriptOverlay.vue", //  :deep into v-html markdown (rendered replies)
       "src/components/WikiBrowseOverlay.vue", //  :deep into v-html lint output
       "src/components/FilesOverlay.vue", //       :deep into CodeMirror's injected root
       "src/components/ToolbarPopover.vue", //     shared popover chrome import

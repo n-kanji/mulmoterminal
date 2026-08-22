@@ -19,6 +19,7 @@ import type { LaunchChoice } from "./wsUrl";
 import type { RunCommand } from "./runCommand";
 import { useHeaderButtons } from "../composables/useHeaderButtons";
 import TimelineOverlay from "./TimelineOverlay.vue";
+import TranscriptOverlay from "./TranscriptOverlay.vue";
 import CockpitHeader from "./CockpitHeader.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
 import type { CwdPreset } from "./presets";
@@ -161,6 +162,10 @@ const cellStyle = computed(() =>
 const { status: gitStatus, refresh: refreshGit } = useGitStatus(cwd);
 // Activity timeline overlay (the header history button) — only meaningful for a Claude session.
 const timelineOpen = ref(false);
+// Fork-local (iTerm2 mode): the reading view — the conversation rendered without tool
+// logs (TranscriptOverlay). Opened from row 1: reading is the operator's most frequent
+// action on a tile.
+const transcriptOpen = ref(false);
 // A small filmstrip thumbnail (some OTHER cell is zoomed): strip the header to just
 // dir + what it's doing + a zoom button, and hide the second (terminal) header row.
 const filmstrip = computed(() => !!props.zoomed && !props.expanded);
@@ -1462,6 +1467,21 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">more_horiz</span>
           </button>
+          <!-- The reading view: the conversation rendered without tool logs. Row 1 because
+               reading replies IS the operator's core loop on a tile — a long turn buries
+               its earlier replies under logs and this is the way back to them. Claude
+               only (turns come from Claude's transcript), like fork. -->
+          <button
+            v-if="sessionId && agent !== 'codex'"
+            type="button"
+            data-testid="cell-read"
+            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
+            title="会話を読む（ツールログを畳んで応答だけ表示）"
+            aria-label="Read the conversation without tool logs"
+            @click.stop="transcriptOpen = true"
+          >
+            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">menu_book</span>
+          </button>
           <!-- Fork sits where the Expand arrow used to be: the operator forks conversations
                often and expands almost never (header click-to-zoom still expands). Claude
                only (codex has no --fork-session), and only once there is a conversation
@@ -1546,6 +1566,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         </div>
       </Teleport>
       <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
+      <TranscriptOverlay :session-id="sessionId" :cwd="cwd" :open="transcriptOpen" @close="transcriptOpen = false" />
       <TerminalView
         ref="termRef"
         class="cell-term"

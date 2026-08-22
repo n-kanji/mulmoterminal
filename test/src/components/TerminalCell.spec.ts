@@ -1976,6 +1976,18 @@ describe("TerminalCell", () => {
       expect(w.find('[aria-label="Expand terminal"]').exists()).toBe(false);
     });
 
+    // The reading view opens from row 1 too (reading replies is the core loop on a
+    // tile), with the same availability rule as fork: a Claude conversation to read.
+    it("has the read button beside it on row 1, gated on the same conditions", async () => {
+      const w = mountCell(id, { initialCwd: "/home/me/proj" });
+      await flushPromises();
+      expect(w.find('.cell-actions [data-testid="cell-read"]').exists()).toBe(true);
+
+      const empty = mountCell(null, { initialCwd: "/home/me/proj" });
+      await flushPromises();
+      expect(empty.find('[data-testid="cell-read"]').exists()).toBe(false);
+    });
+
     it("does not also zoom the cell when clicked (row 1's header click zooms)", async () => {
       const w = mountCell(id, { initialCwd: "/home/me/proj" });
       await flushPromises();
