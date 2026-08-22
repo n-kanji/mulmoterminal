@@ -1703,6 +1703,8 @@ describe("TerminalCell", () => {
     expect(header.find('[aria-label="Expand terminal"]').exists()).toBe(false);
     const tools = header.find('[aria-label="Toggle the terminal tool bar"]');
     expect(tools.exists()).toBe(true);
+    // The "..." toggle anchors the LEFT edge of the action cluster (operator request).
+    expect(header.find(".cell-actions").findAll("button")[0].attributes("aria-label")).toBe("Toggle the terminal tool bar");
     // Row 2 (the embedded terminal's header) is hidden in the tiles...
     expect(w.findComponent({ name: "TerminalView" }).props("hideHeader")).toBe(true);
     // ...and summoned per-cell by the "..." toggle.

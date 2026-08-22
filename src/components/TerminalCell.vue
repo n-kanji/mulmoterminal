@@ -1335,6 +1335,20 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
              CellChromeButtons relies on shouldZoomOnHeaderClick declining clicks inside
              any button (see its own comment). -->
         <span class="cell-actions" :class="CELL_ACTIONS">
+          <!-- Operator-requested order (2026-08-22): the toolbar toggle sits FIRST — a
+               stable leftmost anchor for the row — then attach / read / fork / close. -->
+          <button
+            v-if="!expanded"
+            type="button"
+            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
+            :class="{ 'bg-hover': toolsOpen }"
+            title="ツールバーを表示（Run・Skill・フォルダなど）"
+            aria-label="Toggle the terminal tool bar"
+            :aria-pressed="toolsOpen"
+            @click.stop="toolsOpen = !toolsOpen"
+          >
+            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">more_horiz</span>
+          </button>
           <!-- R14: the attach button, always visible — the operator sends screenshots and
                context files constantly and the picker must not hide behind the toolbar
                toggle. Any file: the host copies it into the attachment store and the copy's
@@ -1354,18 +1368,6 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                would bubble to the header's click-to-zoom — Finder opening AND the pane
                maximizing was the reported bug. -->
           <input ref="attachInput" type="file" multiple class="hidden" aria-hidden="true" tabindex="-1" @click.stop @change="onAttachPick" />
-          <button
-            v-if="!expanded"
-            type="button"
-            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
-            :class="{ 'bg-hover': toolsOpen }"
-            title="ツールバーを表示（Skill・添付・フォルダ・音声など）"
-            aria-label="Toggle the terminal tool bar"
-            :aria-pressed="toolsOpen"
-            @click.stop="toolsOpen = !toolsOpen"
-          >
-            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">more_horiz</span>
-          </button>
           <!-- The reading view: the conversation rendered without tool logs. Row 1 because
                reading replies IS the operator's core loop on a tile — a long turn buries
                its earlier replies under logs and this is the way back to them. Claude
