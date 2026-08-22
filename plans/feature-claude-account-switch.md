@@ -36,12 +36,31 @@ and offline.
   another account" snapshots the current login, clears the live slots, and the next pane's
   `claude` starts the OAuth login. The cleared account is one switch away.
 
-## What a switch does NOT do
+## Moving the EXISTING panes (v2)
 
-Running panes hold their token in-process until its next refresh; only NEW panes pick up
-the swapped credentials. The UI says "applies to new panes only" instead of pretending
-otherwise. A stale snapshot (revoked refresh token) is also not a failure mode to code
-around: the next `claude` just asks to log in again.
+A running claude holds its OAuth token in-process for life, so the swap alone reaches new
+panes only — and when a usage limit hits, it is exactly the twenty existing panes the
+operator wants moved. v2 restarts them: for each visible claude pane (codex and
+`hiddenSessions` background workers excluded), null the entry's socket, reap (kills the pty
+AND its tmux session — spawnSync, so it completes first), then close the socket plainly. A
+close without an exit frame is the one teardown the client already survives (server
+restart): it auto-reconnects with ?session=<id>, finds no live pty/tmux, and cold-resumes —
+a fresh `claude --resume` that reads the swapped Keychain, same conversation. A one-line
+nudge (session/resume-nudge.ts — keyed to the killed session's id, single use, 120s TTL) is
+typed and submitted through the existing draft-injection once claude is back up, so the
+fleet resumes work without the operator visiting each pane. Detached panes restart too:
+their live pty would otherwise both keep the old account and swallow the next reattach.
+
+On switch this is opt-out (checkbox, default on); POST /api/claude-account/restart-panes
+runs it standalone (switch done elsewhere, or with the box unticked). Restarting includes
+the pane the operator is talking in — its conversation resumes like any other. A stale
+snapshot (revoked refresh token) is still not a failure mode to code around: the next
+`claude` just asks to log in again.
+
+Verified live (2026-08-22, dev instance on :34599): restart-panes on a real pane —
+conversation replayed, nudge auto-submitted, claude carried on with full context, cell
+never showed an exit; and a logout → switch-back roundtrip through the real Keychain +
+~/.claude.json (oauthAccount restored field-complete, file intact).
 
 ## Pieces
 

@@ -32,6 +32,7 @@ import { canStartLauncher, resolveFork, resolveReattachableId, resolveSession, t
 import type { PtyEntry } from "../session/types.js";
 import type { SpawnClaudePty, SpawnCodexPty, SpawnCommandPty, SpawnLauncherPty, ResolveLauncher } from "../session/spawners.js";
 import { takeAgentPrompt } from "../session/agent-prompt-queue.js";
+import { takeResumeNudge } from "../session/resume-nudge.js";
 import { terminalWsKind, type TerminalWsKind } from "./terminal-ws-path.js";
 import { normalizeAgent, parseIndexParam } from "./routeParams.js";
 import { codexResumeId } from "../agents/codex-resume.js";
@@ -78,6 +79,20 @@ function resolveClaudeFork(url: URL, cwd: string, fresh: boolean): ForkPlan {
   const raw = url.searchParams.get("fork");
   const from = raw && SESSION_ID_RE.test(raw) ? raw : null;
   return resolveFork(from, raw !== null, { fresh, sourceOnDisk: !!from && sessionExistsOnDisk(from, cwd) });
+}
+
+// The first turn a fresh spawn auto-runs, if any. A reattach must not consume one — nothing
+// spawns to run it. `resume` is the fork's SOURCE when this is a fork, so a branch carries a
+// conversation of its own and is no more a home for a queued first turn than a plain
+// `--resume` is. A resume MAY instead carry a restart nudge (session/resume-nudge.ts): the
+// account switcher killed this very session moments ago, and the nudge — keyed to its id,
+// single use, short TTL — is what puts the fleet back to work after the swap. A fork is a
+// new branch, not the killed pane coming back, so it never takes one.
+function spawnInitialPrompt(live: boolean, fork: boolean, resume: string | null, attachGuiMcp: boolean, cwd: string): string | undefined {
+  if (live) return undefined;
+  const queued = queuedFirstTurn(resume, attachGuiMcp, cwd);
+  if (queued) return queued;
+  return fork ? undefined : takeResumeNudge(resume);
 }
 
 function resolveClaudeSession(requested: string | null, cwd: string): SessionResolution {
@@ -318,9 +333,7 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     // file. On reconnect, re-sync it from the (now-refreshed) Keychain so a token that
     // rotated since spawn doesn't leave the reattached session stuck at "Not logged in".
     if (live?.sandbox) writeSandboxCredentials(sessionId);
-    // `resume` is the fork's SOURCE when this is a fork, so a branch carries a conversation of
-    // its own and is no more a home for a queued first turn than a plain `--resume` is.
-    const initialPrompt = live ? undefined : queuedFirstTurn(resume, attachGuiMcp, cwd); // a reattach must not consume one — nothing spawns to run it
+    const initialPrompt = spawnInitialPrompt(!!live, fork, resume, attachGuiMcp, cwd);
     entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork });
   } catch (err) {
     // A failed spawn (claude missing, or node-pty's spawn-helper not executable)

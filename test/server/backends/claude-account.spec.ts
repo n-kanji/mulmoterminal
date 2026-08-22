@@ -1,7 +1,7 @@
 // @vitest-environment node
 // The toolbar's Claude account switcher. Everything runs against an in-memory IO seam —
 // no real Keychain, no ~/.claude.json, no API keys.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 
@@ -43,10 +43,10 @@ const claudeJson = (email: string) => JSON.stringify({ oauthAccount: { emailAddr
 const snapshotFor = (email: string, credentials = `creds-${email}`) =>
   JSON.stringify({ credentials, oauthAccount: { emailAddress: email }, savedAt: "2026-08-01T00:00:00Z" });
 
-const appWith = (io: ClaudeAccountIo, allowOrigin = true) => {
+const appWith = (io: ClaudeAccountIo, allowOrigin = true, restartPanes?: () => number) => {
   const app = express();
   app.use(express.json());
-  mountClaudeAccountRoutes(app, { isAllowedOrigin: () => allowOrigin }, io);
+  mountClaudeAccountRoutes(app, { isAllowedOrigin: () => allowOrigin, restartPanes }, io);
   return app;
 };
 
@@ -130,7 +130,7 @@ describe("POST /api/claude-account/switch", () => {
     });
     const res = await request(appWith(io)).post("/api/claude-account/switch").send({ email: "b@x.co" });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, current: "b@x.co" });
+    expect(res.body).toEqual({ ok: true, current: "b@x.co", restartedPanes: 0 });
     // live slot now holds b's credentials
     expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("stored-creds-of-b");
     // a's live pair was snapshotted before the overwrite
@@ -180,6 +180,67 @@ describe("POST /api/claude-account/switch", () => {
     const { io } = fakeIo();
     expect((await request(appWith(io)).post("/api/claude-account/switch").send({})).status).toBe(400);
     expect((await request(appWith(io, false)).post("/api/claude-account/switch").send({ email: "b@x.co" })).status).toBe(403);
+  });
+});
+
+describe("pane restarts", () => {
+  const switchable = () =>
+    fakeIo({
+      keychain: {
+        [CLAUDE_KEYCHAIN_SERVICE]: "live-creds-of-a",
+        [serviceForEmail("b@x.co")]: snapshotFor("b@x.co"),
+      },
+      files: { [CLAUDE_JSON]: claudeJson("a@x.co") },
+    });
+
+  it("switch restarts the fleet only when asked, AFTER the swap, and reports the count", async () => {
+    const { io, keychain } = switchable();
+    const restartPanes = vi.fn(() => {
+      // Restart must see the swapped credentials — a pane resumed before the swap would
+      // come back on the OLD account.
+      expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("creds-b@x.co");
+      return 3;
+    });
+    const res = await request(appWith(io, true, restartPanes))
+      .post("/api/claude-account/switch")
+      .send({ email: "b@x.co", restartPanes: true });
+    expect(res.body).toEqual({ ok: true, current: "b@x.co", restartedPanes: 3 });
+    expect(restartPanes).toHaveBeenCalledOnce();
+  });
+
+  it("switch without the flag, a no-op switch, and a failed switch never restart", async () => {
+    const restartPanes = vi.fn(() => 3);
+    const { io } = switchable();
+    // Order matters against the shared io: the no-op (a@x.co IS current) and the 404 first,
+    // then a real switch with the flag absent.
+    await request(appWith(io, true, restartPanes))
+      .post("/api/claude-account/switch")
+      .send({ email: "a@x.co", restartPanes: true });
+    await request(appWith(io, true, restartPanes))
+      .post("/api/claude-account/switch")
+      .send({ email: "nobody@x.co", restartPanes: true });
+    await request(appWith(io, true, restartPanes))
+      .post("/api/claude-account/switch")
+      .send({ email: "b@x.co" });
+    expect(restartPanes).not.toHaveBeenCalled();
+  });
+
+  it("POST /restart-panes restarts on the current account; 0 when unavailable; origin-guarded", async () => {
+    const { io } = switchable();
+    const restartPanes = vi.fn(() => 2);
+    const res = await request(appWith(io, true, restartPanes))
+      .post("/api/claude-account/restart-panes")
+      .send({});
+    expect(res.body).toEqual({ ok: true, restartedPanes: 2 });
+    const bare = await request(appWith(io)).post("/api/claude-account/restart-panes").send({});
+    expect(bare.body).toEqual({ ok: true, restartedPanes: 0 });
+    expect(
+      (
+        await request(appWith(io, false, restartPanes))
+          .post("/api/claude-account/restart-panes")
+          .send({})
+      ).status,
+    ).toBe(403);
   });
 });
 

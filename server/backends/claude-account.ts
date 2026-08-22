@@ -184,9 +184,14 @@ function isNotFound(e: unknown): boolean {
 
 interface ClaudeAccountRouteOptions {
   isAllowedOrigin: (origin: string | undefined, remoteAddress: string | undefined) => boolean;
+  // Restart every visible claude pane so it resumes its conversation on the freshly-swapped
+  // credentials (session/restart-claude-panes.ts), returning how many restarted. Injected —
+  // this module owns credentials, not the session registry. Absent (tests that don't care)
+  // means "restart is unavailable" and restart requests report 0.
+  restartPanes?: () => number;
 }
 
-export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin }: ClaudeAccountRouteOptions, io: ClaudeAccountIo = realIo()): void {
+export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restartPanes }: ClaudeAccountRouteOptions, io: ClaudeAccountIo = realIo()): void {
   // Current identity + the stored account list. `current` comes from ~/.claude.json every
   // time (never cached), so a login done outside MT — `claude /logout` in any pane — is
   // reflected on the next open of the dropdown without any bookkeeping here.
@@ -207,29 +212,19 @@ export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin }: Clau
     const target = isRecord(req.body) && typeof req.body.email === "string" ? normalizeEmail(req.body.email) : "";
     if (!target) return void res.status(400).json({ error: "email required" });
     try {
-      const claudeJsonRaw = await io.readFile(io.claudeJsonPath);
-      const currentEmail = emailOf(readOauthAccount(claudeJsonRaw));
-      if (target === currentEmail) return void res.json({ ok: true, current: currentEmail });
+      await handleSwitch(io, req, res, target, restartPanes);
+    } catch (e) {
+      res.status(500).json({ error: message(e) });
+    }
+  });
 
-      const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(target)));
-      if (!snapshot) {
-        return void res.status(404).json({ error: `No stored login for ${target}. Log in once as that account first.` });
-      }
-
-      // Save the outgoing account before touching anything — its live tokens are the only
-      // copy, and they are freshest right now.
-      let index = parseIndex(await io.readFile(io.indexPath));
-      index = await snapshotCurrent(io, index, claudeJsonRaw, currentEmail);
-
-      await io.writeKeychain(CLAUDE_KEYCHAIN_SERVICE, snapshot.credentials);
-      // Claude Code renders its identity from `oauthAccount`, not from the token, so the
-      // profile block must travel with the credentials (display-only: a race against a live
-      // pane rewriting claude.json costs a stale label, never a broken login).
-      if (claudeJsonRaw && snapshot.oauthAccount) {
-        await io.writeFile(io.claudeJsonPath, withOauthAccount(claudeJsonRaw, snapshot.oauthAccount));
-      }
-      await io.writeFile(io.indexPath, serializeIndex(upsertIndexEntry(index, target, snapshot.savedAt)));
-      res.json({ ok: true, current: target });
+  // The fleet restart on its own: for a switch done with the box unticked, or done outside
+  // MT entirely (`claude /logout` + login in a pane) — either way the operator can still
+  // move every existing pane onto whatever the live credentials now are.
+  app.post("/api/claude-account/restart-panes", (req, res) => {
+    if (!guard(req, res, isAllowedOrigin)) return;
+    try {
+      res.json({ ok: true, restartedPanes: restartPanes ? restartPanes() : 0 });
     } catch (e) {
       res.status(500).json({ error: message(e) });
     }
@@ -260,6 +255,38 @@ export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin }: Clau
       res.status(500).json({ error: message(e) });
     }
   });
+}
+
+// The switch itself, once the request has passed the guard and named a target.
+async function handleSwitch(io: ClaudeAccountIo, req: Request, res: Response, target: string, restartPanes?: () => number): Promise<void> {
+  const claudeJsonRaw = await io.readFile(io.claudeJsonPath);
+  const currentEmail = emailOf(readOauthAccount(claudeJsonRaw));
+  if (target === currentEmail) return void res.json({ ok: true, current: currentEmail });
+
+  const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(target)));
+  if (!snapshot) {
+    return void res.status(404).json({ error: `No stored login for ${target}. Log in once as that account first.` });
+  }
+
+  // Save the outgoing account before touching anything — its live tokens are the only
+  // copy, and they are freshest right now.
+  let index = parseIndex(await io.readFile(io.indexPath));
+  index = await snapshotCurrent(io, index, claudeJsonRaw, currentEmail);
+
+  await io.writeKeychain(CLAUDE_KEYCHAIN_SERVICE, snapshot.credentials);
+  // Claude Code renders its identity from `oauthAccount`, not from the token, so the
+  // profile block must travel with the credentials (display-only: a race against a live
+  // pane rewriting claude.json costs a stale label, never a broken login).
+  if (claudeJsonRaw && snapshot.oauthAccount) {
+    await io.writeFile(io.claudeJsonPath, withOauthAccount(claudeJsonRaw, snapshot.oauthAccount));
+  }
+  await io.writeFile(io.indexPath, serializeIndex(upsertIndexEntry(index, target, snapshot.savedAt)));
+  // The credentials are swapped; now move the FLEET. A running claude keeps its token
+  // in-process for life, so without this the twenty existing panes — the ones stuck on
+  // the old account's usage limit — would stay stuck. Restart-and-resume puts each one
+  // back into its own conversation on the new account.
+  const restarted = isRecord(req.body) && req.body.restartPanes === true && restartPanes ? restartPanes() : 0;
+  res.json({ ok: true, current: target, restartedPanes: restarted });
 }
 
 // Snapshot the live credentials under the current account's entry and return the index with

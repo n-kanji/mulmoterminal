@@ -9,6 +9,12 @@ export interface ClaudeAccountEntry {
   savedAt: string;
 }
 
+// The wording carries the operating model: with a restart the fleet moves NOW (each pane
+// resumes its own conversation on the new account); without one, only new panes change.
+function restartNotice(restarted: number | undefined, tail: string): string {
+  return typeof restarted === "number" && restarted > 0 ? `restarted ${restarted} pane(s) ${tail}` : `new panes ${tail}`;
+}
+
 export function useClaudeAccount() {
   const current = ref<string | null>(null);
   const accounts = ref<ClaudeAccountEntry[]>([]);
@@ -33,16 +39,17 @@ export function useClaudeAccount() {
     }
   }
 
-  async function post(path: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+  async function post(path: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string; restartedPanes?: number }> {
     busy.value = true;
     error.value = null;
     notice.value = null;
     try {
       const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data: unknown = await res.json().catch(() => null);
-      const err = typeof (data as { error?: unknown } | null)?.error === "string" ? (data as { error: string }).error : null;
+      const record = (data ?? {}) as { error?: unknown; restartedPanes?: unknown };
+      const err = typeof record.error === "string" ? record.error : null;
       if (!res.ok) return { ok: false, error: err ?? `HTTP ${res.status}` };
-      return { ok: true };
+      return { ok: true, restartedPanes: typeof record.restartedPanes === "number" ? record.restartedPanes : undefined };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -51,10 +58,18 @@ export function useClaudeAccount() {
     }
   }
 
-  async function switchTo(email: string): Promise<boolean> {
-    const result = await post("/api/claude-account/switch", { email });
-    if (result.ok) notice.value = `Switched — new panes run as ${email}.`;
+  async function switchTo(email: string, restartPanes: boolean): Promise<boolean> {
+    const result = await post("/api/claude-account/switch", { email, restartPanes });
+    const tail = "as " + email;
+    if (result.ok) notice.value = `Switched — ${restartNotice(result.restartedPanes, tail)}.`;
     else error.value = result.error ?? "switch failed";
+    return result.ok;
+  }
+
+  async function restartAllPanes(): Promise<boolean> {
+    const result = await post("/api/claude-account/restart-panes", {});
+    if (result.ok) notice.value = `Restarted ${result.restartedPanes ?? 0} pane(s) on the current account.`;
+    else error.value = result.error ?? "restart failed";
     return result.ok;
   }
 
@@ -67,5 +82,5 @@ export function useClaudeAccount() {
 
   onMounted(() => void refresh());
 
-  return { current, accounts, busy, error, notice, refresh, switchTo, logoutForNewLogin };
+  return { current, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin };
 }
