@@ -1878,6 +1878,10 @@ describe("TerminalCell", () => {
     expect(w.find('[data-testid="cell-copy-prompt"]').exists()).toBe(false);
     expect(w.find('[data-testid="cell-ask"]').exists()).toBe(false);
     expect(w.find('[aria-label="Show activity timeline"]').exists()).toBe(false);
+    // The reorder arrows went too (the header drag reorders); Expand moved here instead.
+    expect(w.find('[aria-label="Move terminal left"]').exists()).toBe(false);
+    expect(w.find('[aria-label="Move terminal right"]').exists()).toBe(false);
+    expect(w.find('[aria-label="Expand terminal"]').exists()).toBe(true);
   });
 
   // R12 (fork-local, iTerm2 mode): one click for `claude --resume <id> --fork-session`. The

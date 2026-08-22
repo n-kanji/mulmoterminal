@@ -1544,11 +1544,12 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                copy-prompt pair and the timeline button are gone from this row — the
                reading view (row 1's book button) covers reading and copying a reply, and
                the rest went unused. Fork moved to row 1 earlier for the same reason. -->
-          <button v-if="reorderable" class="cell-btn" :class="CELL_BTN" title="Move left" aria-label="Move terminal left" @click="emit('move', -1)">
-            <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
-          </button>
-          <button v-if="reorderable" class="cell-btn" :class="CELL_BTN" title="Move right" aria-label="Move terminal right" @click="emit('move', 1)">
-            <span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>
+          <!-- Operator-requested swap (2026-08-22): the reorder arrows are gone (the header
+               drag reorders columns), and the Expand button that left row 1 lives HERE
+               instead — rare enough to sit behind the toolbar toggle, but still one click
+               when wanted. Restore stays on row 1 while expanded. -->
+          <button v-if="!expanded" class="cell-btn" :class="CELL_BTN" title="Expand" aria-label="Expand terminal" @click="emit('toggle-expand')">
+            <span class="material-symbols-outlined" aria-hidden="true">open_in_full</span>
           </button>
         </template>
       </TerminalView>
