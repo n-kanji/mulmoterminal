@@ -47,7 +47,6 @@ export default [
     files: [
       "src/components/Sidebar.vue", //            @keyframes — the "thinking" spinner ring
       "src/components/SessionTabBar.vue", //      @keyframes — the same spinner
-      "src/components/Terminal.vue", //           @keyframes — the voice button's pulse / spin
       "src/components/TerminalGrid.vue", //       parent-state x descendant layout machine + FLIP @keyframes
       "src/components/GuiPanel.vue", //           `.frame + .frame` sibling-combinator spacing
       "src/components/WikiPageView.vue", //       :deep into v-html markdown

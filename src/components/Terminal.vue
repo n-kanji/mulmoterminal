@@ -12,7 +12,6 @@ import { useTerminalFontSize } from "../composables/useTerminalFontSize";
 import { globalFontFamily } from "../composables/terminalFontFamily";
 import { badgeStyleFor } from "./dirBadge";
 import { terminalHeaderStyleFor } from "./cellHeaderStyle";
-import { useVoiceInput } from "../composables/useVoiceInput";
 import { useGitStatus } from "../composables/useGitStatus";
 import * as conn from "../composables/useTerminalConnections";
 import RunMenu from "./RunMenu.vue";
@@ -203,31 +202,14 @@ function effectiveFont(): conn.TerminalFont {
 const dirBadgeStyle = computed(() => badgeStyleFor(props.dirBadgeColor));
 const headerStyle = computed(() => terminalHeaderStyleFor(props.dirHeaderColor, props.dirHeaderTextColor, props.dirButtonColor));
 
-// Voice input: a mic in the header transcribes speech (locally, via whisper.cpp)
-// and inserts it at the prompt for the user to review and submit — same channel as
-// a typed path. `insertText` is hoisted (function declaration), so referencing it
-// here before its definition is fine; it only runs at transcript time.
-// Append a trailing space so consecutive VAD segments stay separated ("hello
-// world", not "helloworld") when dictating multiple phrases into the prompt.
-const voice = useVoiceInput({ onTranscript: (text) => insertText(`${text} `) });
-function voiceTitle(): string {
-  if (voice.listening.value) return "Stop voice input";
-  if (voice.downloading.value) return "Downloading speech model…";
-  if (!voice.available.value) return "Enable voice input (downloads the speech model)";
-  return "Start voice input";
-}
-function voiceIcon(): string {
-  if (voice.listening.value) return "stop";
-  if (voice.downloading.value || voice.transcribing.value) return "progress_activity";
-  return "mic";
-}
+// Operator-requested trim (2026-08-22): the upstream mic button (on-device Whisper
+// voice input) is removed on this fork — the operator dictates through VoiceWriter at
+// the OS level, so an in-app mic was one more icon that never got pressed. The server's
+// /api/transcribe route is untouched; restoring is re-adding the button + useVoiceInput.
 
 let resizeObserver: ResizeObserver;
 
 onMounted(() => {
-  // Probe voice-input capability so the mic button shows only where supported.
-  voice.refreshAvailability().catch(() => {});
-
   const container = terminalRef.value;
   if (!container) return;
   // Attach this view to its durable slot: creates + connects the runtime on first
@@ -466,21 +448,11 @@ onUnmounted(() => {
           <span v-if="b.emoji" class="text-[15px] leading-none">{{ b.emoji }}</span>
           <span v-else class="material-symbols-outlined text-[18px]" aria-hidden="true">{{ b.icon || "bolt" }}</span>
         </button>
-        <button
-          v-if="voice.capable.value"
-          type="button"
-          class="inline-flex cursor-pointer items-center rounded-[4px] border-0 bg-transparent p-0.5 text-[var(--cell-btn,var(--text-muted))] hover:bg-selected hover:text-fg"
-          :class="['voice', { listening: voice.listening.value, busy: voice.downloading.value || voice.transcribing.value }]"
-          :title="voiceTitle()"
-          :aria-label="voiceTitle()"
-          @click="voice.toggle()"
-        >
-          <span class="material-symbols-outlined text-[18px]" aria-hidden="true">{{ voiceIcon() }}</span>
-        </button>
-        <!-- The file explorer is a DEFAULT_BUTTONS entry (server-resolved into headerButtons
-             above), so the user can drop/reorder/replace it via config. -->
-        <!-- A grid cell injects its own actions (GitHub / timeline / reorder / zoom /
-             close) here, so all the icon buttons live on this one header row. -->
+        <!-- The mic button (voice input) is removed on this fork — see the script-side
+             trim comment. The file explorer is a DEFAULT_BUTTONS entry (server-resolved
+             into headerButtons above), so the user can drop/reorder/replace it via config. -->
+        <!-- A grid cell injects its own actions (GitHub / reorder) here, so all the icon
+             buttons live on this one header row. -->
         <slot name="header-actions" />
       </div>
     </div>
@@ -511,33 +483,3 @@ onUnmounted(() => {
     </Transition>
   </div>
 </template>
-
-<!-- The voice button's recording pulse / busy spin need @keyframes, which have no
-     utility equivalent — the rest of the header is utilities. These target .voice
-     directly (the icon-btn base is now utilities). -->
-<style scoped>
-.voice.listening {
-  color: #e5484d;
-  animation: voice-pulse 1.2s ease-in-out infinite;
-}
-
-.voice.busy .material-symbols-outlined {
-  animation: voice-spin 1s linear infinite;
-}
-
-@keyframes voice-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
-
-@keyframes voice-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>

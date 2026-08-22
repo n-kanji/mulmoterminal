@@ -18,7 +18,6 @@ import ModelPicker from "./ModelPicker.vue";
 import type { LaunchChoice } from "./wsUrl";
 import type { RunCommand } from "./runCommand";
 import { useHeaderButtons } from "../composables/useHeaderButtons";
-import TimelineOverlay from "./TimelineOverlay.vue";
 import TranscriptOverlay from "./TranscriptOverlay.vue";
 import CockpitHeader from "./CockpitHeader.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
@@ -48,15 +47,10 @@ import { dragCarriesFiles, dropTextFromUriList, toInsertText, toShellArg } from 
 import { filesFrom, pastedImageFile, pasteFailureLabel, uploadAttachmentFiles, uploadPastedImage } from "../composables/usePasteImage";
 import type { GridCellEmits, GridCellProps } from "./gridCell";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
-import { CELL_ACTIONS, CELL_BTN, CELL_BTN_BOX, CELL_BTN_INK, CELL_BTN_SIZE, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
-import { handoffTargets, pullLastTurn, type HandoffTarget } from "../composables/useHandoff";
-import { copyLastTurnPart, copyOutcomeLabel, type TurnPart } from "../composables/useCopyTurn";
-import { runOneExchange, liveCrossTalkDeps } from "../composables/useCrossTalk";
-import { outcomeMessage } from "../composables/exchangeRules";
+import { CELL_ACTIONS, CELL_BTN, CELL_HEADER_ZOOMABLE, CELL_TERM } from "./cellChromeClasses";
 import { worktreeFailureMessage } from "./cellChromeRules";
 
 // How long a handoff failure stays on the cell before it clears itself.
-const ASK_MSG_MS = 4000;
 
 const termRef = useTemplateRef<InstanceType<typeof TerminalView>>("termRef");
 
@@ -161,7 +155,6 @@ const cellStyle = computed(() =>
 // is called alongside loadDiff() so a finished turn's changes show immediately.
 const { status: gitStatus, refresh: refreshGit } = useGitStatus(cwd);
 // Activity timeline overlay (the header history button) — only meaningful for a Claude session.
-const timelineOpen = ref(false);
 // Fork-local (iTerm2 mode): the reading view — the conversation rendered without tool
 // logs (TranscriptOverlay). Opened from row 1: reading is the operator's most frequent
 // action on a tile.
@@ -723,64 +716,9 @@ watch(ghMenuOpen, (open) => {
 });
 onUnmounted(() => document.removeEventListener("mousedown", onGhOutside));
 
-// "Bring another cell's last turn here": pull a sibling terminal's last completed
-// exchange into THIS cell's input box, so the two agents can be pointed at each other's
-// work without the user copying text between panes. Pulling rather than pushing keeps
-// the click and the Enter in one place (#574). The source list is a snapshot taken when
-// the menu opens, so it reflects what is connected right now.
-const askMenuOpen = ref(false);
-const askWrap = useTemplateRef<HTMLElement>("askWrap");
-const askTargets = ref<HandoffTarget[]>([]);
-const askMsg = ref<string | null>(null);
-let askMsgTimer: ReturnType<typeof setTimeout> | null = null;
-
-function openAskMenu() {
-  askTargets.value = handoffTargets(`cell-${props.uid}`, props.home);
-  askMenuOpen.value = !askMenuOpen.value;
-}
-
-function showAskMsg(msg: string) {
-  askMsg.value = msg;
-  if (askMsgTimer) clearTimeout(askMsgTimer);
-  askMsgTimer = setTimeout(() => (askMsg.value = null), ASK_MSG_MS);
-}
-
-async function askCell(target: HandoffTarget) {
-  askMenuOpen.value = false;
-  const error = await pullLastTurn(target, `cell-${props.uid}`);
-  if (error) showAskMsg(error);
-}
-
-// Fork-local (iTerm2 mode): copy this pane's last reply — or the last prompt the operator
-// gave it — to the system clipboard, from the transcript rather than the screen (see
-// useCopyTurn for why that distinction is the whole feature).
-//
-// The outcome replaces the button's icon for a moment instead of raising a toast: this cell
-// is one of thirty columns, and a floating notice over a column the operator has already
-// looked away from is chrome that costs a reading line and tells them nothing.
-const COPY_LABEL_MS = 1500;
-const copyLabels = ref<Record<TurnPart, string | null>>({ reply: null, prompt: null });
-const copyTimers: Partial<Record<TurnPart, ReturnType<typeof setTimeout>>> = {};
-
-function showCopyLabel(part: TurnPart, label: string) {
-  copyLabels.value[part] = label;
-  const pending = copyTimers[part];
-  if (pending) clearTimeout(pending);
-  copyTimers[part] = setTimeout(() => {
-    copyLabels.value[part] = null;
-  }, COPY_LABEL_MS);
-}
-
-async function copyTurn(part: TurnPart) {
-  const id = sessionId.value;
-  if (!id) return;
-  const outcome = await copyLastTurnPart({ sessionId: id, cwd: cwd.value, agent: agent.value }, part);
-  showCopyLabel(part, copyOutcomeLabel(outcome, part));
-}
-
-onUnmounted(() => {
-  for (const timer of Object.values(copyTimers)) clearTimeout(timer);
-});
+// Operator-requested trim (2026-08-22): the ask/exchange machinery, the copy-turn pair
+// and the timeline overlay were removed with their toolbar buttons — the reading view
+// (TranscriptOverlay) is the surviving way to read and copy a pane's replies.
 
 // Fork-local (iTerm2 mode, R10): the pane's own transient line — "saving…", "inserted", a
 // failure. It takes over the status strip's flexible slot for a moment instead of raising a
@@ -890,45 +828,6 @@ async function onCellPaste(e: ClipboardEvent) {
   insertIntoSlot(`cell-${props.uid}`, toShellArg(outcome.path));
   showCellMsg("画像のパスを挿入しました");
 }
-
-// One automatic exchange: our turn goes out, their answer comes back, both submitted.
-// `exchangeStop` is the only way a running exchange ends early, so it is also what the
-// cell unmounting sets — a loop typing into terminals must not outlive its cell.
-const exchanging = ref(false);
-let exchangeStop = false;
-
-function stopExchange() {
-  exchangeStop = true;
-}
-
-async function exchangeWith(target: HandoffTarget) {
-  askMenuOpen.value = false;
-  if (!sessionId.value || exchanging.value) return;
-  exchanging.value = true;
-  exchangeStop = false;
-  const self = { key: `cell-${props.uid}`, source: { sessionId: sessionId.value, cwd: cwd.value, agent: agent.value } };
-  const { outcome } = await runOneExchange(
-    self,
-    target,
-    liveCrossTalkDeps(() => exchangeStop),
-  );
-  exchanging.value = false;
-  const message = outcomeMessage(outcome);
-  if (message) showAskMsg(message);
-}
-
-function onAskOutside(e: MouseEvent) {
-  if (askWrap.value && !askWrap.value.contains(e.target as Node)) askMenuOpen.value = false;
-}
-watch(askMenuOpen, (open) => {
-  if (open) document.addEventListener("mousedown", onAskOutside);
-  else document.removeEventListener("mousedown", onAskOutside);
-});
-onUnmounted(() => {
-  document.removeEventListener("mousedown", onAskOutside);
-  if (askMsgTimer) clearTimeout(askMsgTimer);
-  exchangeStop = true; // never leave an exchange typing into terminals after this cell is gone
-});
 
 // Reap the session and reset the cell back to the empty launcher. The cell isn't
 // remounted (stable key), so the dir/diff state is reset explicitly — otherwise the
@@ -1565,7 +1464,6 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           <div v-if="lastPrompt" class="line-clamp-3"><span class="text-dim">直近の指示: </span>{{ lastPrompt }}</div>
         </div>
       </Teleport>
-      <TimelineOverlay :session-id="sessionId" :cwd="cwd" :open="timelineOpen" @close="timelineOpen = false" />
       <TranscriptOverlay :session-id="sessionId" :cwd="cwd" :open="transcriptOpen" @close="transcriptOpen = false" />
       <TerminalView
         ref="termRef"
@@ -1642,109 +1540,10 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
               </button>
             </div>
           </span>
-          <span v-if="sessionId" ref="askWrap" class="relative inline-flex flex-none">
-            <button
-              type="button"
-              data-testid="cell-ask"
-              class="cell-btn"
-              :class="CELL_BTN"
-              title="Bring another terminal's last turn into this input box"
-              aria-label="Bring another terminal's last turn here"
-              aria-haspopup="true"
-              :aria-expanded="askMenuOpen"
-              @click="openAskMenu"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">forum</span>
-            </button>
-            <div
-              v-if="askMenuOpen"
-              data-testid="cell-ask-menu"
-              class="absolute right-0 top-full z-20 mt-1 flex min-w-[180px] flex-col rounded-md border border-border bg-panel p-1 shadow-[0_6px_18px_rgba(0,0,0,0.35)]"
-              @keydown.escape="askMenuOpen = false"
-            >
-              <div v-for="target in askTargets" :key="target.key" class="flex items-center gap-1">
-                <button
-                  type="button"
-                  data-testid="cell-ask-item"
-                  class="flex-1 cursor-pointer rounded-[4px] border-none bg-transparent px-2 py-1.5 text-left font-sans text-[12px] text-secondary hover:bg-hover hover:text-fg"
-                  :title="`Bring ${target.label}'s last turn here`"
-                  @click="askCell(target)"
-                >
-                  {{ target.label }}
-                </button>
-                <button
-                  type="button"
-                  data-testid="cell-exchange-item"
-                  :aria-label="`Exchange one turn with ${target.label}`"
-                  class="cursor-pointer rounded-[4px] border-none bg-transparent px-1.5 py-1.5 font-sans text-[12px] text-dim hover:bg-hover hover:text-fg disabled:cursor-default disabled:opacity-40"
-                  :disabled="exchanging"
-                  title="Send this cell's turn there and bring the answer back, both submitted"
-                  @click="exchangeWith(target)"
-                >
-                  <span class="material-symbols-outlined" aria-hidden="true">swap_horiz</span>
-                </button>
-              </div>
-              <p v-if="!askTargets.length" class="m-0 px-2 py-1.5 font-sans text-[12px] text-dim">No other terminal to read</p>
-            </div>
-            <button
-              v-if="exchanging"
-              type="button"
-              data-testid="cell-exchange-stop"
-              aria-label="Stop the exchange in progress"
-              class="absolute right-0 top-full z-20 mt-1 cursor-pointer whitespace-nowrap rounded-md border border-border bg-panel px-2 py-1.5 font-sans text-[12px] text-secondary shadow-[0_6px_18px_rgba(0,0,0,0.35)] hover:text-fg"
-              @click="stopExchange"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">swap_horiz</span> exchanging — stop
-            </button>
-            <p
-              v-else-if="askMsg"
-              data-testid="cell-ask-msg"
-              role="status"
-              class="absolute right-0 top-full z-20 m-0 mt-1 whitespace-nowrap rounded-md border border-border bg-panel px-2 py-1.5 font-sans text-[12px] text-dim shadow-[0_6px_18px_rgba(0,0,0,0.35)]"
-            >
-              {{ askMsg }}
-            </p>
-          </span>
-          <!-- Copy the last reply / the last prompt, whole, from the transcript. The label
-               replaces the icon for a moment on click — no toast (see copyTurn). -->
-          <button
-            v-if="sessionId"
-            type="button"
-            data-testid="cell-copy-reply"
-            class="cell-btn"
-            :class="[CELL_BTN_BOX, CELL_BTN_INK, copyLabels.reply ? 'h-[26px] px-1 font-sans text-[10px]' : CELL_BTN_SIZE]"
-            title="Copy this pane's last reply, in full, from its transcript (not the wrapped screen text)"
-            aria-label="Copy the last reply"
-            @click="copyTurn('reply')"
-          >
-            <span v-if="copyLabels.reply">{{ copyLabels.reply }}</span>
-            <span v-else class="material-symbols-outlined" aria-hidden="true">content_copy</span>
-          </button>
-          <button
-            v-if="sessionId"
-            type="button"
-            data-testid="cell-copy-prompt"
-            class="cell-btn"
-            :class="[CELL_BTN_BOX, CELL_BTN_INK, copyLabels.prompt ? 'h-[26px] px-1 font-sans text-[10px]' : CELL_BTN_SIZE]"
-            title="Copy the last instruction you gave this pane"
-            aria-label="Copy the last prompt"
-            @click="copyTurn('prompt')"
-          >
-            <span v-if="copyLabels.prompt">{{ copyLabels.prompt }}</span>
-            <span v-else class="material-symbols-outlined" aria-hidden="true">format_quote</span>
-          </button>
-          <!-- Fork moved to row 1 (in the Expand arrow's old spot) — it is the more-used
-               control and must not hide behind the toolbar toggle. -->
-          <button
-            v-if="sessionId && agent !== 'codex'"
-            class="cell-btn"
-            :class="CELL_BTN"
-            title="Activity timeline"
-            aria-label="Show activity timeline"
-            @click="timelineOpen = true"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">history</span>
-          </button>
+          <!-- Operator-requested trim (2026-08-22): the ask/exchange menu, the copy-reply /
+               copy-prompt pair and the timeline button are gone from this row — the
+               reading view (row 1's book button) covers reading and copying a reply, and
+               the rest went unused. Fork moved to row 1 earlier for the same reason. -->
           <button v-if="reorderable" class="cell-btn" :class="CELL_BTN" title="Move left" aria-label="Move terminal left" @click="emit('move', -1)">
             <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
           </button>
