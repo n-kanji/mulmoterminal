@@ -17,6 +17,13 @@ const QUERY_PATTERNS: RegExp[] = [
   new RegExp(ESC + "\\[\\?u", "g"), // kitty keyboard flags query
   new RegExp(ESC + "\\[>\\d*q", "g"), // XTVERSION
   new RegExp(ESC + "\\]1[012];\\?(?:" + BEL + "|" + ESC + "\\\\)", "g"), // OSC 10/11/12 fg/bg/cursor color query
+  // OSC 52 clipboard writes. Not a query, but the same replay hazard with a worse blast
+  // radius: this host enables OSC 52 on purpose (infra/tmux.ts), so a copy that happened
+  // HOURS ago sits in the buffer, and replaying it on reload / sleep-wake / reattach
+  // silently overwrites whatever the operator has on the system clipboard right now.
+  // A copy is an event, not screen state — replay restores the screen, so it renders
+  // nothing and loses nothing by dropping these. Live output is untouched.
+  new RegExp(ESC + "\\]52;[^\\x07\\x1b]*(?:" + BEL + "|" + ESC + "\\\\)", "g"),
 ];
 
 export function stripTerminalQueries(data: string): string {

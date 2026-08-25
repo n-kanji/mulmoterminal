@@ -28,6 +28,15 @@ describe("stripTerminalQueries", () => {
     expect(stripTerminalQueries(`${ESC}]11;?${ESC}\\`)).toBe("");
   });
 
+  // A replayed OSC 52 re-executes a COPY: reload / sleep-wake / reattach would overwrite
+  // the operator's current clipboard with whatever was copied when the buffer was written.
+  it("removes OSC 52 clipboard writes (BEL- or ST-terminated), keeping surrounding text", () => {
+    const payload = "QUJDRA".repeat(500); // kilobyte payloads are the designed-for case
+    expect(stripTerminalQueries(`before${ESC}]52;c;${payload}${BEL}after`)).toBe("beforeafter");
+    expect(stripTerminalQueries(`before${ESC}]52;c;${payload}${ESC}\\after`)).toBe("beforeafter");
+    expect(stripTerminalQueries(`${ESC}]52;c;?${BEL}`)).toBe(""); // the query form is a paste-read — strip it too
+  });
+
   it("does NOT strip a DA RESPONSE (multi-param) — only queries", () => {
     const response = `${ESC}[>0;276;0c`;
     expect(stripTerminalQueries(response)).toBe(response);
