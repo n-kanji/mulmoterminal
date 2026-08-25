@@ -152,6 +152,20 @@ describe("TerminalCell", () => {
     expect(term.props("cwd")).toBe("/home/me/picked");
   });
 
+  // A preset chip may RETARGET an already-open launch cell (addCellWithCwd's reuse branch)
+  // instead of mounting a new one: autoLaunch/initialCwd flip on the mounted cell. Firing
+  // only on mount made that chip click a silent no-op — no new pane, nothing launched.
+  it("auto-launches when a chip retargets an already-mounted launch cell", async () => {
+    const w = mountCell(null, { defaultCwd: "/home/me/default" });
+    await flushPromises();
+    expect(w.findComponent({ name: "TerminalView" }).exists()).toBe(false);
+    await w.setProps({ initialCwd: "/home/me/proj", autoLaunch: true });
+    await flushPromises();
+    const term = w.findComponent({ name: "TerminalView" });
+    expect(term.exists()).toBe(true);
+    expect(term.props("cwd")).toBe("/home/me/proj");
+  });
+
   it("disables the go button when the field is empty", async () => {
     const w = mountCell(null, { defaultCwd: null });
     await flushPromises();

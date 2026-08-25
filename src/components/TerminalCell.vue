@@ -393,12 +393,17 @@ function launchIn(dir: string | null) {
 // chip to a running claude pane in that directory, no launcher form stop. One-shot by
 // construction: `launched` flips on the first fire, and a reloaded cell arrives with its
 // session id (launched=true), so this can never re-launch an existing pane.
-onMounted(() => {
+// Watched as well as mounted: a chip click may RETARGET an already-open launch cell
+// (addCellWithCwd's reuse branch) instead of adding one, and that cell is already
+// mounted — the props flip under it, so mount-only firing left the click doing nothing.
+function fireAutoLaunch() {
   if (props.autoLaunch && !launched.value && props.initialCwd) {
     dirInput.value = props.initialCwd;
     launchIn(props.initialCwd);
   }
-});
+}
+onMounted(fireAutoLaunch);
+watch(() => [props.autoLaunch, props.initialCwd], fireAutoLaunch);
 
 // The provider/model picked in the launch form, for the session this cell is about to
 // start. Null — the usual case — means the directory's own default decides. Kept for the
