@@ -14,6 +14,11 @@
 // All lowercase: matching is case-insensitive, since Windows env names are.
 const REMOVED_NAMES = new Set([
   "prefix", // Homebrew yarn wrapper; fatal to nvm (see header comment)
+  // The CLI launcher starts the server with NODE_ENV=production (bin/mulmoterminal.js).
+  // That is the SERVER's run mode, not the user's environment: inherited by a pane it
+  // makes `yarn install` skip devDependencies and flips vite/vitest/express into
+  // production behaviour for whatever the user develops inside that pane.
+  "node_env",
   "init_cwd",
   "node", // npm run points it at the launching node binary
   "project_cwd", // yarn berry

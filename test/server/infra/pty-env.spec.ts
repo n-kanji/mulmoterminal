@@ -18,6 +18,11 @@ describe("isLauncherEnvVar", () => {
       "npm_package_scripts_dev",
       "npm_lifecycle_event",
       "npm_lifecycle_script",
+      // Deliberate divergence from upstream (which keeps NODE_ENV as user environment):
+      // this fork's CLI launcher starts the server with NODE_ENV=production, and a pane
+      // inheriting it gets `yarn install` without devDependencies and production-mode
+      // vite/vitest. A user who wants NODE_ENV in panes can set it in their shell profile.
+      "NODE_ENV",
     ]) {
       expect(isLauncherEnvVar(name), name).toBe(true);
     }
@@ -30,7 +35,7 @@ describe("isLauncherEnvVar", () => {
   });
 
   it("keeps real user environment, including other *_PREFIX vars", () => {
-    for (const name of ["HOMEBREW_PREFIX", "CONDA_PREFIX", "HOME", "SHELL", "PATH", "NVM_DIR", "NODE_ENV", "NODE_OPTIONS"]) {
+    for (const name of ["HOMEBREW_PREFIX", "CONDA_PREFIX", "HOME", "SHELL", "PATH", "NVM_DIR", "NODE_OPTIONS"]) {
       expect(isLauncherEnvVar(name), name).toBe(false);
     }
   });
