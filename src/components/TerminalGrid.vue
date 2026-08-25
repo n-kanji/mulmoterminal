@@ -17,7 +17,7 @@ import type { Launcher, LaunchPick } from "./launchers";
 import { shouldFlipZoom } from "./cellChromeRules";
 
 // Renders the grid, auto-sized to the cell count, fully controlled by GridView:
-// `cells` is the active page's slice (≤9) when nothing is zoomed, and `expandedUid`
+// `cells` is the active page's slice (≤ PAGE_SIZE) when nothing is zoomed, and `expandedUid`
 // the zoomed cell; every change is emitted up by uid.
 // Expanding a cell switches to a filmstrip — the zoomed cell (teleported to the
 // overlay) fills the top, the rest line up in a scrollable strip below. While
@@ -63,6 +63,10 @@ const props = defineProps<{
   // Fork-local (iTerm2 mode): the cell a toolbar preset chip just opened; that cell
   // auto-launches claude in its cwd on mount (TerminalCell's autoLaunch).
   autoLaunchUid?: number | null;
+  // R15: per-cell "send to another page" targets, decided by GridView against the FULL cell
+  // list (same reason as canUp/canDown above — this component only sees the page's slice).
+  // Absent / empty = the cell has nowhere to go and shows no page menu.
+  pageTargets?: Record<number, { page: number; label: string }[]>;
 }>();
 const emit = defineEmits<{
   (e: "session" | "cwd" | "rename", uid: number, value: string): void;
@@ -72,8 +76,10 @@ const emit = defineEmits<{
   (e: "run" | "runSpare", uid: number, command: RunCommand): void;
   (e: "launch", uid: number, pick: LaunchPick): void;
   (e: "move", uid: number, dir: -1 | 1): void;
-  // Fork-local (iTerm2 mode): header-drag dropped onto another cell — move src to its slot.
-  (e: "reorder", uid: number, targetUid: number): void;
+  // Fork-local (iTerm2 mode): header-drag dropped onto another cell — move src to its slot
+  // (target = the cell dropped on). R15 `move-to-page`: the cell's page menu picked a
+  // destination page for the whole column (target = the page number).
+  (e: "reorder" | "move-to-page", uid: number, target: number): void;
   (e: "status", uid: number, value: CellStatus): void;
   (e: "agent", uid: number, value: "claude" | "codex"): void;
   // Shared preset list events — uid-less since they mutate the one config list.
@@ -358,7 +364,9 @@ watch(
           :reorderable="reorderable"
           :auto-launch="cell.uid === autoLaunchUid"
           :name="cell.name ?? null"
+          :page-targets="pageTargets?.[cell.uid]"
           @rename="(value) => emit('rename', cell.uid, value)"
+          @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
           @toggle-expand="emit('toggle-expand', cell.uid)"
           @session="(id) => emit('session', cell.uid, id)"
           @agent="(a) => emit('agent', cell.uid, a)"

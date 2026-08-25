@@ -7,13 +7,14 @@
 // pane. More sessions than MAX_CELLS overflow to the next page instead.
 
 // Ordered smallest→largest: the grid grows through these as terminals are added.
-export const LAYOUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"] as const;
+export const LAYOUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"] as const;
 export type Layout = (typeof LAYOUTS)[number];
 
 // Max columns on one page; bounds the persisted arrays (page size).
-// 10, not 8: the operator's real workspaces run 9-10 columns each (R1), and an
-// 8-column cap is exactly why the Claude desktop app was rejected as a host.
-export const MAX_CELLS = 10;
+// 12, not 8: the operator's real workspaces run 9-10 columns each (R1) and asked
+// for headroom to 12 before a page overflows (2026-08-25) — an 8-column cap is
+// exactly why the Claude desktop app was rejected as a host.
+export const MAX_CELLS = 12;
 
 export function isLayout(v: unknown): v is Layout {
   return typeof v === "string" && (LAYOUTS as readonly string[]).includes(v);
@@ -35,6 +36,6 @@ export function trackStyle(layout: Layout) {
   const { cols } = dims(layout);
   const tracks = Array.from({ length: cols }, () => "1fr").join(" ");
   // 1px, iTerm2-thin (R14): the separators are for parsing columns apart, not for breathing —
-  // at 10 columns every gap pixel is paid ten times over.
+  // at 12 columns every gap pixel is paid twelve times over.
   return { gridTemplateColumns: tracks, gridTemplateRows: "1fr", gap: "1px" };
 }

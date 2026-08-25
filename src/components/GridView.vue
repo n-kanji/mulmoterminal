@@ -26,6 +26,8 @@ import {
   setSortMode,
   moveCell,
   moveCellTo,
+  moveCellToPage,
+  canMoveCellToPage,
   canMoveCell,
   isSealed,
   moveZoom,
@@ -478,6 +480,31 @@ const onReorder = (uid: number, targetUid: number) => {
   const base = state.value.sortMode === "manual" ? state.value : setSortMode(state.value, "manual");
   state.value = moveCellTo(base, uid, targetUid);
 };
+// R15 (operator request 2026-08-25): the pane toolbar's page menu — send a column to another
+// page without forking or relaunching anything. Choosing a page for a column is a placement
+// statement like a drag, so auto mode switches to manual here too.
+const onMoveToPage = (uid: number, page: number) => {
+  const base = state.value.sortMode === "manual" ? state.value : setSortMode(state.value, "manual");
+  state.value = moveCellToPage(base, uid, page);
+};
+// Where each cell's page menu can send it, keyed by uid. Decided here against the FULL cell
+// list (the menu lives in a cell that only knows its page's slice). Unnamed pages read as
+// "N枚目" — the operator's own word for a page — and a named one keeps its name alongside.
+const pageTargetsByUid = computed(() => {
+  const map: Record<number, { page: number; label: string }[]> = {};
+  const total = pages.value;
+  if (total <= 1) return map;
+  const label = (p: number) => {
+    const name = state.value.pages?.[p]?.label?.trim();
+    return name ? `${p + 1}枚目（${name}）` : `${p + 1}枚目`;
+  };
+  for (const c of state.value.cells) {
+    const targets: { page: number; label: string }[] = [];
+    for (let p = 0; p < total; p++) if (canMoveCellToPage(state.value, c.uid, p)) targets.push({ page: p, label: label(p) });
+    if (targets.length > 0) map[c.uid] = targets;
+  }
+  return map;
+});
 const toggleSortMode = () => (state.value = setSortMode(state.value, state.value.sortMode === "auto" ? "manual" : "auto"));
 const switchTo = (page: number) => (state.value = switchPage(state.value, page));
 
@@ -798,6 +825,7 @@ function configureAppearance() {
       :open-session-ids="openSessionIds"
       :open-cwds="openCwds"
       :list-mode="listModeOn"
+      :page-targets="pageTargetsByUid"
       @session="onSession"
       @fork="onFork"
       @agent="onAgent"
@@ -812,6 +840,7 @@ function configureAppearance() {
       @run-spare="onRunSpare"
       @launch="onLaunch"
       @move="onMove"
+      @move-to-page="onMoveToPage"
       @reorder="onReorder"
       @status="onStatus"
     />

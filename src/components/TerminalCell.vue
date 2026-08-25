@@ -108,6 +108,9 @@ const props = defineProps<
     // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button —
     // the session id to branch from. Consumed once (see forkFrom below).
     initialFork?: string | null;
+    // R15: the pages this column can be sent to (grid-decided — the cell knows nothing about
+    // pages). Empty/absent = single page or nowhere to go, and the page menu stays hidden.
+    pageTargets?: { page: number; label: string }[] | null;
   }
 >();
 const emit = defineEmits<
@@ -126,6 +129,8 @@ const emit = defineEmits<
     // Fork-local (iTerm2 mode, R12): branch this cell's conversation into a new column
     // beside it. The grid owns cell creation, so the cell only asks.
     (e: "fork"): void;
+    // R15: send this whole column (session and all) to another page. The grid owns the move.
+    (e: "move-to-page", page: number): void;
   }
 >();
 
@@ -720,6 +725,24 @@ watch(ghMenuOpen, (open) => {
   else document.removeEventListener("mousedown", onGhOutside);
 });
 onUnmounted(() => document.removeEventListener("mousedown", onGhOutside));
+
+// R15: the "send to another page" popover on row 2 — same open/close mechanics as the
+// GitHub menu above. The targets come from the grid (pageTargets); picking one hands the
+// move back up, and this cell simply unmounts from this page and reattaches on the other.
+const pageMenuOpen = ref(false);
+const pageWrap = useTemplateRef<HTMLElement>("pageWrap");
+function pickPage(page: number) {
+  pageMenuOpen.value = false;
+  emit("move-to-page", page);
+}
+function onPageMenuOutside(e: MouseEvent) {
+  if (pageWrap.value && !pageWrap.value.contains(e.target as Node)) pageMenuOpen.value = false;
+}
+watch(pageMenuOpen, (open) => {
+  if (open) document.addEventListener("mousedown", onPageMenuOutside);
+  else document.removeEventListener("mousedown", onPageMenuOutside);
+});
+onUnmounted(() => document.removeEventListener("mousedown", onPageMenuOutside));
 
 // Operator-requested trim (2026-08-22): the ask/exchange machinery, the copy-turn pair
 // and the timeline overlay were removed with their toolbar buttons — the reading view
@@ -1551,6 +1574,41 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                copy-prompt pair and the timeline button are gone from this row — the
                reading view (row 1's book button) covers reading and copying a reply, and
                the rest went unused. Fork moved to row 1 earlier for the same reason. -->
+          <!-- R15 (operator request 2026-08-25): send this column to another page. Hidden on a
+               single-page grid (no targets). Sits behind the toolbar toggle like Expand —
+               used when reorganizing, not every minute. -->
+          <span v-if="pageTargets?.length" ref="pageWrap" class="relative inline-flex flex-none">
+            <button
+              type="button"
+              data-testid="cell-move-page"
+              class="cell-btn"
+              :class="CELL_BTN"
+              title="このペインを別のページへ移動"
+              aria-label="Move this pane to another page"
+              aria-haspopup="true"
+              :aria-expanded="pageMenuOpen"
+              @click.stop="pageMenuOpen = !pageMenuOpen"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">drive_file_move</span>
+            </button>
+            <div
+              v-if="pageMenuOpen"
+              data-testid="cell-move-page-menu"
+              class="absolute left-0 top-full z-20 mt-1 flex min-w-[132px] flex-col rounded-md border border-border bg-panel p-1 shadow-[0_6px_18px_rgba(0,0,0,0.35)]"
+              @keydown.escape="pageMenuOpen = false"
+            >
+              <button
+                v-for="t in pageTargets"
+                :key="t.page"
+                type="button"
+                data-testid="cell-move-page-item"
+                class="cursor-pointer rounded-[4px] border-none bg-transparent px-2 py-1.5 text-left font-sans text-[12px] text-secondary hover:bg-hover hover:text-fg"
+                @click.stop="pickPage(t.page)"
+              >
+                {{ t.label }}
+              </button>
+            </div>
+          </span>
           <!-- Operator-requested swap (2026-08-22): the reorder arrows are gone (the header
                drag reorders columns), and the Expand button that left row 1 lives HERE
                instead — rare enough to sit behind the toolbar toggle, but still one click

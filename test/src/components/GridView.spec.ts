@@ -518,10 +518,12 @@ describe("GridView column and page keys (R3)", () => {
 // R1 (workspaces). Two things GridView owns rather than gridTabs: WHICH saved grid this browser
 // window reads, and the fact that naming and pinning a page happen on the tab row that already
 // existed — no second toolbar row, because every row costs each column readable lines.
-const TabsGridStub = { name: "TerminalGrid", props: ["cells", "expandedUid"], template: '<div class="tabs-stub" />' };
+const TabsGridStub = { name: "TerminalGrid", props: ["cells", "expandedUid", "pageTargets"], template: '<div class="tabs-stub" />' };
 
+// One page's worth of sessions plus one, so the grid always shows two tabs.
+const overOnePage = PAGE_SIZE + 1;
 const elevenSessions = (from: number) =>
-  Array.from({ length: 11 }, (_, i) => ({ uid: from + i, session: `${String((from + i) % 10).repeat(8)}-cccc-cccc-cccc-cccccccccccc`, cwd: "/w" }));
+  Array.from({ length: overOnePage }, (_, i) => ({ uid: from + i, session: `${String((from + i) % 10).repeat(8)}-cccc-cccc-cccc-cccccccccccc`, cwd: "/w" }));
 
 const mountTabs = async () => {
   const w = mount((await import("../../../src/components/GridView.vue")).default, {
@@ -546,7 +548,7 @@ describe("GridView workspaces (R1)", () => {
     await flushPromises();
     // …and what it saves lands on its own key, leaving the default window's grid alone.
     expect(JSON.parse(localStorage.getItem("grid_v2:right") ?? "{}").cells).toHaveLength(1);
-    expect(JSON.parse(localStorage.getItem("grid_v2") ?? "{}").cells).toHaveLength(11); // still eleven
+    expect(JSON.parse(localStorage.getItem("grid_v2") ?? "{}").cells).toHaveLength(overOnePage); // untouched
     w.unmount();
   });
 
@@ -575,17 +577,34 @@ describe("GridView workspaces (R1)", () => {
     w.unmount();
   });
 
+  // R15: the pane toolbar's page menu, wired end to end — GridView decides the targets and
+  // applies the move; the cell only asks.
+  it("sends a column to another page from the pane menu (move-to-page)", async () => {
+    localStorage.setItem("grid_v2", JSON.stringify({ cells: elevenSessions(0), page: 0, sortMode: "manual" }));
+    const w = await mountTabs();
+    const grid = w.findComponent(TabsGridStub);
+    // Every column is offered the one OTHER page, under the operator's own word for it.
+    expect(grid.props("pageTargets")[0]).toEqual([{ page: 1, label: "2枚目" }]);
+    expect(grid.props("pageTargets")[overOnePage - 1]).toEqual([{ page: 0, label: "1枚目" }]);
+    grid.vm.$emit("move-to-page", 0, 1);
+    await flushPromises();
+    const saved = JSON.parse(localStorage.getItem("grid_v2") ?? "{}");
+    expect(saved.cells).toHaveLength(overOnePage); // nothing forked or dropped
+    expect(saved.cells.at(-1).uid).toBe(0); // the column now lives on page 2
+    w.unmount();
+  });
+
   it("pins a page from the same tab, and a pinned page stops closing a column pulling the next page's terminal in", async () => {
     localStorage.setItem("grid_v2", JSON.stringify({ cells: [...elevenSessions(0), ...elevenSessions(20)], page: 0, sortMode: "manual" }));
     const w = await mountTabs();
     const grid = w.findComponent(TabsGridStub);
     const onPage0 = () => grid.props("cells").map((c: { uid: number }) => c.uid);
-    expect(onPage0()).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(onPage0()).toEqual(Array.from({ length: PAGE_SIZE }, (_, i) => i));
     await w.findAll("nav[aria-label='Grid tabs'] .grid-tab")[0].trigger("contextmenu");
     grid.vm.$emit("close", 0);
     await flushPromises();
-    // Nine columns left on the pinned page — uid 20 did NOT flow back from page 2.
-    expect(onPage0()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    // One column short on the pinned page — nothing flowed back from page 2.
+    expect(onPage0()).toEqual(Array.from({ length: PAGE_SIZE - 1 }, (_, i) => i + 1));
     expect(JSON.parse(localStorage.getItem("grid_v2") ?? "{}").pages[0].pinned).toBe(true);
     w.unmount();
   });

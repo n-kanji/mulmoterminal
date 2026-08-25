@@ -3,8 +3,8 @@ import { isRecord } from "../../common/isRecord";
 import { paneStateOf, type PaneState, type WaitKind } from "../../common/paneState";
 import { MAX_CELLS } from "./gridLayout";
 
-// The grid is ONE flat, ordered list of terminal cells, split into pages of 9
-// (the tabs). Closing a cell reflows the whole list so later pages pack forward
+// The grid is ONE flat, ordered list of terminal cells, split into pages of
+// PAGE_SIZE (the tabs). Closing a cell reflows the whole list so later pages pack forward
 // into the gap (terminals flow across page boundaries); "+ Terminal" appends a
 // launch cell, overflowing into a new page when the last one is full. GridView
 // owns a single GridState ref and drives it through these pure transforms;
@@ -90,9 +90,9 @@ export interface GridState {
 }
 
 // Fork-local (iTerm2 mode): a page holds MAX_CELLS full-height columns (see
-// gridLayout.ts) — 10, matching the operator's real 9-10 column workspaces.
+// gridLayout.ts) — 12, the operator's requested per-page headroom (2026-08-25).
 export const PAGE_SIZE = MAX_CELLS;
-export const MAX_TERMINALS = 80; // 8 pages
+export const MAX_TERMINALS = PAGE_SIZE * 8; // 8 pages, as before the 10 -> 12 resize
 // The array can hold more entries than terminals: a pinned page keeps its width with reserved
 // slots (see the workspaces section), so a fully reserved grid is MAX_TERMINALS slots on top of
 // the terminals. Only used to bound what a persisted blob may claim.
@@ -316,6 +316,40 @@ export function moveCellTo(state: GridState, uid: number, targetUid: number): Gr
   const [moved] = cells.splice(from, 1);
   cells.splice(to, 0, moved);
   return { ...state, cells };
+}
+
+// R15 (operator request 2026-08-25): "send this column to another page" — the pane toolbar's
+// page menu. The cell just changes SLOTS in the flat list, so the session is untouched: nothing
+// is forked or relaunched, and the pane reattaches when its new page is looked at, exactly as
+// any off-page column always has. Whether a cell can go decides the menu; the move itself is
+// below.
+//
+// A sealed (pinned) target only accepts a column into a reserved hole — full means full, that
+// is the pin's promise. An elastic page has no such promise: full there means the incoming
+// column lands as the page's LAST slot and the overflow reflows on, the same cascade closing
+// and inserting have always caused.
+export function canMoveCellToPage(state: GridState, uid: number, targetPage: number): boolean {
+  const from = state.cells.findIndex((c) => c.uid === uid);
+  if (from < 0 || isHole(state.cells[from]) || !isOccupied(state.cells[from])) return false;
+  if (targetPage < 0 || targetPage >= pageCount(state.cells.length) || pageOfIndex(from) === targetPage) return false;
+  return !(isReservedPage(state, targetPage) && freeSlot(state, targetPage) < 0);
+}
+
+export function moveCellToPage(state: GridState, uid: number, targetPage: number): GridState {
+  if (!canMoveCellToPage(state, uid, targetPage)) return state;
+  const from = state.cells.findIndex((c) => c.uid === uid);
+  const cell = state.cells[from];
+  // removeAt leaves a hole on a sealed source page, so its boundary holds; recomputing the
+  // destination on the interim state absorbs the index shift an elastic removal causes.
+  const interim: GridState = { ...state, ...removeAt(state, from) };
+  let at = freeSlot(interim, targetPage);
+  if (at < 0) at = targetPage * PAGE_SIZE + PAGE_SIZE - 1; // full elastic page: land last, overflow reflows on
+  // The trailing OPEN launch cell stays the last real cell — landing after it would strand
+  // "+ Terminal"'s cancel target mid-list.
+  const open = trailingLaunchIndex(interim);
+  if (open >= 0 && pageOfIndex(open) === targetPage && open < at) at = open;
+  const placed = insertAt(interim, Math.min(at, interim.cells.length), cell);
+  return placed ? clampPage({ ...interim, cells: placed }) : state;
 }
 
 // Fork-local (iTerm2 mode): a toolbar preset chip opens a NEW COLUMN already pointed at
