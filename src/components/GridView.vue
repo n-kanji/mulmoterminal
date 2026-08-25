@@ -780,38 +780,40 @@ function configureAppearance() {
       @undo-remove-preset="onUndoRemovePreset"
       @reorder-preset="onReorderPreset"
       @pick-launch="onPickAndLaunch"
-    />
-    <nav
-      v-if="pages > 1 && expandedUid === null"
-      class="flex-none flex items-center gap-1 h-[26px] px-2 bg-panel border-b border-border"
-      aria-label="Grid tabs"
     >
-      <template v-for="p in pages" :key="p">
-        <input
-          v-if="renamingPage === p - 1"
-          :ref="bindRenameInput"
-          v-model="renameDraft"
-          class="border border-accent bg-base text-fg font-mono text-xs w-[104px] py-[3px] px-2 rounded-md outline-none"
-          :maxlength="MAX_PAGE_LABEL"
-          aria-label="Page name"
-          @keydown.enter.prevent="commitRename"
-          @keydown.esc.prevent="cancelRename"
-          @blur="commitRename"
-        />
-        <button
-          v-else
-          class="grid-tab border border-border bg-base text-muted font-mono text-xs min-w-[28px] py-[3px] px-2 rounded-md cursor-pointer inline-flex items-center gap-1 hover:bg-hover hover:text-fg aria-pressed:bg-hover aria-pressed:text-fg aria-pressed:border-accent"
-          :aria-pressed="p - 1 === state.page"
-          :title="tabTitle(p - 1)"
-          @click="switchTo(p - 1)"
-          @dblclick="startRename(p - 1)"
-          @contextmenu.prevent="togglePin(p - 1)"
-        >
-          <span v-if="isPagePinned(state, p - 1)" class="material-symbols-outlined text-[13px] leading-none">keep</span>
-          {{ pageLabel(state, p - 1) }}
-        </button>
+      <!-- Page tabs, in the toolbar row (operator request 2026-08-25): a row of their own cost
+           26px of pane reading area. Same gestures as before — click switch, double-click
+           rename, right-click pin. Hidden while zoomed (`page` is unused there). -->
+      <template #tabs>
+        <nav v-if="pages > 1 && expandedUid === null" class="flex flex-none items-center gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Grid tabs">
+          <template v-for="p in pages" :key="p">
+            <input
+              v-if="renamingPage === p - 1"
+              :ref="bindRenameInput"
+              v-model="renameDraft"
+              class="border border-accent bg-base text-fg font-mono text-xs w-[104px] py-[3px] px-2 rounded-md outline-none"
+              :maxlength="MAX_PAGE_LABEL"
+              aria-label="Page name"
+              @keydown.enter.prevent="commitRename"
+              @keydown.esc.prevent="cancelRename"
+              @blur="commitRename"
+            />
+            <button
+              v-else
+              class="grid-tab border border-border bg-base text-muted font-mono text-xs min-w-[28px] py-[3px] px-2 rounded-md cursor-pointer inline-flex items-center gap-1 hover:bg-hover hover:text-fg aria-pressed:bg-hover aria-pressed:text-fg aria-pressed:border-accent"
+              :aria-pressed="p - 1 === state.page"
+              :title="tabTitle(p - 1)"
+              @click="switchTo(p - 1)"
+              @dblclick="startRename(p - 1)"
+              @contextmenu.prevent="togglePin(p - 1)"
+            >
+              <span v-if="isPagePinned(state, p - 1)" class="material-symbols-outlined text-[13px] leading-none">keep</span>
+              {{ pageLabel(state, p - 1) }}
+            </button>
+          </template>
+        </nav>
       </template>
-    </nav>
+    </AppToolbar>
     <TerminalGrid
       class="flex-1 min-h-0 min-w-0"
       :cells="renderCells"

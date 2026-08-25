@@ -54,7 +54,12 @@ const SettingsStub = {
   template: '<div class="settings-stub" />',
 };
 // A toolbar stub that lets us open the settings modal (GridView: @settings="showSettings = true").
-const ToolbarStub = { name: "AppToolbar", emits: ["settings"], template: '<button class="open-settings" @click="$emit(\'settings\')" />' };
+// Renders the tabs slot: the page tabs live inside the real toolbar's row now.
+const ToolbarStub = {
+  name: "AppToolbar",
+  emits: ["settings"],
+  template: '<div><button class="open-settings" @click="$emit(\'settings\')" /><slot name="tabs" /></div>',
+};
 
 const mountGrid = async () => {
   const w = mount((await import("../../../src/components/GridView.vue")).default, {

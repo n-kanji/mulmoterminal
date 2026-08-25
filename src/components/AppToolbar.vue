@@ -248,6 +248,10 @@ function showPrs(): void {
         <span class="material-symbols-outlined text-[13px]" aria-hidden="true">add</span>
       </button>
     </div>
+    <!-- Page tabs (operator request 2026-08-25): the grid's 1枚目/2枚目 switcher lives IN this
+         row — a tab row of its own cost 26px of pane reading area for two small buttons.
+         Slot-provided by GridView, which owns the pages (rename, pin, switching). -->
+    <slot name="tabs" />
     <nav class="flex min-w-0 items-center gap-[3px] overflow-x-auto" aria-label="Views">
       <!-- Both views: the pair that switches between them. -->
       <LauncherButton v-if="!IT2_MODE" icon="chat" title="Chat" label="Chat" :active="chatActive" @click="showChat" />
