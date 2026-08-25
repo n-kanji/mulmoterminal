@@ -32,6 +32,7 @@ import {
   activityStatus,
   countByStatus,
   cancelableLaunchUid,
+  cancelableLaunchUids,
   zoomedUid,
   visibleCells,
   parseGridState,
@@ -297,6 +298,25 @@ describe("cancelableLaunchUid", () => {
   it("is null when the last cell is occupied (running session or command)", () => {
     expect(cancelableLaunchUid(make(running(2)))).toBeNull();
     expect(cancelableLaunchUid(make([...running(1), { uid: 1, session: null, cwd: null, command: CMD }]))).toBeNull();
+  });
+});
+
+describe("cancelableLaunchUids (per-launcher close buttons)", () => {
+  const CMD: RunCommand = { source: "script", index: 0, label: "Build", cwd: "/x" };
+  it("includes a mid-grid launcher the trailing-only rule misses (R1 insert on the viewed page)", () => {
+    const s = make([cell(0, U(0)), cell(7), cell(1, U(1))]);
+    expect(cancelableLaunchUid(s)).toBeNull(); // trailing rule: last real cell is running
+    expect(cancelableLaunchUids(s)).toEqual([7]); // but the launcher still gets its own close
+  });
+  it("lists every open launcher, and never a command cell or reserved hole", () => {
+    const s = make([cell(3), cell(0, U(0)), { uid: 9, session: null, cwd: null, hole: true }, { uid: 1, session: null, cwd: null, command: CMD }, cell(4)]);
+    expect(cancelableLaunchUids(s)).toEqual([3, 4]);
+  });
+  it("is empty for the sole entry cell (nothing to cancel)", () => {
+    expect(cancelableLaunchUids(make([cell(0)]))).toEqual([]);
+  });
+  it("keeps a launcher with a picked dir closable (dir chosen but not started)", () => {
+    expect(cancelableLaunchUids(make([...running(1), cell(5, null, "/proj/a")]))).toEqual([5]);
   });
 });
 

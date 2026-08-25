@@ -407,6 +407,16 @@ export function cancelableLaunchUid(state: GridState): number | null {
   return open >= 0 && realCells(state.cells).length > 1 ? state.cells[open].uid : null;
 }
 
+// Fork-local (iTerm2 mode): ALL open launch cells, for the launcher's in-cell close button.
+// R1 inserts a new launcher into the page in front of the operator, so it can sit mid-grid
+// where trailingLaunchIndex never looks — without its own close button such a launcher had
+// no way out (operator report 2026-08-25). The sole entry cell is still excluded, and the
+// toolbar's "+ cancels" toggle keeps the stricter trailing-only rule above.
+export function cancelableLaunchUids(state: GridState): number[] {
+  if (realCells(state.cells).length <= 1) return [];
+  return state.cells.filter((c) => isLaunchCell(c)).map((c) => c.uid);
+}
+
 export function setSession(state: GridState, uid: number, id: string | null): GridState {
   // R12: an id means the fork request was served — spend it, so a later reconnect of this
   // cell resumes the branch rather than forking the source a second time.

@@ -34,13 +34,13 @@ vi.mock("../../../src/components/LauncherCell.vue", () => ({
 
 const cell = (uid: number, session: string | null = null, cwd: string | null = null): Cell => ({ uid, session, cwd });
 const cmdCell = (uid: number, command: NonNullable<Cell["command"]>): Cell => ({ uid, session: null, cwd: null, command });
-const mountGrid = (cells: Cell[], expandedUid: number | null = null, cancelUid: number | null = null, reorderable = false) =>
+const mountGrid = (cells: Cell[], expandedUid: number | null = null, cancelUids: number[] = [], reorderable = false) =>
   mount(TerminalGrid, {
     props: {
       cells,
       expandedUid,
       listRows: [],
-      cancelUid,
+      cancelUids,
       defaultCwd: "/work",
       presets: [],
       launchers: [],
@@ -79,7 +79,7 @@ const mountCockpit = (cells: Cell[], expandedUid: number, listRows: CockpitRow[]
       cells,
       expandedUid,
       listRows,
-      cancelUid: null,
+      cancelUids: [],
       defaultCwd: "/work",
       presets: [],
       launchers: [],
@@ -115,14 +115,14 @@ describe("TerminalGrid (page renderer)", () => {
     expect(w.emitted("toggle-expand")?.[0]).toEqual([7]);
   });
 
-  it("marks only the cell matching cancelUid as cancellable", () => {
-    const cs = cellsOf(mountGrid([cell(0, "s0"), cell(1)], null, 1));
+  it("marks only the cells listed in cancelUids as cancellable", () => {
+    const cs = cellsOf(mountGrid([cell(0, "s0"), cell(1)], null, [1]));
     expect(cs[0].props("cancellable")).toBe(false);
     expect(cs[1].props("cancellable")).toBe(true);
   });
 
   it("passes reorderable through and re-emits move/status tagged with uid", () => {
-    const w = mountGrid([cell(7, "s")], null, null, true);
+    const w = mountGrid([cell(7, "s")], null, [], true);
     expect(cellsOf(w)[0].props("reorderable")).toBe(true);
     cellsOf(w)[0].vm.$emit("move", 1);
     cellsOf(w)[0].vm.$emit("status", "waiting");

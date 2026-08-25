@@ -48,7 +48,8 @@ const props = defineProps<{
   expandedUid: number | null;
   // A text row per cell for the cockpit list shown beside the expanded terminal.
   listRows: CockpitRow[];
-  cancelUid: number | null;
+  // Launch cells that may dismiss themselves (all open launchers except the sole entry cell).
+  cancelUids: readonly number[];
   defaultCwd: string | null;
   presets: CwdPreset[];
   launchers: Launcher[];
@@ -364,7 +365,7 @@ watch(
           :home="home"
           :open-session-ids="openSessionIds"
           :open-cwds="openCwds"
-          :cancellable="cell.uid === cancelUid"
+          :cancellable="cancelUids.includes(cell.uid)"
           :reorderable="reorderable"
           :auto-launch="cell.uid === autoLaunchUid"
           :name="cell.name ?? null"

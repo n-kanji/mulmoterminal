@@ -50,6 +50,7 @@ import {
   activityStatus,
   countByStatus,
   cancelableLaunchUid,
+  cancelableLaunchUids,
   pageCount,
   zoomedUid,
   runningCount,
@@ -354,9 +355,12 @@ const listRows = computed(() =>
   }),
 );
 // The cancelable trailing launch cell's uid (null when there's nothing to cancel):
-// drives both the toolbar's cancel state and the launcher's in-cell close button.
+// drives the toolbar's "+ cancels the open launcher" toggle.
 const cancelUid = computed(() => cancelableLaunchUid(state.value));
 const launchOpen = computed(() => cancelUid.value !== null);
+// Every open launcher's in-cell close button. Broader than cancelUid on purpose: R1 can
+// leave a launcher mid-grid where the trailing-only rule never sees it.
+const cancelUids = computed(() => cancelableLaunchUids(state.value));
 // Session ids currently held by cells (across all pages — off-page cells stay
 // live as background PTYs). A launcher uses this to warn before resuming a
 // session that's already open, since attaching would detach the other cell.
@@ -820,7 +824,7 @@ function configureAppearance() {
       :expanded-uid="expandedUid"
       :auto-launch-uid="quickLaunchUid"
       :list-rows="listRows"
-      :cancel-uid="cancelUid"
+      :cancel-uids="cancelUids"
       :default-cwd="defaultCwd"
       :presets="presets"
       :launchers="launchers"
