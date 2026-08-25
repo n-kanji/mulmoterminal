@@ -28,7 +28,15 @@ import { handleCommandFrame } from "../session/pty-connection.js";
 import { closeWithError } from "../session/ws-frames.js";
 import { ProviderRefusedError } from "../session/provider-env.js";
 import { sessionExistsOnDisk } from "../session/session-reads.js";
-import { canStartLauncher, resolveFork, resolveReattachableId, resolveSession, type ForkPlan, type SessionResolution } from "../session/session-resolve.js";
+import {
+  canStartLauncher,
+  resolveFork,
+  resolveReattachableId,
+  resolveSession,
+  resumeLossNotice,
+  type ForkPlan,
+  type SessionResolution,
+} from "../session/session-resolve.js";
 import type { PtyEntry } from "../session/types.js";
 import type { SpawnClaudePty, SpawnCodexPty, SpawnCommandPty, SpawnLauncherPty, ResolveLauncher } from "../session/spawners.js";
 import { takeAgentPrompt } from "../session/agent-prompt-queue.js";
@@ -312,6 +320,16 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
   // resolved cwd the new PTY will spawn in.
   const reportedCwd = live?.cwd ?? cwd;
   ws.send(JSON.stringify({ type: "session", id: sessionId, cwd: reportedCwd }));
+
+  // A requested id that could not be served minted a fresh one (see resolveSession). Never
+  // do that silently: during the 2026-08-25 account-switch fleet restart it read as "my
+  // conversation vanished". Log which pane lost its thread, and say so in the pane itself —
+  // an output frame written above claude's own paint, so it stays in the scrollback.
+  const lost = resumeLossNotice(requested, plan, fork);
+  if (lost) {
+    console.warn(`[ws] ${lost} (cwd: ${cwd})`);
+    ws.send(JSON.stringify({ type: "output", data: `\r\n\x1b[31m[${lost}]\x1b[0m\r\n` }));
+  }
 
   // Before touching the Keychain for a sandbox session, refresh it if the token expired
   // (macOS refreshes into the Keychain, not the file — so an untouched export can be a

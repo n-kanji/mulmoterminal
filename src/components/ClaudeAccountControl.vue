@@ -9,11 +9,13 @@ import { useClaudeAccount } from "../composables/useClaudeAccount";
 
 const { current, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin } = useClaudeAccount();
 
-// Default ON: the whole point of switching (a usage limit hit) is moving the EXISTING
-// panes — each restarts and resumes its own conversation on the new account. The
-// auto-continue is selective server-side (working / limit-stuck panes only), so parked or
-// finished panes come back quiet. Off = the conservative v1 behaviour, new panes only.
-const restartPanes = ref(true);
+// Default OFF (operator decision 2026-08-25): a switch must not touch the existing panes
+// unless the operator asks. The fleet restart moves ALL claude panes — detached pages
+// included — and a pane whose id has no transcript comes back as a new conversation, so
+// an everyday switch with it on cost more than it saved. ON is the usage-limit move,
+// chosen explicitly: every pane restarts and resumes on the new account, with the
+// selective auto-continue nudge (working / limit-stuck panes only).
+const restartPanes = ref(false);
 
 const root = useTemplateRef<HTMLElement>("root");
 // Re-read on every open: a login typed into any pane changes the answer without telling us.

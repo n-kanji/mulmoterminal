@@ -66,6 +66,23 @@ export function resolveFork(from: string | null, asked: boolean, facts: ForkFact
   return { kind: "fork", from };
 }
 
+// ── telling the operator a requested session could not be continued ────────────
+
+// The notice for a pane whose requested session id could NOT be served — no live pty, no
+// tmux session, no on-disk transcript — so the connection minted a fresh id. The mint
+// itself is right (see resolveSession: an unservable id cannot be reused), but doing it
+// SILENTLY read as "my conversation vanished" when the 2026-08-25 account-switch fleet
+// restart hit a pane whose id had no transcript. null when nothing was lost: no id was
+// requested, the id was actually served (reattach, resume, or a live tmux session kept
+// it), or this is a fork (a fork mints its own id by design).
+export function resumeLossNotice(requested: string | null, resolution: SessionResolution, fork: boolean): string | null {
+  if (!requested || fork || resolution.sessionId === requested) return null;
+  return (
+    `could not continue session ${requested} — no transcript found for it here. ` +
+    `This pane is a NEW conversation (${resolution.sessionId}); if the old one had any turns it is still on disk — run /resume in this pane to look for it.`
+  );
+}
+
 // ── the same decision for the two non-claude terminals ─────────────────────────
 
 /** Which id a launcher or codex connection runs as. A live pty in this process always

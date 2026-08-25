@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { resolveSession, type SessionFacts, resolveFork, resolveReattachableId, canStartLauncher } from "../../../server/session/session-resolve.js";
+import {
+  resolveSession,
+  type SessionFacts,
+  resolveFork,
+  resolveReattachableId,
+  resumeLossNotice,
+  canStartLauncher,
+} from "../../../server/session/session-resolve.js";
 
 const FIXED = "fresh-minted-id";
 const mint = () => FIXED;
@@ -37,6 +44,31 @@ describe("resolveSession", () => {
 
   it("prefers a live pty over tmux/disk", () => {
     expect(resolveSession("s1", facts({ hasLivePty: true, tmuxAlive: true, onDisk: true }), mint)).toEqual({ reattachId: "s1", resume: null, sessionId: "s1" });
+  });
+});
+
+describe("resumeLossNotice", () => {
+  it("names both ids when a requested session was silently replaced by a minted one", () => {
+    // The 2026-08-25 account-switch case: the fleet restart reconnected a pane whose id
+    // had no transcript, and the pane came back as a blank new conversation with no word.
+    const notice = resumeLossNotice("s1", resolveSession("s1", facts(), mint), false);
+    expect(notice).toContain("s1");
+    expect(notice).toContain(FIXED);
+    expect(notice).toContain("/resume");
+  });
+
+  it("is null when the requested id was actually served (reattach / resume / live tmux)", () => {
+    expect(resumeLossNotice("s1", resolveSession("s1", facts({ hasLivePty: true }), mint), false)).toBeNull();
+    expect(resumeLossNotice("s1", resolveSession("s1", facts({ onDisk: true }), mint), false)).toBeNull();
+    expect(resumeLossNotice("s1", resolveSession("s1", facts({ tmuxAlive: true }), mint), false)).toBeNull();
+  });
+
+  it("is null when no id was requested (a deliberately fresh session)", () => {
+    expect(resumeLossNotice(null, resolveSession(null, facts(), mint), false)).toBeNull();
+  });
+
+  it("is null for a fork — a fork mints its own id by design", () => {
+    expect(resumeLossNotice("s1", resolveSession("s1", facts(), mint), true)).toBeNull();
   });
 });
 
