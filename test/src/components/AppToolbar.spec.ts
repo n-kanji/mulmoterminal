@@ -52,22 +52,22 @@ describe("AppToolbar per-view buttons", () => {
     expect(labelsOf(await mountAt("/terminals"))).not.toContain("Chat");
   });
 
-  // The reference surface you consult WHILE supervising sits in the grid's own nav rather
-  // than the single view's content cluster. (iTerm2 mode: Worklog is hidden outright.)
-  it("offers Pull requests only in the grid, and Worklog nowhere", async () => {
-    expect(labelsOf(await mountAt("/terminals"))).toContain("Pull requests");
-    expect(labelsOf(await mountAt("/terminals"))).not.toContain("Worklog");
-    expect(labelsOf(await mountAt("/chat"))).not.toContain("Pull requests");
-    expect(labelsOf(await mountAt("/chat"))).not.toContain("Worklog");
+  // iTerm2 mode (operator request 2026-08-25): Pull requests, Worklog and the sort toggle are
+  // hidden everywhere — the operator arranges columns by hand and does not review PRs here.
+  it("hides Pull requests, Worklog and the sort toggle everywhere", async () => {
+    for (const path of ["/terminals", "/chat"]) {
+      const labels = labelsOf(await mountAt(path));
+      expect(labels).not.toContain("Pull requests");
+      expect(labels).not.toContain("Worklog");
+      expect(labels).not.toContain("Toggle grid cell ordering");
+    }
   });
 
   it("offers the grid-running controls only in the grid", async () => {
     const grid = labelsOf(await mountAt("/terminals"));
     expect(grid).toContain("New terminal");
-    expect(grid).toContain("Toggle grid cell ordering");
     const single = labelsOf(await mountAt("/chat"));
     expect(single).not.toContain("New terminal");
-    expect(single).not.toContain("Toggle grid cell ordering");
   });
 
   // The overlays render BELOW the header (`top-10`), so the header stays on screen while one
@@ -80,7 +80,7 @@ describe("AppToolbar per-view buttons", () => {
     await settle();
 
     const labels = labelsOf(mount(AppToolbar, { global: { plugins: [router], stubs: { NotificationBell: true, RemoteHostControl: true } } }));
-    expect(labels).toContain("Pull requests");
+    expect(labels).toContain("New terminal");
     expect(labels).not.toContain("Worklog");
     expect(labels).not.toContain("Collections");
   });
@@ -116,6 +116,8 @@ describe("AppToolbar per-view buttons", () => {
     prsGotoIndex();
     await settle();
     const onPrs = mount(AppToolbar, { global: { plugins: [router], stubs: { NotificationBell: true, RemoteHostControl: true } } });
-    expect(activeLabels(onPrs)).toEqual(["Pull requests"]);
+    // The PR button itself is hidden (iTerm2 mode), so a PR overlay highlights nothing —
+    // what matters is that no OTHER button lights up either.
+    expect(activeLabels(onPrs)).toEqual([]);
   });
 });

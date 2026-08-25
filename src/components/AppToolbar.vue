@@ -281,8 +281,9 @@ function showPrs(): void {
           @click="showFavorite(s)"
         />
       </template>
-      <!-- Grid only (#886): branches under supervision are a grid concern. -->
-      <LauncherButton v-if="inGrid" icon="call_merge" title="Pull requests" label="Pull requests" :active="prsActive" @click="showPrs" />
+      <!-- Grid only (#886): branches under supervision are a grid concern. Hidden in iTerm2
+           mode (operator request 2026-08-25): the operator does not review PRs from here. -->
+      <LauncherButton v-if="inGrid && !IT2_MODE" icon="call_merge" title="Pull requests" label="Pull requests" :active="prsActive" @click="showPrs" />
       <LauncherButton
         v-if="inGrid && !IT2_MODE"
         icon="history_edu"
@@ -299,8 +300,10 @@ function showPrs(): void {
         :active="addTerminalActive"
         @click="emit('add-terminal')"
       />
+      <!-- Hidden in iTerm2 mode (operator request 2026-08-25): the operator arranges columns
+           by hand (tile-first workflow) and never uses the auto attention-sort. -->
       <LauncherButton
-        v-if="inGrid"
+        v-if="inGrid && !IT2_MODE"
         :icon="autoSort ? 'sort' : 'swap_horiz'"
         :title="
           autoSort
@@ -340,7 +343,11 @@ function showPrs(): void {
     <ClaudeAccountControl class="ml-auto" />
     <NotificationBell />
     <RemoteHostControl v-if="!IT2_MODE" />
-    <div v-if="updateBadge" ref="updateRoot" class="relative mr-1 flex-none">
+    <!-- Hidden in iTerm2 mode (operator request 2026-08-25): this fork's checkout is always
+         "behind origin" while developing, so the badge is permanent noise — and its
+         `git pull` suggestion is wrong for a fork mid-work. Upstream (receptron) security
+         fixes are followed deliberately, by git, in dev sessions instead. -->
+    <div v-if="updateBadge && !IT2_MODE" ref="updateRoot" class="relative mr-1 flex-none">
       <button
         type="button"
         class="inline-flex items-center gap-1 rounded-full border border-accent px-2 py-0.5 text-[12px] leading-none text-accent hover:bg-selected"
