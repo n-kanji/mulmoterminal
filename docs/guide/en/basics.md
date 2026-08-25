@@ -74,7 +74,7 @@ The header of a running cell has two rows. Together they capture that agent's **
 
 ## Tiling many, pages, and reordering
 
-- Add cells with **New terminal (＋)** in the toolbar. Up to **9 cells** per page; overflow moves to the next page (tab).
+- Add cells with **New terminal (＋)** in the toolbar. Up to **12 cells** per page; overflow moves to the next page (tab).
 - Enter reorder mode with **Toggle grid cell ordering**, then swap positions with each cell's `◀ ▶`.
 
 ![Agents running in parallel](../images/grid-2x2.png)

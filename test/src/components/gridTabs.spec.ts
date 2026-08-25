@@ -157,7 +157,7 @@ describe("moveCellTo (iTerm2 mode drag & drop)", () => {
   });
 });
 
-// R15 (operator request 2026-08-25): the pane toolbar's "send to another page" menu. The cell
+// Page-move (operator request 2026-08-25): the pane toolbar's "send to another page" menu. The cell
 // changes slots in the flat list — the session is never forked or relaunched.
 describe("moveCellToPage (send a column to another page)", () => {
   const pin = (cells: Cell[], page: number, extra: Partial<GridState> = {}) => togglePagePin(make(cells, extra), page);

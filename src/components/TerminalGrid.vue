@@ -63,7 +63,7 @@ const props = defineProps<{
   // Fork-local (iTerm2 mode): the cell a toolbar preset chip just opened; that cell
   // auto-launches claude in its cwd on mount (TerminalCell's autoLaunch).
   autoLaunchUid?: number | null;
-  // R15: per-cell "send to another page" targets, decided by GridView against the FULL cell
+  // Page-move (operator request 2026-08-25): per-cell "send to another page" targets, decided by GridView against the FULL cell
   // list (same reason as canUp/canDown above — this component only sees the page's slice).
   // Absent / empty = the cell has nowhere to go and shows no page menu.
   pageTargets?: Record<number, { page: number; label: string }[]>;
@@ -77,7 +77,7 @@ const emit = defineEmits<{
   (e: "launch", uid: number, pick: LaunchPick): void;
   (e: "move", uid: number, dir: -1 | 1): void;
   // Fork-local (iTerm2 mode): header-drag dropped onto another cell — move src to its slot
-  // (target = the cell dropped on). R15 `move-to-page`: the cell's page menu picked a
+  // (target = the cell dropped on). Page-move `move-to-page`: the cell's page menu picked a
   // destination page for the whole column (target = the page number).
   (e: "reorder" | "move-to-page", uid: number, target: number): void;
   (e: "status", uid: number, value: CellStatus): void;
@@ -320,9 +320,11 @@ watch(
           :command="cell.command"
           :home="home"
           :reorderable="reorderable"
+          :page-targets="pageTargets?.[cell.uid]"
           @toggle-expand="emit('toggle-expand', cell.uid)"
           @close="emit('close', cell.uid)"
           @move="(dir) => emit('move', cell.uid, dir)"
+          @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
           @status="(s) => emit('status', cell.uid, s)"
         />
         <LauncherCell
@@ -337,9 +339,11 @@ watch(
           :cwd="cell.cwd"
           :home="home"
           :reorderable="reorderable"
+          :page-targets="pageTargets?.[cell.uid]"
           @toggle-expand="emit('toggle-expand', cell.uid)"
           @close="emit('close', cell.uid)"
           @move="(dir) => emit('move', cell.uid, dir)"
+          @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
           @status="(s) => emit('status', cell.uid, s)"
           @session="(id) => emit('session', cell.uid, id)"
         />

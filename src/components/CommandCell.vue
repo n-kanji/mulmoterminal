@@ -4,6 +4,7 @@ import DirBadge from "./DirBadge.vue";
 import { useDirConfig } from "../composables/useDirConfig";
 import TerminalView from "./Terminal.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
+import CellPageMenu from "./CellPageMenu.vue";
 import type { RunCommand } from "./runCommand";
 import { formatCwd } from "./cwdDisplay";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
@@ -191,6 +192,7 @@ function onHeaderClick(event: MouseEvent) {
         >
           <span class="material-symbols-outlined" aria-hidden="true">{{ summaryState === "loading" ? "more_horiz" : "auto_awesome" }}</span>
         </button>
+        <CellPageMenu :targets="pageTargets" @pick="(page) => emit('move-to-page', page)" />
         <CellChromeButtons :expanded="expanded" @toggle-expand="emit('toggle-expand')" @close="emit('close')" />
       </span>
     </div>

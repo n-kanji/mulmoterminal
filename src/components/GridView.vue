@@ -86,7 +86,7 @@ import type { LaunchAgent } from "../../common/launchAgent";
 // route push from the shared toolbar (Chat / Collections / a favorite), so there's
 // no exit emit — App.vue renders this only while route.name === "terminals".
 
-// One flat list of terminal cells; tabs are just pages (9 each) over it. Closing a
+// One flat list of terminal cells; tabs are just pages (PAGE_SIZE each) over it. Closing a
 // cell reflows the list so terminals flow across page boundaries. Only the active
 // page is mounted — other pages' terminals live on as background PTYs and
 // reconnect when their page is shown again.
@@ -480,7 +480,7 @@ const onReorder = (uid: number, targetUid: number) => {
   const base = state.value.sortMode === "manual" ? state.value : setSortMode(state.value, "manual");
   state.value = moveCellTo(base, uid, targetUid);
 };
-// R15 (operator request 2026-08-25): the pane toolbar's page menu — send a column to another
+// Page-move (operator request 2026-08-25): the pane toolbar's page menu — send a column to another
 // page without forking or relaunching anything. Choosing a page for a column is a placement
 // statement like a drag, so auto mode switches to manual here too.
 const onMoveToPage = (uid: number, page: number) => {

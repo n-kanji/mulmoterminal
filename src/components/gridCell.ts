@@ -15,12 +15,18 @@ export interface GridCellProps {
   // (unless it's the zoomed one). Only then does a header-background click zoom it.
   zoomed?: boolean;
   home: string | null;
+  // Page-move (operator request 2026-08-25): the pages this column can be sent to, decided
+  // by the grid (canMoveCellToPage) — which moves ANY occupied column, so every cell kind
+  // offers the same menu (CellPageMenu). Empty/absent = nowhere to go, menu hidden.
+  pageTargets?: { page: number; label: string }[] | null;
 }
 
 export interface GridCellEmits {
   (e: "toggle-expand" | "close"): void;
   // Swap this cell left (-1) or right (+1) in manual sort mode.
   (e: "move", dir: -1 | 1): void;
+  // Page-move: send this whole column (session and all) to the given page.
+  (e: "move-to-page", page: number): void;
   // Report activity up so the grid can attention-sort in auto mode.
   (e: "status", value: CellStatus): void;
 }

@@ -318,7 +318,7 @@ export function moveCellTo(state: GridState, uid: number, targetUid: number): Gr
   return { ...state, cells };
 }
 
-// R15 (operator request 2026-08-25): "send this column to another page" — the pane toolbar's
+// Page-move (operator request 2026-08-25): "send this column to another page" — the pane toolbar's
 // page menu. The cell just changes SLOTS in the flat list, so the session is untouched: nothing
 // is forked or relaunched, and the pane reattaches when its new page is looked at, exactly as
 // any off-page column always has. Whether a cell can go decides the menu; the move itself is
@@ -328,6 +328,10 @@ export function moveCellTo(state: GridState, uid: number, targetUid: number): Gr
 // is the pin's promise. An elastic page has no such promise: full there means the incoming
 // column lands as the page's LAST slot and the overflow reflows on, the same cascade closing
 // and inserting have always caused.
+//
+// Only EXISTING pages are targets — deliberately asymmetric with addCell's overflow-into-a-
+// new-page: "send to page N" moves within the pages on the tab row, and a menu offering a
+// page that does not exist yet would have nothing to call it.
 export function canMoveCellToPage(state: GridState, uid: number, targetPage: number): boolean {
   const from = state.cells.findIndex((c) => c.uid === uid);
   if (from < 0 || isHole(state.cells[from]) || !isOccupied(state.cells[from])) return false;

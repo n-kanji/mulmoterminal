@@ -4,6 +4,7 @@ import DirBadge from "./DirBadge.vue";
 import { useDirConfig } from "../composables/useDirConfig";
 import TerminalView from "./Terminal.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
+import CellPageMenu from "./CellPageMenu.vue";
 import { formatCwd } from "./cwdDisplay";
 import { shouldZoomOnHeaderClick } from "./cellHeaderZoom";
 import { isShellLauncher, type CellLauncher, type CellStatus } from "./gridTabs";
@@ -139,6 +140,7 @@ function relaunch() {
         <button v-if="finished" class="cell-btn" :class="CELL_BTN" title="Relaunch" aria-label="Relaunch" @click.stop="relaunch">
           <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
         </button>
+        <CellPageMenu :targets="pageTargets" @pick="(page) => emit('move-to-page', page)" />
         <CellChromeButtons :expanded="expanded" @toggle-expand="emit('toggle-expand')" @close="emit('close')" />
       </span>
     </div>
