@@ -18,7 +18,11 @@ Two operator requests from the same conversation, shipped together because they 
   - A sealed (pinned) target only accepts into a reserved hole; full sealed pages refuse.
   - A full elastic target takes the column as its last slot; the overflow reflows on.
   - The trailing open launch cell stays the last real cell.
-  - Only existing pages are targets (deliberately asymmetric with addCell's overflow).
+  - `targetPage === pageCount` is A NEW page ("N枚目（新規）"): the pages before it are
+    PINNED first — an elastic list cannot hold a column past its own end, and 12-wide pages
+    made "my 11 panes split 10 + 1" unrepresentable without a sealed boundary. Needs a
+    second running terminal; an abandoned trailing launch form is dropped (switchPage's
+    treatment) rather than stranded mid-list.
 - `gridCell.ts`: `pageTargets` prop + `move-to-page` emit join the shared cell contract, so
   all three cell kinds (Claude / launcher / command) offer the same menu.
 - `CellPageMenu.vue`: the shared popover (Material Symbols `drive_file_move`, targets named

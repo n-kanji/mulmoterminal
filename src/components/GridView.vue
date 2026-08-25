@@ -490,17 +490,19 @@ const onMoveToPage = (uid: number, page: number) => {
 // Where each cell's page menu can send it, keyed by uid. Decided here against the FULL cell
 // list (the menu lives in a cell that only knows its page's slice). Unnamed pages read as
 // "N枚目" — the operator's own word for a page — and a named one keeps its name alongside.
+// `p === total` is A NEW page (gridTabs seals the boundary behind it), so a single-page grid
+// still offers a way to start organizing into pages.
 const pageTargetsByUid = computed(() => {
   const map: Record<number, { page: number; label: string }[]> = {};
   const total = pages.value;
-  if (total <= 1) return map;
   const label = (p: number) => {
+    if (p >= total) return `${p + 1}枚目（新規）`;
     const name = state.value.pages?.[p]?.label?.trim();
     return name ? `${p + 1}枚目（${name}）` : `${p + 1}枚目`;
   };
   for (const c of state.value.cells) {
     const targets: { page: number; label: string }[] = [];
-    for (let p = 0; p < total; p++) if (canMoveCellToPage(state.value, c.uid, p)) targets.push({ page: p, label: label(p) });
+    for (let p = 0; p <= total; p++) if (canMoveCellToPage(state.value, c.uid, p)) targets.push({ page: p, label: label(p) });
     if (targets.length > 0) map[c.uid] = targets;
   }
   return map;

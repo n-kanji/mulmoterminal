@@ -329,23 +329,40 @@ export function moveCellTo(state: GridState, uid: number, targetUid: number): Gr
 // column lands as the page's LAST slot and the overflow reflows on, the same cascade closing
 // and inserting have always caused.
 //
-// Only EXISTING pages are targets — deliberately asymmetric with addCell's overflow-into-a-
-// new-page: "send to page N" moves within the pages on the tab row, and a menu offering a
-// page that does not exist yet would have nothing to call it.
+// `targetPage === pageCount` is A NEW page (the menu's "N枚目（新規）"). An elastic list
+// cannot hold a column past its own end — the reflow packs it straight back onto the last
+// page — so a new-page move first PINS the page before it: "there is a boundary here" is
+// exactly what pinning means in this grid, and it is what lets 11 columns become 10 + 1
+// instead of snapping back together. Needs a second occupied cell, or the "new page" would
+// just be the old page with extra steps.
 export function canMoveCellToPage(state: GridState, uid: number, targetPage: number): boolean {
   const from = state.cells.findIndex((c) => c.uid === uid);
   if (from < 0 || isHole(state.cells[from]) || !isOccupied(state.cells[from])) return false;
-  if (targetPage < 0 || targetPage >= pageCount(state.cells.length) || pageOfIndex(from) === targetPage) return false;
+  const total = pageCount(state.cells.length);
+  if (targetPage < 0 || targetPage > total || pageOfIndex(from) === targetPage) return false;
+  if (targetPage === total) return runningCount(state.cells) >= 2;
   return !(isReservedPage(state, targetPage) && freeSlot(state, targetPage) < 0);
 }
 
 export function moveCellToPage(state: GridState, uid: number, targetPage: number): GridState {
   if (!canMoveCellToPage(state, uid, targetPage)) return state;
-  const from = state.cells.findIndex((c) => c.uid === uid);
-  const cell = state.cells[from];
+  let base = state;
+  if (targetPage === pageCount(state.cells.length)) {
+    // A NEW page. An abandoned trailing launch form would be stranded mid-list by the append
+    // below, so it gets the same treatment switchPage gives it — dropped — and the target is
+    // re-derived (dropping it can shrink the page count). Then the boundary is sealed (see
+    // above), padding every page before it, so the append lands PAST the last page instead
+    // of reflowing back onto it.
+    const open = trailingLaunchIndex(state);
+    if (open >= 0 && realCells(state.cells).length > 1) base = clampPage({ ...state, ...removeAt(state, open) });
+    targetPage = pageCount(base.cells.length);
+    base = reserveSlots(withPageMeta(base, targetPage - 1, { pinned: true }));
+  }
+  const from = base.cells.findIndex((c) => c.uid === uid);
+  const cell = base.cells[from];
   // removeAt leaves a hole on a sealed source page, so its boundary holds; recomputing the
   // destination on the interim state absorbs the index shift an elastic removal causes.
-  const interim: GridState = { ...state, ...removeAt(state, from) };
+  const interim: GridState = { ...base, ...removeAt(base, from) };
   let at = freeSlot(interim, targetPage);
   if (at < 0) at = targetPage * PAGE_SIZE + PAGE_SIZE - 1; // full elastic page: land last, overflow reflows on
   // The trailing OPEN launch cell stays the last real cell — landing after it would strand

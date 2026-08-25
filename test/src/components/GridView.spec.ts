@@ -583,9 +583,15 @@ describe("GridView workspaces (R1)", () => {
     localStorage.setItem("grid_v2", JSON.stringify({ cells: overOnePageSessions(0), page: 0, sortMode: "manual" }));
     const w = await mountTabs();
     const grid = w.findComponent(TabsGridStub);
-    // Every column is offered the one OTHER page, under the operator's own word for it.
-    expect(grid.props("pageTargets")[0]).toEqual([{ page: 1, label: "2枚目" }]);
-    expect(grid.props("pageTargets")[overOnePage - 1]).toEqual([{ page: 0, label: "1枚目" }]);
+    // Every column is offered the OTHER page and a fresh one, under the operator's own words.
+    expect(grid.props("pageTargets")[0]).toEqual([
+      { page: 1, label: "2枚目" },
+      { page: 2, label: "3枚目（新規）" },
+    ]);
+    expect(grid.props("pageTargets")[overOnePage - 1]).toEqual([
+      { page: 0, label: "1枚目" },
+      { page: 2, label: "3枚目（新規）" },
+    ]);
     grid.vm.$emit("move-to-page", 0, 1);
     await flushPromises();
     const saved = JSON.parse(localStorage.getItem("grid_v2") ?? "{}");

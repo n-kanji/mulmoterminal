@@ -225,6 +225,33 @@ describe("moveCellToPage (send a column to another page)", () => {
     expect(moveCellToPage(s, PAGE_SIZE, 0)).toBe(s);
   });
 
+  it("sends a column to a NEW page by sealing the boundary behind it", () => {
+    // One elastic page, one short of full — the case a plain reflow could never split.
+    const s = make(running(PAGE_SIZE - 1), { page: 0 });
+    const after = moveCellToPage(s, 0, 1);
+    expect(pageCount(after.cells.length)).toBe(2);
+    expect(uidsOnPage(after, 1)).toEqual([0]); // the sent column alone on the new page
+    expect(isPagePinned(after, 0)).toBe(true); // the boundary that keeps 10+1 from snapping back
+    expect(pageSlice(after.cells, 0)).toHaveLength(PAGE_SIZE);
+    expect(uidsOnPage(after, 0)).toEqual(range(1, PAGE_SIZE - 1));
+    expect(runningCount(after.cells)).toBe(PAGE_SIZE - 1); // nothing forked or dropped
+  });
+
+  it("drops an abandoned trailing launch form on a new-page move instead of stranding it", () => {
+    const s = make([...running(3), cell(3)]); // three terminals + an open launch form
+    const after = moveCellToPage(s, 0, 1);
+    expect(uidsOnPage(after, 1)).toEqual([0]);
+    expect(realCells(after.cells).filter((c) => c.session === null)).toHaveLength(0); // the form is gone
+    expect(cancelableLaunchUid(after)).toBeNull();
+    expect(runningCount(after.cells)).toBe(3);
+  });
+
+  it("refuses a NEW page when only one terminal runs — it would just be the old page", () => {
+    const s = make([cell(0, U(0)), cell(1)]);
+    expect(canMoveCellToPage(s, 0, 1)).toBe(false);
+    expect(moveCellToPage(s, 0, 1)).toBe(s);
+  });
+
   it("keeps the zoom and clamps the page when the source page empties away", () => {
     // Pinned page 0 with a hole; page 1's ONLY terminal moves into it, so page 1 vanishes.
     const s = { ...closeCell(pin(running(PAGE_SIZE + 1), 0), 3), page: 1, expanded: PAGE_SIZE };
