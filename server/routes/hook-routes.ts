@@ -16,6 +16,7 @@ import { failPendingTranslation } from "../session/translation-worker.js";
 import type { SessionActivityDeps } from "../session/session-activity-deps.js";
 import { publishesDirConfig, todoInProgressLabel, toolHookRecord } from "../session/tool-hook.js";
 import { noteSessionAlias } from "../session/session-alias.js";
+import { emitTurnEnd } from "../session/turn-end.js";
 
 // The header shows one line, so a longer prompt is stored truncated rather than in full.
 
@@ -147,6 +148,17 @@ async function applyHeaderHooks(deps: HookDeps, sessionId: string, event: string
 
 // Claude hooks (Stop / Notification / Pre|PostToolUse / SessionStart) POST their payload here so
 // we can flag which background sessions have new activity / build tool history.
+// What a finished turn settles, after its flags are committed. A hidden translation worker
+// that ends its turn while still pending never called submitTranslation — fail it now rather
+// than hang until the timeout (when it DID submit, the reject is a no-op). Then turn-end
+// (turn-end.ts): a listener that types the next queued instruction into the pane needs
+// `working=false` already committed. Live panes only, and not awaited — the hook must answer
+// promptly and a slow transcript read must not hold Claude's Stop.
+function afterStop(sessionId: string, hasPty: boolean) {
+  failPendingTranslation(sessionId, "[translation] worker ended its turn without calling submitTranslation");
+  if (hasPty) void emitTurnEnd(sessionId);
+}
+
 async function handleHookRequest(deps: HookDeps, req: Request, res: Response) {
   const body = req.body || {};
   const sessionId = resolveHookSessionId(req.headers["x-mt-session"], body.session_id, (id) => SESSION_ID_RE.test(id));
@@ -176,10 +188,7 @@ async function handleHookRequest(deps: HookDeps, req: Request, res: Response) {
     if (event === "Stop") liveTasks.delete(sessionId);
     handleActivityHook(deps, sessionId, event, active, typeof body.message === "string" ? body.message : "", body.notification_type);
     await handleToolHook(deps, sessionId, event, body, cwd);
-    // A hidden translation worker that ends its turn while still pending never called
-    // submitTranslation — fail it now rather than hang until the timeout. (When it DID
-    // submit, the entry is already resolved and this reject is a no-op.)
-    if (event === "Stop") failPendingTranslation(sessionId, "[translation] worker ended its turn without calling submitTranslation");
+    if (event === "Stop") afterStop(sessionId, !!entry);
     console.log(`[hook] ${event} for ${sessionId}`);
   }
   res.json({ ok: true });

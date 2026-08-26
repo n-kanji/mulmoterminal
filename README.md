@@ -1027,6 +1027,7 @@ same-origin-guarded.
 | `GET /api/cost?cwd=&session=` | Estimated $ cost — session / today / month. |
 | `GET /api/transcript/timeline?session=&cwd=` | Per-session activity timeline (tools run). |
 | `GET /api/transcript/last-turn?session=&cwd=&agent=` | A session's last completed exchange (`prompt`, `reply`) plus the `text` to paste into another terminal. `agent=codex` reads the codex rollout instead of the Claude transcript. |
+| `GET\|POST /api/session/:id/queue` · `DELETE …/queue/:itemId` · `PUT …/queue/auto` · `POST …/queue/send-next` · `POST …/queue/read` | The pane's **next-instruction queue**: park `{text}` to be typed when the session finishes its turn (Stop hook), instead of interrupting it. Each automatic send records the exchange it pushed off the screen as an unread hand-off (`prevPrompt` / `prevReply`) until `read`. The agent in the pane may enqueue its own follow-up with its own id (aliased like `/mission`). Pushes `next-queue` `{ id, state }` over pub/sub. |
 
 **Git & worktrees**
 

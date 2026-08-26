@@ -819,6 +819,9 @@ describe("TerminalCell", () => {
       if (u.includes("/api/scripts")) return { ok: true, json: async () => ({ cwd: "/p", scripts: [] }) };
       if (u.includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
       if (u.includes("/api/header")) return { ok: true, json: async () => ({ buttons: [], chips: [{ kind: "builtin", id: "usage" }] }) };
+      // The next-instruction queue seeds itself under the same /api/session/:id prefix; it
+      // is not one of the usage reads this test counts.
+      if (u.includes("/queue")) return { ok: true, json: async () => ({ id, state: { auto: true, items: [], handoffs: [] } }) };
       if (u.includes(`/api/session/${id}`)) {
         const n = sessionCall++;
         if (n === 0) return { ok: true, json: async () => ({ working: false, waiting: false, lastPrompt: null, usage: INITIAL }) }; // mount seed

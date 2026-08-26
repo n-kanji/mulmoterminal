@@ -38,6 +38,12 @@ import { createTitleManager } from "./session/session-title.js";
 import { generateHeaderTitle } from "./config/header-title.js";
 import { mountTerminalWebSockets } from "./routes/ws-routes.js";
 import { mountAgentRoutes } from "./routes/agent-routes.js";
+import { mountNextQueueRoutes } from "./routes/next-queue-routes.js";
+import { drainNextQueue } from "./session/next-queue-drain.js";
+import { setNextQueueLiveness } from "./session/next-queue.js";
+import { onTurnEnd } from "./session/turn-end.js";
+import { sessionLastTurn } from "./session/session-reads.js";
+import { NEXT_QUEUE_CHANNEL } from "../common/nextQueue.js";
 import { existingDir } from "./config/workspace.js";
 import { createTerminalInputSender } from "./backends/remoteHost/terminalInput.js";
 import { createConnectionHandlers } from "./session/pty-connection.js";
@@ -488,6 +494,22 @@ mountAgentRoutes(app, {
   candidates: () => [...ptys.entries()].map(([id, entry]) => ({ id, cwd: entry.cwd, agent: entry.agent, working: activity.get(id)?.working })),
   sendToSession: agentBroadcastSender,
 });
+
+// The per-pane next-instruction queue (plans/feat-next-instruction-queue.md). Same
+// composition as the agent API above: it types through the same sender, and the drain reads
+// the pane's transcript so the reply it is about to push off the screen is kept for the
+// operator. The Stop hook emits turn-end; the drain runs off it.
+const nextQueueDeps = {
+  sendToSession: agentBroadcastSender,
+  lastTurn: (sessionId: string) => {
+    const entry = ptys.get(sessionId);
+    return sessionLastTurn(entry?.cwd ?? CLAUDE_CWD, sessionId, entry?.agent === "codex" ? "codex" : "claude");
+  },
+  publish: (id: string, state: unknown) => pubsub?.publish(NEXT_QUEUE_CHANNEL, { id, state }),
+};
+setNextQueueLiveness((id) => ptys.has(id));
+mountNextQueueRoutes(app, nextQueueDeps);
+onTurnEnd((sessionId) => drainNextQueue(sessionId, nextQueueDeps).then(() => undefined));
 
 // Mount per-collection fs.watchers → completion bells via the notifier. After the
 // engine host + notifier are configured. Fire-and-forget + non-fatal: a watcher

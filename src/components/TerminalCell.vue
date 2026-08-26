@@ -22,6 +22,7 @@ import TranscriptOverlay from "./TranscriptOverlay.vue";
 import CockpitHeader from "./CockpitHeader.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
 import CellPageMenu from "./CellPageMenu.vue";
+import NextQueueMenu from "./NextQueueMenu.vue";
 import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
 import { activityStatus, CELL_DRAG_MIME, MAX_CELL_NAME, type CellStatus } from "./gridTabs";
@@ -1404,6 +1405,10 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">call_split</span>
           </button>
+          <!-- The next-instruction queue (2026-08-26): park what to say next instead of
+               interrupting the running turn. Claude only — delivery rides Claude's Stop
+               hook. -->
+          <NextQueueMenu v-if="sessionId && agent !== 'codex'" :session-id="sessionId" />
           <CellChromeButtons :expanded="expanded" hide-expand @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
