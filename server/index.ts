@@ -506,6 +506,7 @@ const nextQueueDeps = {
     return sessionLastTurn(entry?.cwd ?? CLAUDE_CWD, sessionId, entry?.agent === "codex" ? "codex" : "claude");
   },
   publish: (id: string, state: unknown) => pubsub?.publish(NEXT_QUEUE_CHANNEL, { id, state }),
+  currentPrompt: (id: string) => lastPrompts.get(id),
 };
 setNextQueueLiveness((id) => ptys.has(id));
 mountNextQueueRoutes(app, nextQueueDeps);
