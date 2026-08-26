@@ -1570,7 +1570,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
            agent's own input line: the operator's eye is there when the thought "and then
            do X" arrives, not on the header. Claude only — delivery rides Claude's Stop
            hook. Below the diff / transcript overlays (z-15) so they cover it when open. -->
-      <div v-if="sessionId && agent !== 'codex'" class="absolute bottom-1.5 right-2 z-[14]">
+      <div v-if="sessionId && agent !== 'codex'" class="absolute bottom-2 right-3 z-[14]">
         <NextQueueMenu :session-id="sessionId" floating />
       </div>
       <div

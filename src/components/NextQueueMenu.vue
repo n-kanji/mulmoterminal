@@ -119,7 +119,7 @@ const timeOf = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-di
       class="cell-btn relative inline-flex flex-none cursor-pointer items-center justify-center rounded border-0 hover:bg-hover"
       :class="[
         floating
-          ? 'h-6 w-6 border border-border bg-panel/90 text-secondary shadow-[0_2px_8px_rgba(0,0,0,0.35)] hover:text-fg'
+          ? 'h-9 w-9 border border-border bg-panel/90 text-secondary shadow-[0_2px_8px_rgba(0,0,0,0.35)] hover:text-fg'
           : 'h-5 w-5 bg-transparent text-inherit',
         { 'bg-hover': open },
       ]"
@@ -129,12 +129,15 @@ const timeOf = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-di
       :aria-expanded="open"
       @click.stop="open = !open"
     >
-      <span class="material-symbols-outlined text-[14px]" aria-hidden="true">pending_actions</span>
+      <span class="material-symbols-outlined" :class="floating ? 'text-[22px]' : 'text-[14px]'" aria-hidden="true">pending_actions</span>
       <span
         v-if="queued || unread"
         data-testid="cell-next-queue-badge"
-        class="absolute -right-1 -top-1 min-w-[14px] rounded-full px-[3px] text-center font-mono text-[9px] leading-[14px] text-white"
-        :class="unread ? 'bg-accent' : 'bg-[var(--text-secondary)]'"
+        class="absolute -right-1 -top-1 rounded-full text-center font-mono text-white"
+        :class="[
+          unread ? 'bg-accent' : 'bg-[var(--text-secondary)]',
+          floating ? 'min-w-[18px] px-1 text-[11px] leading-[18px]' : 'min-w-[14px] px-[3px] text-[9px] leading-[14px]',
+        ]"
         >{{ unread || queued }}</span
       >
     </button>
