@@ -42,40 +42,10 @@ watch(renaming, (on) => {
   >
     <!-- The line. -->
     <div class="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 rounded bg-accent/80" aria-hidden="true"></div>
-    <!-- The label, read top-down along the line. -->
-    <button
-      type="button"
-      data-testid="grid-separator-label"
-      class="relative z-[1] mt-2 max-h-[60%] cursor-text overflow-hidden rounded-sm border-0 bg-[var(--bg-deep)] px-px py-1 font-sans text-[11px] font-semibold leading-none [writing-mode:vertical-rl]"
-      :class="label ? 'text-accent' : 'text-secondary opacity-70 hover:opacity-100'"
-      :aria-label="label ? `Separator: ${label}` : 'Name this separator'"
-      @click.stop="startRename"
-    >
-      {{ label || "名前" }}
-    </button>
-    <!-- Rename: a normal (horizontal) box floated beside the line. -->
+    <!-- Controls first, pinned to the top of the line (operator 2026-08-26); the label reads
+         top-down right under them. Dim until hovered. -->
     <div
-      v-if="renaming"
-      class="absolute left-4 top-2 z-20 flex items-center gap-1 rounded-md border border-border bg-panel p-1 shadow-[0_6px_18px_rgba(0,0,0,0.35)]"
-      @mousedown.stop
-    >
-      <input
-        ref="input"
-        v-model="draft"
-        data-testid="grid-separator-input"
-        class="w-[140px] rounded border border-accent bg-[var(--bg-base)] px-1.5 py-[3px] font-sans text-[12px] text-fg outline-none"
-        :maxlength="MAX_SEPARATOR_LABEL"
-        placeholder="この区切りの名前"
-        aria-label="Separator name"
-        @keydown.enter.prevent="commit"
-        @keydown.esc.prevent="cancel"
-        @blur="commit"
-      />
-    </div>
-    <!-- Controls, at the foot of the line. Always shown (operator 2026-08-26: hover-only
-         on an 18px line was never found) — dim until hovered. -->
-    <div
-      class="absolute bottom-2 z-[1] flex flex-col items-center gap-0.5 rounded bg-[var(--bg-deep)] py-0.5 opacity-70 hover:opacity-100 focus-within:opacity-100"
+      class="relative z-[1] mt-1 flex flex-col items-center gap-0.5 rounded bg-[var(--bg-deep)] py-0.5 opacity-70 hover:opacity-100 focus-within:opacity-100"
     >
       <button
         type="button"
@@ -109,6 +79,36 @@ watch(renaming, (on) => {
       >
         <span class="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
       </button>
+    </div>
+    <!-- The label, read top-down along the line. -->
+    <button
+      type="button"
+      data-testid="grid-separator-label"
+      class="relative z-[1] mt-1 max-h-[60%] cursor-text overflow-hidden rounded-sm border-0 bg-[var(--bg-deep)] px-px py-1 font-sans text-[11px] font-semibold leading-none [writing-mode:vertical-rl]"
+      :class="label ? 'text-accent' : 'text-secondary opacity-70 hover:opacity-100'"
+      :aria-label="label ? `Separator: ${label}` : 'Name this separator'"
+      @click.stop="startRename"
+    >
+      {{ label || "名前" }}
+    </button>
+    <!-- Rename: a normal (horizontal) box floated beside the line. -->
+    <div
+      v-if="renaming"
+      class="absolute left-4 top-16 z-20 flex items-center gap-1 rounded-md border border-border bg-panel p-1 shadow-[0_6px_18px_rgba(0,0,0,0.35)]"
+      @mousedown.stop
+    >
+      <input
+        ref="input"
+        v-model="draft"
+        data-testid="grid-separator-input"
+        class="w-[140px] rounded border border-accent bg-[var(--bg-base)] px-1.5 py-[3px] font-sans text-[12px] text-fg outline-none"
+        :maxlength="MAX_SEPARATOR_LABEL"
+        placeholder="この区切りの名前"
+        aria-label="Separator name"
+        @keydown.enter.prevent="commit"
+        @keydown.esc.prevent="cancel"
+        @blur="commit"
+      />
     </div>
   </div>
 </template>
