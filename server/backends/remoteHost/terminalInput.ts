@@ -22,6 +22,26 @@ const CONTROL_BYTES_RE = /[\u0000-\u001F\u007F-\u009F]+/g;
 
 export const sanitizeTerminalInput = (text: string): string => text.replace(CONTROL_BYTES_RE, " ").replace(/\s+/g, " ").trim();
 
+// The multi-line variant, for a parked plan (session/next-queue.ts): newlines survive — that
+// is what bracketed paste exists for, the TUI inserts them without submitting — while every
+// other control byte still goes, CR included (a bare CR inside the paste would submit early
+// on a terminal that does not honour paste mode). Blank runs of spaces/tabs collapse; blank
+// lines are kept, they are the plan's structure.
+// eslint-disable-next-line no-control-regex -- intentional: every control byte except LF
+const CONTROL_BYTES_BUT_LF_RE = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]+/g;
+export const sanitizeTerminalInputMultiline = (text: string): string =>
+  text
+    .replace(/\r\n?/g, "\n")
+    .replace(CONTROL_BYTES_BUT_LF_RE, " ")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .trim();
+
+export interface SendOptions {
+  /** Keep line breaks (sanitizeTerminalInputMultiline) instead of flattening to one line. */
+  multiline?: boolean;
+}
+
 export const PASTE_START = "\x1b[200~";
 export const PASTE_END = "\x1b[201~";
 
@@ -103,8 +123,8 @@ const typeAndSubmit = (deps: TerminalInputDeps, sessionId: string, safe: string)
 export const createTerminalInputSender = (deps: TerminalInputDeps) => {
   const chains = new Map<string, Promise<void>>();
 
-  return async (sessionId: string, text: string): Promise<{ sent: boolean }> => {
-    const safe = sanitizeTerminalInput(text);
+  return async (sessionId: string, text: string, opts: SendOptions = {}): Promise<{ sent: boolean }> => {
+    const safe = opts.multiline ? sanitizeTerminalInputMultiline(text) : sanitizeTerminalInput(text);
     if (!safe) {
       throw new Error("text is required");
     }

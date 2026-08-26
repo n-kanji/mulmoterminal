@@ -184,17 +184,27 @@ export function recordHandoff(
   id: string,
   handoff: { text: string; prevPrompt: string | null; prevReply: string | null },
   now: number = Date.now(),
-): NextQueueState {
-  return mutate(id, (rec) => {
-    rec.handoffs.push({
-      id: randomUUID(),
-      text: handoff.text,
-      sentAt: now,
-      prevPrompt: clipReply(handoff.prevPrompt),
-      prevReply: clipReply(handoff.prevReply),
-      read: false,
-    });
+): { state: NextQueueState; handoff: NextQueueHandoff } {
+  const entry: NextQueueHandoff = {
+    id: randomUUID(),
+    text: handoff.text,
+    sentAt: now,
+    prevPrompt: clipReply(handoff.prevPrompt),
+    prevReply: clipReply(handoff.prevReply),
+    read: false,
+  };
+  const state = mutate(id, (rec) => {
+    rec.handoffs.push(entry);
     rec.handoffs = trimHandoffs(rec.handoffs);
+  });
+  return { state, handoff: { ...entry } };
+}
+
+/** Take back a hand-off whose send did not happen — a card saying "sent after this report"
+ *  for an instruction that was never typed is misinformation. */
+export function dropHandoff(id: string, handoffId: string): NextQueueState {
+  return mutate(id, (rec) => {
+    rec.handoffs = rec.handoffs.filter((h) => h.id !== handoffId);
   });
 }
 

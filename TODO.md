@@ -12,7 +12,8 @@
   - レイアウト同様 localStorage（`grid_v2`）に永続化
 - 設計メモ: グリッド状態は `src/components/gridTabs.ts` の cell 配列がすべて。線は「cell の前に置く separator」として同じ配列に持たせるのが最小変更（`hole` と同じ発想で `parseGridState` に型を足す）。IA 上は「セル」ではなく「境界の注釈」なので、TerminalCell とは別コンポーネントにする
 
-### 2. ペイン単位の「次に渡す指示」キュー — 実装中（2026-08-26、plans/feat-next-instruction-queue.md）
+### 2. ペイン単位の「次に渡す指示」キュー — 実装済み（2026-08-26、plans/feat-next-instruction-queue.md、E2E 確認済み）
+- 残: 送信は 1 行に潰される（terminalInput の sanitize）。複数行指示をそのまま送りたくなったら sender 側の方針から見直す
 - 追加要件（CEO 2026-08-26）: 自動投入すると直前の完了報告が画面から消えるので、投入のたびに直前のやりとりを未読ログとして退避し、読めるまでバッジで示す
 - 背景: 大きな作業をさせている最中に「あ、これも積んでおいて」と割り込むと、Claude Code がドリフトする・性能が落ちる。終わってから投げたいが、思いついた時に書き留めないと忘れる
 - 要件:

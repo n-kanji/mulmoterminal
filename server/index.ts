@@ -42,6 +42,7 @@ import { mountNextQueueRoutes } from "./routes/next-queue-routes.js";
 import { drainNextQueue } from "./session/next-queue-drain.js";
 import { setNextQueueLiveness } from "./session/next-queue.js";
 import { onTurnEnd } from "./session/turn-end.js";
+import { currentAgentSessionId } from "./session/session-alias.js";
 import { sessionLastTurn } from "./session/session-reads.js";
 import { NEXT_QUEUE_CHANNEL } from "../common/nextQueue.js";
 import { existingDir } from "./config/workspace.js";
@@ -503,10 +504,14 @@ const nextQueueDeps = {
   sendToSession: agentBroadcastSender,
   lastTurn: (sessionId: string) => {
     const entry = ptys.get(sessionId);
-    return sessionLastTurn(entry?.cwd ?? CLAUDE_CWD, sessionId, entry?.agent === "codex" ? "codex" : "claude");
+    // After a /clear the conversation continues in the file named by Claude's NEW id; the
+    // file named by the pane's id stops growing (session-alias.ts). Read the live one.
+    const transcriptId = currentAgentSessionId(sessionId) ?? sessionId;
+    return sessionLastTurn(entry?.cwd ?? CLAUDE_CWD, transcriptId, entry?.agent === "codex" ? "codex" : "claude");
   },
   publish: (id: string, state: unknown) => pubsub?.publish(NEXT_QUEUE_CHANNEL, { id, state }),
   currentPrompt: (id: string) => lastPrompts.get(id),
+  isIdle: (id: string) => activity.get(id)?.working === false,
 };
 setNextQueueLiveness((id) => ptys.has(id));
 mountNextQueueRoutes(app, nextQueueDeps);

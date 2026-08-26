@@ -40,6 +40,7 @@ function mount(over: Partial<NextQueueRouteDeps> = {}) {
     sendToSession: vi.fn(async () => ({ sent: true })),
     lastTurn: vi.fn(async () => ({ prompt: null, reply: "done" })),
     publish: vi.fn(),
+    sleep: vi.fn(async () => {}), // the drain's settle / after-send waits, not real time here
     ...over,
   };
   mountNextQueueRoutes(app, deps);
@@ -100,7 +101,7 @@ describe("next-queue routes", () => {
     await call("PUT /api/session/:id/queue/auto", { id: ID }, { enabled: false });
     const ok = await call("POST /api/session/:id/queue/send-next", { id: ID });
     expect(ok.statusCode).toBe(200);
-    expect(deps.sendToSession).toHaveBeenCalledWith(ID, "now");
+    expect(deps.sendToSession).toHaveBeenCalledWith(ID, "now", { multiline: true });
 
     const failing = mount({ sendToSession: vi.fn(async () => Promise.reject(new Error("gone"))) });
     enqueueNext(ID, "again");

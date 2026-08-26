@@ -28,6 +28,17 @@ export function noteSessionAlias(header: unknown, bodyId: unknown): void {
  *  which is what every pane that never cleared sends. */
 export const resolveAliasedSessionId = (id: string): string => aliases.get(id) ?? id;
 
+/** The reverse: the agent's CURRENT own id for a mulmoterminal session, or undefined when it
+ *  never cleared (the two agree). After several /clears the newest pairing wins — Map keeps
+ *  insertion order, and each /clear inserts a new key. This is what a reader of the agent's
+ *  transcript needs: after a /clear the file named by the mulmoterminal id stops growing, and
+ *  the conversation continues in the file named by this id. */
+export function currentAgentSessionId(mulmoId: string): string | undefined {
+  let latest: string | undefined;
+  for (const [agentId, mtId] of aliases) if (mtId === mulmoId) latest = agentId;
+  return latest;
+}
+
 /** Drop a torn-down session's aliases, so the map does not grow for the life of the process. */
 export function forgetSessionAliases(mulmoId: string): void {
   for (const [agentId, mtId] of aliases) if (mtId === mulmoId) aliases.delete(agentId);

@@ -9,6 +9,7 @@ import {
   NEXT_QUEUE_MAX_TEXT,
   clearNextQueues,
   dequeueNext,
+  dropHandoff,
   enqueueNext,
   markHandoffsRead,
   nextQueueOf,
@@ -89,10 +90,17 @@ describe("queue operations", () => {
 
 describe("hand-offs", () => {
   it("records the superseded exchange unread, then marks all read", () => {
-    const state = recordHandoff(ID, { text: "next", prevPrompt: "p", prevReply: "r" }, NOW);
+    const { state, handoff } = recordHandoff(ID, { text: "next", prevPrompt: "p", prevReply: "r" }, NOW);
     expect(state.handoffs).toHaveLength(1);
     expect(state.handoffs[0]).toMatchObject({ text: "next", prevPrompt: "p", prevReply: "r", read: false, sentAt: NOW });
+    expect(handoff.id).toBe(state.handoffs[0].id);
     expect(markHandoffsRead(ID).handoffs[0].read).toBe(true);
+  });
+
+  it("drops a hand-off by id (a send that never happened)", () => {
+    const { handoff } = recordHandoff(ID, { text: "x", prevPrompt: null, prevReply: null });
+    recordHandoff(ID, { text: "y", prevPrompt: null, prevReply: null });
+    expect(dropHandoff(ID, handoff.id).handoffs.map((h) => h.text)).toEqual(["y"]);
   });
 
   const mk = (id: string, read: boolean): NextQueueHandoff => ({ id, text: "t", sentAt: 0, prevPrompt: null, prevReply: null, read });
