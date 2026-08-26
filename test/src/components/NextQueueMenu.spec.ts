@@ -101,6 +101,30 @@ describe("NextQueueMenu", () => {
     expect(box.value).toBe("");
   });
 
+  it("stays open when an unrelated element (the terminal viewport) scrolls, and after adding", async () => {
+    const calls = stubFetch(empty);
+    const viewport = document.createElement("div");
+    document.body.appendChild(viewport);
+    w = mount(NextQueueMenu, { props: { sessionId: ID }, attachTo: document.body });
+    await flushPromises();
+    await w.find('[data-testid="cell-next-queue"]').trigger("click");
+    await flushPromises();
+    expect(menu()).not.toBeNull();
+    viewport.dispatchEvent(new Event("scroll", { bubbles: false }));
+    await flushPromises();
+    expect(menu()).not.toBeNull();
+    const box = menuEl('[data-testid="cell-next-queue-input"]') as HTMLTextAreaElement;
+    box.value = "then do C";
+    box.dispatchEvent(new Event("input"));
+    await flushPromises();
+    menuEl('[data-testid="cell-next-queue-add"]')?.click();
+    await flushPromises();
+    expect(calls.some((c) => c.init?.method === "POST")).toBe(true);
+    expect(menu()).not.toBeNull();
+    expect(menuEl('[data-testid="cell-next-queue-added"]')?.textContent).toContain("then do C");
+    viewport.remove();
+  });
+
   it("takes a pub/sub push for its own session and ignores others", async () => {
     stubFetch(empty);
     w = mount(NextQueueMenu, { props: { sessionId: ID }, attachTo: document.body });

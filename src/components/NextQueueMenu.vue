@@ -12,8 +12,11 @@
 // 380px reading pane inside a ~200px column would be cut off; and the header is the column's
 // drag handle (draggable="true"), inside which a drag-select to copy the buried reply — the
 // panel's whole point — would move the column instead. Outside the header, both go away.
-// Positioned from the trigger's rect on open; a resize or scroll closes it rather than
-// chasing the anchor.
+// Positioned from the trigger's rect on open and re-placed on resize or when an ANCESTOR of
+// the trigger scrolls. It must not react to every scroll in the document: xterm's viewport
+// scrolls on each byte the agent prints, and an early version closed on any scroll event —
+// so on a busy pane the panel vanished the instant it opened, and right after "追加" the
+// operator could not tell whether the text had gone in (2026-08-26 report).
 import { computed, ref, toRef, watch, onUnmounted, useTemplateRef, nextTick } from "vue";
 import { unreadHandoffCount } from "../../common/nextQueue";
 import { useNextQueue } from "../composables/useNextQueue";
@@ -65,33 +68,51 @@ function onOutside(e: MouseEvent) {
   if (trigger.value?.contains(t) || panel.value?.contains(t)) return;
   open.value = false;
 }
-const closeOnMove = () => {
-  open.value = false;
+const onResize = () => place();
+const onScroll = (e: Event) => {
+  const t = e.target;
+  // Only a scroll that moves the trigger itself (an ancestor, or the document) matters.
+  if (t === document || (t instanceof Node && trigger.value && t.contains(trigger.value))) place();
 };
 watch(open, (o) => {
   if (o) {
     place();
     document.addEventListener("mousedown", onOutside);
-    window.addEventListener("resize", closeOnMove);
-    window.addEventListener("scroll", closeOnMove, true);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
     void nextTick(() => input.value?.focus());
   } else {
     document.removeEventListener("mousedown", onOutside);
-    window.removeEventListener("resize", closeOnMove);
-    window.removeEventListener("scroll", closeOnMove, true);
+    window.removeEventListener("resize", onResize);
+    window.removeEventListener("scroll", onScroll, true);
   }
 });
 onUnmounted(() => {
   document.removeEventListener("mousedown", onOutside);
-  window.removeEventListener("resize", closeOnMove);
-  window.removeEventListener("scroll", closeOnMove, true);
+  window.removeEventListener("resize", onResize);
+  window.removeEventListener("scroll", onScroll, true);
 });
+
+// "追加" feedback: the panel stays open with the item now in the list, and this line says so
+// for a beat, because the operator otherwise cannot tell a silent success from a bug.
+const added = ref<string | null>(null);
+let addedTimer: ReturnType<typeof setTimeout> | undefined;
+function flashAdded(text: string) {
+  added.value = text;
+  clearTimeout(addedTimer);
+  addedTimer = setTimeout(() => (added.value = null), 2500);
+}
+onUnmounted(() => clearTimeout(addedTimer));
 
 async function submit() {
   const text = draft.value.trim();
   if (!text || busy.value) return;
   busy.value = true;
-  if (await add(text)) draft.value = "";
+  if (await add(text)) {
+    draft.value = "";
+    flashAdded(text);
+    void nextTick(() => input.value?.focus());
+  }
   busy.value = false;
 }
 function onKeydown(e: KeyboardEvent) {
@@ -243,6 +264,9 @@ const timeOf = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-di
             </label>
           </div>
           <div v-if="error" class="text-[11px] text-err-text">{{ error }}</div>
+          <div v-else-if="added" data-testid="cell-next-queue-added" class="text-[11px] text-accent">
+            追加しました（{{ queued }} 件目）: {{ added.slice(0, 60) }}
+          </div>
         </section>
       </div>
     </Teleport>
