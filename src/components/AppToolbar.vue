@@ -47,7 +47,7 @@ const props = defineProps<{
   undoChip?: { label: string; index: number } | null;
 }>();
 const emit = defineEmits<{
-  (e: "add-terminal" | "toggle-sort" | "toggle-view" | "settings" | "pick-launch" | "undo-remove-preset"): void;
+  (e: "add-terminal" | "add-separator" | "toggle-sort" | "toggle-view" | "settings" | "pick-launch" | "undo-remove-preset"): void;
   (e: "quick-launch" | "remove-preset", path: string): void;
   (e: "reorder-preset", fromPath: string, toPath: string): void;
 }>();
@@ -299,6 +299,15 @@ function showPrs(): void {
         label="New terminal"
         :active="addTerminalActive"
         @click="emit('add-terminal')"
+      />
+      <!-- Block line (2026-08-26): drop a named vertical line before the focused column (or
+           the page's last one) to mark where a block of panes starts. -->
+      <LauncherButton
+        v-if="inGrid"
+        icon="vertical_split"
+        title="区切り線を足す（フォーカス中の列の左に。名前を付けて動かせます）"
+        label="Add separator"
+        @click="emit('add-separator')"
       />
       <!-- Hidden in iTerm2 mode (operator request 2026-08-25): the operator arranges columns
            by hand (tile-first workflow) and never uses the auto attention-sort. -->

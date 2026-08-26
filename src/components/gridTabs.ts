@@ -78,6 +78,27 @@ export interface PageMeta {
   pinned?: boolean;
 }
 
+// Fork-local (iTerm2 mode, operator request 2026-08-26): a named vertical line BETWEEN two
+// columns — "these panes are one block". It sits before the cell `beforeUid` and travels with
+// it; closing that cell hands the line to the cell that takes its place (closeCell). Pure
+// grouping: it does not change page boundaries or column widths. Transforms: gridBlocks.ts.
+export interface Separator {
+  id: number;
+  beforeUid: number;
+  label?: string;
+}
+
+// Fork-local (iTerm2 mode, operator request 2026-08-26): a pane PARKED out of the grid — the
+// operator is waiting on someone and does not want a column's width spent on it, but does not
+// want to close it either. The cell (uid and all) leaves `cells` for this list, keeps its
+// session, and comes back into the grid on request. `note` is the operator's own "resume when
+// X". Transforms: gridBlocks.ts.
+export interface ParkedCell {
+  cell: Cell;
+  note: string;
+  at: number;
+}
+
 export interface GridState {
   cells: Cell[];
   expanded: number | null; // uid of the zoomed cell, or null
@@ -87,6 +108,8 @@ export interface GridState {
   // Index-aligned with the page number. Sparse and optional: `pages` may be shorter than the
   // grid has pages, and any missing entry means "plain, elastic".
   pages?: PageMeta[];
+  separators?: Separator[];
+  parked?: ParkedCell[];
 }
 
 // Fork-local (iTerm2 mode): a page holds MAX_CELLS full-height columns (see
@@ -106,6 +129,9 @@ export const MAX_PAGE_LABEL = 20;
 // well below a title. Long enough for "orosy 決済リファクタ", short enough that it can never be
 // the reason the summary loses its line.
 export const MAX_CELL_NAME = 32;
+// A separator's label is read sideways on a 14px line; a park note is a sentence.
+export const MAX_SEPARATOR_LABEL = 24;
+export const MAX_PARK_NOTE = 200;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Fork-local (iTerm2 mode, R1): a second browser window runs a SECOND workspace by opening
@@ -161,7 +187,7 @@ export const pageLabel = (state: GridState, page: number): string => state.pages
 // The highest pinned page, or -1. Every page at or before it holds its slots.
 const lastPinnedPage = (state: GridState): number => (state.pages ?? []).reduce((last, meta, p) => (meta?.pinned ? p : last), -1);
 const isReservedPage = (state: GridState, page: number): boolean => page <= lastPinnedPage(state);
-const pageOfIndex = (at: number): number => Math.floor(at / PAGE_SIZE);
+export const pageOfIndex = (at: number): number => Math.floor(at / PAGE_SIZE);
 
 const withPageMeta = (state: GridState, page: number, patch: PageMeta): GridState => {
   const pages = [...(state.pages ?? [])];
@@ -225,7 +251,7 @@ function removeAt(state: GridState, at: number): { cells: Cell[]; nextUid: numbe
 // Put `cell` at `at`. On a reserved page it consumes that page's trailing hole instead of
 // pushing the page's last terminal onto the next one; null means the page has no room left
 // and the caller should fall back to appending.
-function insertAt(state: GridState, at: number, cell: Cell): Cell[] | null {
+export function insertAt(state: GridState, at: number, cell: Cell): Cell[] | null {
   const cells = state.cells.slice();
   cells.splice(at, 0, cell);
   const page = pageOfIndex(at);
@@ -239,7 +265,7 @@ function insertAt(state: GridState, at: number, cell: Cell): Cell[] | null {
 // Where a new column goes on `page`: its first reserved hole, or the end of the page when it
 // still has room. -1 when the page is full. With nothing pinned this is the end of the LAST
 // page and nowhere else, which is where "+ Terminal" has always appended.
-function freeSlot(state: GridState, page: number): number {
+export function freeSlot(state: GridState, page: number): number {
   const start = page * PAGE_SIZE;
   const slots = pageSlice(state.cells, page);
   const hole = slots.findIndex(isHole);
@@ -257,7 +283,7 @@ function trailingLaunchIndex(state: GridState): number {
   return -1;
 }
 
-const clampPage = (s: GridState): GridState => ({ ...s, page: Math.min(Math.max(0, Math.floor(s.page)), pageCount(s.cells.length) - 1) });
+export const clampPage = (s: GridState): GridState => ({ ...s, page: Math.min(Math.max(0, Math.floor(s.page)), pageCount(s.cells.length) - 1) });
 
 // Always keep at least one cell — the entry launch cell on an otherwise empty grid. On a
 // grid that is nothing but reserved slots, the first of them becomes that entry cell rather
@@ -510,7 +536,24 @@ export function closeCell(state: GridState, uid: number, order?: number[]): Grid
   // stops at the workspace boundary instead of dragging the next one's terminals back.
   const { cells, nextUid } = at < 0 ? { cells: state.cells, nextUid: state.nextUid } : removeAt(state, at);
   const expanded = state.expanded === uid ? expandNeighbour(order, uid, cells) : state.expanded;
-  return ensureEntry(clampPage({ ...state, cells, nextUid, expanded }));
+  const separators = at < 0 ? state.separators : separatorsAfterRemoval(state.separators, uid, cells, at);
+  return ensureEntry(clampPage({ ...state, cells, nextUid, expanded, separators }));
+}
+
+// A separator whose cell just left hands itself to the cell now standing at that index — the
+// block boundary was before a POSITION, and that is what survives the close. Dropped when
+// nothing real stands there (end of the list, a reserved hole) or that cell already carries
+// one (two lines between the same two columns say nothing the one does not).
+function separatorsAfterRemoval(separators: Separator[] | undefined, uid: number, cells: readonly Cell[], at: number): Separator[] | undefined {
+  if (!separators?.length) return separators;
+  const next = cells[at];
+  const heir = next && !isHole(next) && !separators.some((s) => s.beforeUid === next.uid) ? next.uid : null;
+  const out: Separator[] = [];
+  for (const s of separators) {
+    if (s.beforeUid !== uid) out.push(s);
+    else if (heir !== null) out.push({ ...s, beforeUid: heir });
+  }
+  return out.length ? out : undefined;
 }
 
 // The uid to keep zoomed after closing the zoomed `uid`: the cell before it in the
@@ -866,6 +909,50 @@ const asPages = (v: unknown): PageMeta[] | undefined => {
   return pages.some((p) => p.label || p.pinned) ? pages : undefined;
 };
 
+export const separatorLabel = (label: string): string | undefined => label.trim().slice(0, MAX_SEPARATOR_LABEL) || undefined;
+export const parkNote = (note: string): string => note.replace(/\s+/gu, " ").trim().slice(0, MAX_PARK_NOTE);
+
+// Persisted separators: each must point at a cell that survived the parse (by its persisted
+// uid, translated to the renumbered one); one per cell. Malformed entries are dropped, never
+// the grid.
+const asSeparators = (v: unknown, running: readonly Cell[], mintId: () => number): Separator[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const seen = new Set<number>();
+  const out: Separator[] = [];
+  for (const entry of v) {
+    if (!isRecord(entry) || typeof entry.beforeUid !== "number") continue;
+    const idx = running.findIndex((c) => c.uid === entry.beforeUid && !isHole(c));
+    if (idx < 0 || seen.has(idx)) continue;
+    seen.add(idx);
+    out.push({ id: mintId(), beforeUid: idx, label: typeof entry.label === "string" ? separatorLabel(entry.label) : undefined });
+  }
+  return out.length ? out : undefined;
+};
+
+// Persisted parked panes: a cell with a real session (nothing else can come back), its note,
+// and when it was parked. Same field whitelist as a grid cell.
+const asParked = (v: unknown, firstUid: number): ParkedCell[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const out: ParkedCell[] = [];
+  for (const entry of v.slice(0, MAX_TERMINALS)) {
+    if (!isRecord(entry) || !isCell(entry.cell) || !isUuid(entry.cell.session)) continue;
+    const c = entry.cell;
+    out.push({
+      cell: {
+        uid: firstUid + out.length,
+        session: c.session,
+        cwd: c.cwd,
+        launcher: asLauncher(c.launcher),
+        agent: c.agent === "codex" ? "codex" : undefined,
+        name: typeof c.name === "string" ? cellName(c.name) : undefined,
+      },
+      note: typeof entry.note === "string" ? parkNote(entry.note) : "",
+      at: typeof entry.at === "number" ? entry.at : 0,
+    });
+  }
+  return out.length ? out : undefined;
+};
+
 export function parseGridState(raw: string | null): GridState | null {
   try {
     const parsed = JSON.parse(raw ?? "");
@@ -909,9 +996,14 @@ export function parseGridState(raw: string | null): GridState | null {
     const expanded = typeof parsed.expanded === "number" && expandedIdx >= 0 ? expandedIdx : null;
     const page = Number.isSafeInteger(parsed.page) && parsed.page >= 0 ? parsed.page : 0;
     const pages = asPages(parsed.pages);
+    // Parked panes take the uids after the grid's; separators are renumbered after those. Both
+    // are keyed off the persisted (untrusted) uids only to find their place, never kept as-is.
+    const parked = asParked(parsed.parked, cells.length);
+    let nextUid = cells.length + (parked?.length ?? 0);
+    const separators = asSeparators(parsed.separators, running, () => nextUid++);
     // reserveSlots re-derives the padding from `pages`, so a hand-edited or half-written blob
     // (holes without pins, pins without holes) still comes back as a consistent grid.
-    return clampPage(ensureEntry(reserveSlots({ cells, expanded, page, nextUid: cells.length, sortMode: asSortMode(parsed.sortMode), pages })));
+    return clampPage(ensureEntry(reserveSlots({ cells, expanded, page, nextUid, sortMode: asSortMode(parsed.sortMode), pages, separators, parked })));
   } catch {
     return null;
   }

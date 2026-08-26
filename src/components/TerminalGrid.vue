@@ -9,7 +9,8 @@ import * as conn from "../composables/useTerminalConnections";
 import { trackStyle, layoutForCount } from "./gridLayout";
 import { cockpitLines } from "../composables/cockpitLines";
 import { flipKeyframes, flipPairs, onScreen, FLIP_MS, FLIP_EASING } from "./cellFlip";
-import { CELL_DRAG_MIME, type Cell, type CellStatus } from "./gridTabs";
+import { CELL_DRAG_MIME, type Cell, type CellStatus, type Separator } from "./gridTabs";
+import GridSeparator from "./GridSeparator.vue";
 import type { RunCommand } from "./runCommand";
 import type { PrPhase, WorkPhase } from "./rosterPhase";
 import type { CwdPreset } from "./presets";
@@ -68,15 +69,20 @@ const props = defineProps<{
   // list (same reason as canUp/canDown above — this component only sees the page's slice).
   // Absent / empty = the cell has nowhere to go and shows no page menu.
   pageTargets?: Record<number, { page: number; label: string }[]>;
+  // Separators (2026-08-26): the named line standing before a cell, keyed by that cell's uid.
+  // Rendered as a 14px track of its own between the columns.
+  separators?: Record<number, Separator>;
 }>();
 const emit = defineEmits<{
-  (e: "session" | "cwd" | "rename", uid: number, value: string): void;
+  // `park` / `separator-*` (2026-08-26): the block line's own controls (id, not uid) and the
+  // cell's park request (its note).
+  (e: "session" | "cwd" | "rename" | "park" | "separator-rename", uid: number, value: string): void;
   // `fork` (fork-local, iTerm2 mode, R12): that cell asked to branch its conversation into a
   // new column of its own.
-  (e: "close" | "toggle-expand" | "focus-cell" | "fork", uid: number): void;
+  (e: "close" | "toggle-expand" | "focus-cell" | "fork" | "separator-remove", uid: number): void;
   (e: "run" | "runSpare", uid: number, command: RunCommand): void;
   (e: "launch", uid: number, pick: LaunchPick): void;
-  (e: "move", uid: number, dir: -1 | 1): void;
+  (e: "move" | "separator-move", uid: number, dir: -1 | 1): void;
   // Fork-local (iTerm2 mode): header-drag dropped onto another cell — move src to its slot
   // (target = the cell dropped on). Page-move `move-to-page`: the cell's page menu picked a
   // destination page for the whole column (target = the page number).
@@ -87,7 +93,23 @@ const emit = defineEmits<{
   (e: "record-cwd" | "remove-preset", value: string): void;
 }>();
 
-const gridStyle = computed(() => trackStyle(layoutForCount(props.cells.length)));
+// Separators are tracks of their own — `14px` between two `1fr`s — so a line never narrows a
+// pane. Without any, the track template is exactly gridLayout's.
+const SEPARATOR_TRACK = "14px";
+const gridStyle = computed(() => {
+  const base = trackStyle(layoutForCount(props.cells.length));
+  const seps = props.separators;
+  if (!seps || props.cells.every((c) => !seps[c.uid])) return base;
+  const tracks = props.cells.map((c) => (seps[c.uid] ? `${SEPARATOR_TRACK} 1fr` : "1fr")).join(" ");
+  return { ...base, gridTemplateColumns: tracks };
+});
+const separatorBefore = (uid: number): Separator | undefined => props.separators?.[uid];
+// A line can walk onto the neighbouring column unless that column already has one.
+const separatorCan = (uid: number, dir: -1 | 1): boolean => {
+  const idx = props.cells.findIndex((c) => c.uid === uid);
+  const target = props.cells[idx + dir];
+  return !!target && !props.separators?.[target.uid];
+};
 
 // Fork-local (iTerm2 mode): drop handling for header-drag column reorder. Delegated on
 // the stage so every cell is a drop target. Gated on CELL_DRAG_MIME both times, so a
@@ -311,82 +333,97 @@ watch(
     </aside>
     <div ref="zoomMain" class="zoom-main" />
     <div class="grid" :style="gridStyle">
-      <Teleport v-for="cell in cells" :key="cell.uid" :to="zoomMain" :disabled="!(zoomed && cell.uid === expandedUid)">
-        <CommandCell
-          v-if="cell.command"
-          :data-uid="cell.uid"
-          :class="cellClass(cell.uid)"
-          :expanded="cell.uid === expandedUid"
-          :zoomed="zoomed"
-          :command="cell.command"
-          :home="home"
-          :reorderable="reorderable"
-          :page-targets="pageTargets?.[cell.uid]"
-          @toggle-expand="emit('toggle-expand', cell.uid)"
-          @close="emit('close', cell.uid)"
-          @move="(dir) => emit('move', cell.uid, dir)"
-          @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
-          @status="(s) => emit('status', cell.uid, s)"
+      <template v-for="cell in cells" :key="cell.uid">
+        <!-- The block line standing before this column (2026-08-26). Not teleported: it
+             belongs to the grid's track template, never to the zoomed slot. -->
+        <GridSeparator
+          v-if="separatorBefore(cell.uid)"
+          :id="separatorBefore(cell.uid)!.id"
+          :label="separatorBefore(cell.uid)!.label"
+          :can-left="separatorCan(cell.uid, -1)"
+          :can-right="separatorCan(cell.uid, 1)"
+          @move="(id, dir) => emit('separator-move', id, dir)"
+          @rename="(id, label) => emit('separator-rename', id, label)"
+          @remove="(id) => emit('separator-remove', id)"
         />
-        <LauncherCell
-          v-else-if="cell.launcher"
-          :uid="cell.uid"
-          :data-uid="cell.uid"
-          :class="cellClass(cell.uid)"
-          :expanded="cell.uid === expandedUid"
-          :zoomed="zoomed"
-          :launcher="cell.launcher"
-          :session="cell.session"
-          :cwd="cell.cwd"
-          :home="home"
-          :reorderable="reorderable"
-          :page-targets="pageTargets?.[cell.uid]"
-          @toggle-expand="emit('toggle-expand', cell.uid)"
-          @close="emit('close', cell.uid)"
-          @move="(dir) => emit('move', cell.uid, dir)"
-          @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
-          @status="(s) => emit('status', cell.uid, s)"
-          @session="(id) => emit('session', cell.uid, id)"
-        />
-        <TerminalCell
-          v-else
-          :uid="cell.uid"
-          :data-uid="cell.uid"
-          :class="cellClass(cell.uid)"
-          :expanded="cell.uid === expandedUid"
-          :zoomed="zoomed"
-          :initial-session-id="cell.session"
-          :initial-cwd="cell.cwd"
-          :initial-agent="cell.agent"
-          :initial-fork="cell.fork"
-          :default-cwd="defaultCwd"
-          :presets="presets"
-          :launchers="launchers"
-          :home="home"
-          :open-session-ids="openSessionIds"
-          :open-cwds="openCwds"
-          :cancellable="cancelUids.includes(cell.uid)"
-          :reorderable="reorderable"
-          :auto-launch="cell.uid === autoLaunchUid"
-          :name="cell.name ?? null"
-          :page-targets="pageTargets?.[cell.uid]"
-          @rename="(value) => emit('rename', cell.uid, value)"
-          @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
-          @toggle-expand="emit('toggle-expand', cell.uid)"
-          @session="(id) => emit('session', cell.uid, id)"
-          @agent="(a) => emit('agent', cell.uid, a)"
-          @cwd="(c) => emit('cwd', cell.uid, c)"
-          @record-cwd="(c) => emit('record-cwd', c)"
-          @remove-preset="(path) => emit('remove-preset', path)"
-          @run="(cmd) => emit('run', cell.uid, cmd)"
-          @run-spare="(cmd) => emit('runSpare', cell.uid, cmd)"
-          @launch="(pick) => emit('launch', cell.uid, pick)"
-          @close="emit('close', cell.uid)"
-          @move="(dir) => emit('move', cell.uid, dir)"
-          @status="(s) => emit('status', cell.uid, s)"
-          @fork="emit('fork', cell.uid)"
-        />
-      </Teleport>
+        <Teleport :to="zoomMain" :disabled="!(zoomed && cell.uid === expandedUid)">
+          <CommandCell
+            v-if="cell.command"
+            :data-uid="cell.uid"
+            :class="cellClass(cell.uid)"
+            :expanded="cell.uid === expandedUid"
+            :zoomed="zoomed"
+            :command="cell.command"
+            :home="home"
+            :reorderable="reorderable"
+            :page-targets="pageTargets?.[cell.uid]"
+            @toggle-expand="emit('toggle-expand', cell.uid)"
+            @close="emit('close', cell.uid)"
+            @move="(dir) => emit('move', cell.uid, dir)"
+            @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
+            @status="(s) => emit('status', cell.uid, s)"
+          />
+          <LauncherCell
+            v-else-if="cell.launcher"
+            :uid="cell.uid"
+            :data-uid="cell.uid"
+            :class="cellClass(cell.uid)"
+            :expanded="cell.uid === expandedUid"
+            :zoomed="zoomed"
+            :launcher="cell.launcher"
+            :session="cell.session"
+            :cwd="cell.cwd"
+            :home="home"
+            :reorderable="reorderable"
+            :page-targets="pageTargets?.[cell.uid]"
+            @toggle-expand="emit('toggle-expand', cell.uid)"
+            @close="emit('close', cell.uid)"
+            @move="(dir) => emit('move', cell.uid, dir)"
+            @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
+            @status="(s) => emit('status', cell.uid, s)"
+            @session="(id) => emit('session', cell.uid, id)"
+          />
+          <TerminalCell
+            v-else
+            :uid="cell.uid"
+            :data-uid="cell.uid"
+            :class="cellClass(cell.uid)"
+            :expanded="cell.uid === expandedUid"
+            :zoomed="zoomed"
+            :initial-session-id="cell.session"
+            :initial-cwd="cell.cwd"
+            :initial-agent="cell.agent"
+            :initial-fork="cell.fork"
+            :default-cwd="defaultCwd"
+            :presets="presets"
+            :launchers="launchers"
+            :home="home"
+            :open-session-ids="openSessionIds"
+            :open-cwds="openCwds"
+            :cancellable="cancelUids.includes(cell.uid)"
+            :reorderable="reorderable"
+            :auto-launch="cell.uid === autoLaunchUid"
+            :name="cell.name ?? null"
+            :page-targets="pageTargets?.[cell.uid]"
+            @rename="(value) => emit('rename', cell.uid, value)"
+            @move-to-page="(page) => emit('move-to-page', cell.uid, page)"
+            @toggle-expand="emit('toggle-expand', cell.uid)"
+            @session="(id) => emit('session', cell.uid, id)"
+            @agent="(a) => emit('agent', cell.uid, a)"
+            @cwd="(c) => emit('cwd', cell.uid, c)"
+            @record-cwd="(c) => emit('record-cwd', c)"
+            @remove-preset="(path) => emit('remove-preset', path)"
+            @run="(cmd) => emit('run', cell.uid, cmd)"
+            @run-spare="(cmd) => emit('runSpare', cell.uid, cmd)"
+            @launch="(pick) => emit('launch', cell.uid, pick)"
+            @close="emit('close', cell.uid)"
+            @move="(dir) => emit('move', cell.uid, dir)"
+            @status="(s) => emit('status', cell.uid, s)"
+            @fork="emit('fork', cell.uid)"
+            @park="(note) => emit('park', cell.uid, note)"
+          />
+        </Teleport>
+      </template>
     </div>
   </div>
 </template>
@@ -484,6 +521,11 @@ watch(
   flex: 0 0 260px;
   height: 100%;
   min-width: 0;
+}
+
+/* A block line stays a line in the filmstrip too. */
+.stage.zoomed:not(.listmode) .grid > .grid-separator {
+  flex: 0 0 14px;
 }
 
 /* The keyboard-focused cell lifts and grows slightly, in place — tiled grid only, so it never

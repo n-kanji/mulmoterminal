@@ -61,6 +61,19 @@ import {
   resolveCellStatus,
   MAX_TERMINALS,
 } from "./gridTabs";
+import {
+  addSeparator,
+  moveSeparator,
+  parkCell,
+  parkedOf,
+  removeParked,
+  removeSeparator,
+  separatorsByUid,
+  setParkNote,
+  setSeparatorLabel,
+  unparkCell,
+} from "./gridBlocks";
+import ParkedDock, { type ParkedCard } from "./ParkedDock.vue";
 import { gridShortcutFor, isEditableTarget, type GridShortcut } from "../composables/gridShortcut";
 import { useCaptureKeydown } from "../composables/useCaptureKeydown";
 import { getActiveKeymap } from "../composables/activeKeymap";
@@ -130,7 +143,10 @@ const noRunningTerminals = computed(() => runningCount(state.value.cells) === 0)
 // limit would cap — so a waiting cell on any page floats forward. The per-cell
 // `statusByUid` (reported up while a cell is mounted) is the fallback for cells with
 // no session id (command cells) and a just-launched cell before its id arrives.
-const cellSessionIds = computed(() => state.value.cells.map((c) => c.session).filter((s): s is string => !!s));
+// Parked panes (2026-08-26) are tracked too: their card is where "a reply came back" shows.
+const cellSessionIds = computed(() =>
+  [...state.value.cells.map((c) => c.session), ...parkedOf(state.value).map((p) => p.cell.session)].filter((s): s is string => !!s),
+);
 const { activity: gridActivity } = useGridActivity(cellSessionIds);
 const statusByUid = reactive<Record<number, CellStatus>>({});
 const onStatus = (uid: number, s: CellStatus) => (statusByUid[uid] = s);
@@ -484,6 +500,65 @@ const onReorder = (uid: number, targetUid: number) => {
   const base = state.value.sortMode === "manual" ? state.value : setSortMode(state.value, "manual");
   state.value = moveCellTo(base, uid, targetUid);
 };
+// Parking (operator request 2026-08-26): shelve a column into the dock with the operator's
+// note. The cell unmounts, which only DETACHES its durable connection (`cell-<uid>` in the
+// pool) — the socket, and so the PTY, stay alive — and restoring re-mounts the same uid, which
+// re-attaches to that very connection. Closing from the dock is the real teardown.
+const onPark = (uid: number, note: string) =>
+  (state.value = parkCell(
+    state.value,
+    uid,
+    note,
+    Date.now(),
+    renderCells.value.map((c) => c.uid),
+  ));
+const onUnpark = (uid: number) => {
+  state.value = unparkCell(state.value, uid);
+  void nextTick(() => conn.focus(`cell-${uid}`));
+};
+const onParkNote = (uid: number, note: string) => (state.value = setParkNote(state.value, uid, note));
+const onParkedClose = (uid: number) => {
+  const entry = parkedOf(state.value).find((p) => p.cell.uid === uid);
+  if (!entry) return;
+  conn.terminate(`cell-${uid}`);
+  // Over HTTP too: after a reload the pool has no slot for a parked pane, so the WS
+  // `terminate` above reaches nothing and only this reaps the tmux session.
+  if (entry.cell.session) fetch(`/api/session/${encodeURIComponent(entry.cell.session)}/terminate`, { method: "POST" }).catch(() => {});
+  state.value = removeParked(state.value, uid);
+};
+const parkedCards = computed<ParkedCard[]>(() =>
+  parkedOf(state.value).map((p) => ({
+    uid: p.cell.uid,
+    cwd: p.cell.cwd,
+    name: p.cell.name ?? null,
+    note: p.note,
+    at: p.at,
+    status: (p.cell.session && sessionStatus.value.get(p.cell.session)) || ("idle" as CellStatus),
+    headerColor: (p.cell.cwd ? chromeByCwd.get(p.cell.cwd)?.headerColor : null) ?? null,
+  })),
+);
+
+// Separators (operator request 2026-08-26): the toolbar adds a line before the focused column
+// (or the page's last one); the line's own controls walk, rename and remove it. `order` is the
+// on-screen uid order, which is what "left" and "right" mean on the line.
+const separatorsForGrid = computed(() => separatorsByUid(state.value));
+const onAddSeparator = () => {
+  const onScreen = renderCells.value.map((c) => c.uid);
+  const focused = focusedCellUid.value;
+  const before = focused !== null && onScreen.includes(focused) ? focused : onScreen[onScreen.length - 1];
+  if (before === undefined) return;
+  state.value = addSeparator(state.value, before);
+};
+const onSeparatorMove = (id: number, dir: -1 | 1) =>
+  (state.value = moveSeparator(
+    state.value,
+    id,
+    dir,
+    renderCells.value.map((c) => c.uid),
+  ));
+const onSeparatorRename = (id: number, label: string) => (state.value = setSeparatorLabel(state.value, id, label));
+const onSeparatorRemove = (id: number) => (state.value = removeSeparator(state.value, id));
+
 // Page-move (operator request 2026-08-25): the pane toolbar's page menu — send a column to another
 // page without forking or relaunching anything. Choosing a page for a column is a placement
 // statement like a drag, so auto mode switches to manual here too.
@@ -776,6 +851,7 @@ function configureAppearance() {
       :preset-alerts="presetAlerts"
       :undo-chip="undoChip"
       @add-terminal="onAddTerminal"
+      @add-separator="onAddSeparator"
       @toggle-sort="toggleSortMode"
       @toggle-view="toggleListMode"
       @settings="showSettings = true"
@@ -818,40 +894,49 @@ function configureAppearance() {
         </nav>
       </template>
     </AppToolbar>
-    <TerminalGrid
-      class="flex-1 min-h-0 min-w-0"
-      :cells="renderCells"
-      :expanded-uid="expandedUid"
-      :auto-launch-uid="quickLaunchUid"
-      :list-rows="listRows"
-      :cancel-uids="cancelUids"
-      :default-cwd="defaultCwd"
-      :presets="presets"
-      :launchers="launchers"
-      :home="home"
-      :reorderable="reorderable"
-      :open-session-ids="openSessionIds"
-      :open-cwds="openCwds"
-      :list-mode="listModeOn"
-      :page-targets="pageTargetsByUid"
-      @session="onSession"
-      @fork="onFork"
-      @agent="onAgent"
-      @cwd="onCwd"
-      @record-cwd="recordPreset"
-      @remove-preset="onRemovePreset"
-      @rename="onRename"
-      @close="onClose"
-      @toggle-expand="onToggleExpand"
-      @focus-cell="focusedCellUid = $event"
-      @run="onRun"
-      @run-spare="onRunSpare"
-      @launch="onLaunch"
-      @move="onMove"
-      @move-to-page="onMoveToPage"
-      @reorder="onReorder"
-      @status="onStatus"
-    />
+    <!-- The grid and, when anything is parked, the dock beside it (2026-08-26). -->
+    <div class="flex min-h-0 min-w-0 flex-1">
+      <TerminalGrid
+        class="flex-1 min-h-0 min-w-0"
+        :cells="renderCells"
+        :separators="separatorsForGrid"
+        :expanded-uid="expandedUid"
+        :auto-launch-uid="quickLaunchUid"
+        :list-rows="listRows"
+        :cancel-uids="cancelUids"
+        :default-cwd="defaultCwd"
+        :presets="presets"
+        :launchers="launchers"
+        :home="home"
+        :reorderable="reorderable"
+        :open-session-ids="openSessionIds"
+        :open-cwds="openCwds"
+        :list-mode="listModeOn"
+        :page-targets="pageTargetsByUid"
+        @session="onSession"
+        @fork="onFork"
+        @agent="onAgent"
+        @cwd="onCwd"
+        @record-cwd="recordPreset"
+        @remove-preset="onRemovePreset"
+        @rename="onRename"
+        @close="onClose"
+        @toggle-expand="onToggleExpand"
+        @focus-cell="focusedCellUid = $event"
+        @run="onRun"
+        @run-spare="onRunSpare"
+        @launch="onLaunch"
+        @move="onMove"
+        @move-to-page="onMoveToPage"
+        @reorder="onReorder"
+        @status="onStatus"
+        @park="onPark"
+        @separator-move="onSeparatorMove"
+        @separator-rename="onSeparatorRename"
+        @separator-remove="onSeparatorRemove"
+      />
+      <ParkedDock v-if="expandedUid === null" :items="parkedCards" :home="home" @restore="onUnpark" @close="onParkedClose" @note="onParkNote" />
+    </div>
     <footer v-if="noRunningTerminals" class="flex-none border-t border-border bg-panel px-4 py-2 text-center">
       <GuideLinks />
     </footer>

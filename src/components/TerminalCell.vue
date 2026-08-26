@@ -23,6 +23,7 @@ import CockpitHeader from "./CockpitHeader.vue";
 import CellChromeButtons from "./CellChromeButtons.vue";
 import CellPageMenu from "./CellPageMenu.vue";
 import NextQueueMenu from "./NextQueueMenu.vue";
+import CellParkMenu from "./CellParkMenu.vue";
 import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
 import { activityStatus, CELL_DRAG_MIME, MAX_CELL_NAME, type CellStatus } from "./gridTabs";
@@ -117,7 +118,8 @@ const emit = defineEmits<
     // `record-cwd`: auto-record a fresh launch's server-confirmed cwd as a preset.
     // `remove-preset`: drop a preset (its close button) from the shared list — value is the path.
     // `rename`: the operator's own name for this pane (R10); an empty value clears it.
-    (e: "session" | "cwd" | "record-cwd" | "remove-preset" | "rename", value: string): void;
+    // `park` (2026-08-26): shelve this column into the dock with the operator's note.
+    (e: "session" | "cwd" | "record-cwd" | "remove-preset" | "rename" | "park", value: string): void;
     // `run` launches in THIS (empty) cell from the launcher; `runSpare` is the running
     // terminal's header menu, which must NOT replace the session — it runs in a new cell.
     (e: "run" | "runSpare", value: RunCommand): void;
@@ -1405,6 +1407,9 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">call_split</span>
           </button>
+          <!-- Park (2026-08-26): shelve this column into the dock with a "resume when" note,
+               session intact. Only once there is a session to come back to. -->
+          <CellParkMenu v-if="sessionId" @park="(note) => emit('park', note)" />
           <CellChromeButtons :expanded="expanded" hide-expand @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
