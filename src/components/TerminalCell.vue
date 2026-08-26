@@ -1405,10 +1405,6 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">call_split</span>
           </button>
-          <!-- The next-instruction queue (2026-08-26): park what to say next instead of
-               interrupting the running turn. Claude only — delivery rides Claude's Stop
-               hook. -->
-          <NextQueueMenu v-if="sessionId && agent !== 'codex'" :session-id="sessionId" />
           <CellChromeButtons :expanded="expanded" hide-expand @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
@@ -1570,6 +1566,13 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           </button>
         </template>
       </TerminalView>
+      <!-- The next-instruction queue (2026-08-26) sits at the bottom-right, beside the
+           agent's own input line: the operator's eye is there when the thought "and then
+           do X" arrives, not on the header. Claude only — delivery rides Claude's Stop
+           hook. Below the diff / transcript overlays (z-15) so they cover it when open. -->
+      <div v-if="sessionId && agent !== 'codex'" class="absolute bottom-1.5 right-2 z-[14]">
+        <NextQueueMenu :session-id="sessionId" floating />
+      </div>
       <div
         v-if="diffOpen && diff"
         data-testid="cell-diff"

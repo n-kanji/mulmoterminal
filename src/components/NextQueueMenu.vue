@@ -18,7 +18,10 @@ import { computed, ref, toRef, watch, onUnmounted, useTemplateRef, nextTick } fr
 import { unreadHandoffCount } from "../../common/nextQueue";
 import { useNextQueue } from "../composables/useNextQueue";
 
-const props = defineProps<{ sessionId: string | null }>();
+// `floating`: the trigger sits over the terminal canvas (bottom-right of the cell, beside
+// the agent's input line) rather than in a chrome row, so it carries its own backdrop and
+// the panel opens UPWARD from it.
+const props = defineProps<{ sessionId: string | null; floating?: boolean }>();
 const { state, error, add, remove, setAuto, sendNow, markRead } = useNextQueue(toRef(props, "sessionId"));
 
 const open = ref(false);
@@ -48,14 +51,13 @@ function place() {
   // Right-aligned to the trigger, pulled back inside the viewport when the column is at
   // the left edge of the screen.
   const right = Math.max(MARGIN, Math.min(window.innerWidth - rect.right, window.innerWidth - width - MARGIN));
-  const top = rect.bottom + 4;
-  panelStyle.value = {
-    position: "fixed",
-    top: `${top}px`,
-    right: `${right}px`,
-    width: `${width}px`,
-    maxHeight: `${Math.max(120, window.innerHeight - top - MARGIN)}px`,
-  };
+  // Open away from the nearer screen edge: a trigger in the lower half (the floating
+  // placement beside the input line) gets the panel above it.
+  const above = rect.top > window.innerHeight / 2;
+  const base = { position: "fixed", right: `${right}px`, width: `${width}px` };
+  panelStyle.value = above
+    ? { ...base, bottom: `${window.innerHeight - rect.top + 4}px`, maxHeight: `${Math.max(120, rect.top - 4 - MARGIN)}px` }
+    : { ...base, top: `${rect.bottom + 4}px`, maxHeight: `${Math.max(120, window.innerHeight - rect.bottom - 4 - MARGIN)}px` };
 }
 
 function onOutside(e: MouseEvent) {
@@ -114,8 +116,13 @@ const timeOf = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-di
       ref="trigger"
       type="button"
       data-testid="cell-next-queue"
-      class="cell-btn relative inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
-      :class="{ 'bg-hover': open }"
+      class="cell-btn relative inline-flex flex-none cursor-pointer items-center justify-center rounded border-0 hover:bg-hover"
+      :class="[
+        floating
+          ? 'h-6 w-6 border border-border bg-panel/90 text-secondary shadow-[0_2px_8px_rgba(0,0,0,0.35)] hover:text-fg'
+          : 'h-5 w-5 bg-transparent text-inherit',
+        { 'bg-hover': open },
+      ]"
       :title="title"
       aria-label="Next instructions queue"
       aria-haspopup="true"
