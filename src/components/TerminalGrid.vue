@@ -95,7 +95,7 @@ const emit = defineEmits<{
 
 // Separators are tracks of their own — `14px` between two `1fr`s — so a line never narrows a
 // pane. Without any, the track template is exactly gridLayout's.
-const SEPARATOR_TRACK = "14px";
+const SEPARATOR_TRACK = "18px";
 const gridStyle = computed(() => {
   const base = trackStyle(layoutForCount(props.cells.length));
   const seps = props.separators;
@@ -525,7 +525,7 @@ watch(
 
 /* A block line stays a line in the filmstrip too. */
 .stage.zoomed:not(.listmode) .grid > .grid-separator {
-  flex: 0 0 14px;
+  flex: 0 0 18px;
 }
 
 /* The keyboard-focused cell lifts and grows slightly, in place — tiled grid only, so it never

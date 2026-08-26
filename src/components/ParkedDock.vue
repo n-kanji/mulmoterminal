@@ -50,7 +50,7 @@ function editNote(uid: number, current: string) {
   <aside
     v-if="cards.length"
     data-testid="parked-dock"
-    class="flex w-[232px] min-w-0 flex-none flex-col gap-1.5 overflow-y-auto border-l border-border bg-deep p-1.5"
+    class="flex w-[232px] min-w-0 flex-none flex-col gap-1.5 overflow-y-auto border-r border-border bg-deep p-1.5"
     aria-label="Parked panes"
   >
     <div class="flex items-center justify-between px-1 text-[11px] font-semibold text-secondary">

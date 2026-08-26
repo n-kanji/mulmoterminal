@@ -35,7 +35,7 @@ watch(renaming, (on) => {
 
 <template>
   <div
-    class="grid-separator group relative flex h-full min-h-0 w-[14px] flex-col items-center"
+    class="grid-separator group relative flex h-full min-h-0 w-[18px] flex-col items-center"
     :data-separator="id"
     data-testid="grid-separator"
     :title="label ? `区切り: ${label}` : '区切り（クリックで名前）'"
@@ -46,8 +46,8 @@ watch(renaming, (on) => {
     <button
       type="button"
       data-testid="grid-separator-label"
-      class="relative z-[1] mt-2 max-h-[60%] cursor-text overflow-hidden rounded-sm border-0 bg-[var(--bg-deep)] px-px py-1 font-sans text-[11px] font-semibold leading-none text-accent [writing-mode:vertical-rl]"
-      :class="label ? '' : 'opacity-0 group-hover:opacity-100'"
+      class="relative z-[1] mt-2 max-h-[60%] cursor-text overflow-hidden rounded-sm border-0 bg-[var(--bg-deep)] px-px py-1 font-sans text-[11px] font-semibold leading-none [writing-mode:vertical-rl]"
+      :class="label ? 'text-accent' : 'text-secondary opacity-70 hover:opacity-100'"
       :aria-label="label ? `Separator: ${label}` : 'Name this separator'"
       @click.stop="startRename"
     >
@@ -72,9 +72,10 @@ watch(renaming, (on) => {
         @blur="commit"
       />
     </div>
-    <!-- Controls, at the foot of the line, on hover. -->
+    <!-- Controls, at the foot of the line. Always shown (operator 2026-08-26: hover-only
+         on an 18px line was never found) — dim until hovered. -->
     <div
-      class="absolute bottom-2 z-[1] flex flex-col items-center gap-0.5 rounded bg-[var(--bg-deep)] py-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+      class="absolute bottom-2 z-[1] flex flex-col items-center gap-0.5 rounded bg-[var(--bg-deep)] py-0.5 opacity-70 hover:opacity-100 focus-within:opacity-100"
     >
       <button
         type="button"

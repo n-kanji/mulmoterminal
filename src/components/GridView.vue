@@ -894,8 +894,9 @@ function configureAppearance() {
         </nav>
       </template>
     </AppToolbar>
-    <!-- The grid and, when anything is parked, the dock beside it (2026-08-26). -->
+    <!-- The dock (left, operator's call) and the grid (2026-08-26). -->
     <div class="flex min-h-0 min-w-0 flex-1">
+      <ParkedDock v-if="expandedUid === null" :items="parkedCards" :home="home" @restore="onUnpark" @close="onParkedClose" @note="onParkNote" />
       <TerminalGrid
         class="flex-1 min-h-0 min-w-0"
         :cells="renderCells"
@@ -935,7 +936,6 @@ function configureAppearance() {
         @separator-rename="onSeparatorRename"
         @separator-remove="onSeparatorRemove"
       />
-      <ParkedDock v-if="expandedUid === null" :items="parkedCards" :home="home" @restore="onUnpark" @close="onParkedClose" @note="onParkNote" />
     </div>
     <footer v-if="noRunningTerminals" class="flex-none border-t border-border bg-panel px-4 py-2 text-center">
       <GuideLinks />
