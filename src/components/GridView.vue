@@ -76,6 +76,7 @@ import {
 import ParkedDock, { type ParkedCard } from "./ParkedDock.vue";
 import { gridShortcutFor, isEditableTarget, type GridShortcut } from "../composables/gridShortcut";
 import { useCaptureKeydown } from "../composables/useCaptureKeydown";
+import { imeSafeKey } from "../composables/imeSafeKey";
 import { getActiveKeymap } from "../composables/activeKeymap";
 import { preferredLaunchDir } from "./launchDir";
 import * as conn from "../composables/useTerminalConnections";
@@ -613,6 +614,9 @@ function commitRename() {
   state.value = setPageLabel(state.value, page, renameDraft.value);
 }
 const cancelRename = () => (renamingPage.value = null);
+// IME-confirm Enter / composition-cancel Esc must not touch the rename (see imeSafeKey).
+const onRenameEnter = imeSafeKey(commitRename);
+const onRenameEsc = imeSafeKey(cancelRename);
 const togglePin = (page: number) => (state.value = togglePagePin(state.value, page));
 
 // A script the single view's terminal-header Run menu handed off: run it in a spare
@@ -874,8 +878,8 @@ function configureAppearance() {
               class="border border-accent bg-base text-fg font-mono text-xs w-[104px] py-[3px] px-2 rounded-md outline-none"
               :maxlength="MAX_PAGE_LABEL"
               aria-label="Page name"
-              @keydown.enter.prevent="commitRename"
-              @keydown.esc.prevent="cancelRename"
+              @keydown.enter="onRenameEnter"
+              @keydown.esc="onRenameEsc"
               @blur="commitRename"
             />
             <button

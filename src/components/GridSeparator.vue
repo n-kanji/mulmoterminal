@@ -5,6 +5,7 @@
 // controls (walk left / right, rename, remove) show on hover so the line stays a line.
 import { ref, watch, nextTick, useTemplateRef } from "vue";
 import { MAX_SEPARATOR_LABEL } from "./gridTabs";
+import { imeSafeKey } from "../composables/imeSafeKey";
 
 const props = defineProps<{ id: number; label: string | null | undefined; canLeft: boolean; canRight: boolean }>();
 const emit = defineEmits<{
@@ -28,6 +29,9 @@ function commit() {
 function cancel() {
   renaming.value = false;
 }
+// IME-confirm Enter / composition-cancel Esc must not touch the rename (see imeSafeKey).
+const onEnter = imeSafeKey(commit);
+const onEsc = imeSafeKey(cancel);
 watch(renaming, (on) => {
   if (on) void nextTick(() => input.value?.select());
 });
@@ -105,8 +109,8 @@ watch(renaming, (on) => {
         :maxlength="MAX_SEPARATOR_LABEL"
         placeholder="この区切りの名前"
         aria-label="Separator name"
-        @keydown.enter.prevent="commit"
-        @keydown.esc.prevent="cancel"
+        @keydown.enter="onEnter"
+        @keydown.esc="onEsc"
         @blur="commit"
       />
     </div>

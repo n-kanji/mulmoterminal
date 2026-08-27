@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from "vue";
 import TerminalView from "./Terminal.vue";
 import { usePubSub } from "../composables/usePubSub";
+import { imeSafeKey } from "../composables/imeSafeKey";
 import { useDirConfig } from "../composables/useDirConfig";
 import { useGitStatus } from "../composables/useGitStatus";
 import { formatCwd, worktreeLabel } from "./cwdDisplay";
@@ -1090,6 +1091,9 @@ function commitRename() {
   emit("rename", nameDraft.value);
 }
 const cancelRename = () => (renaming.value = false);
+// IME-confirm Enter / composition-cancel Esc must not touch the rename (see imeSafeKey).
+const onRenameEnter = imeSafeKey(commitRename);
+const onRenameEsc = imeSafeKey(cancelRename);
 
 // cwd + session id, one hover away for debugging and resume (the header shows the
 // DirBadge, not the full path).
@@ -1438,8 +1442,8 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
             :maxlength="MAX_CELL_NAME"
             aria-label="Pane name"
             spellcheck="false"
-            @keydown.enter.prevent="commitRename"
-            @keydown.esc.prevent="cancelRename"
+            @keydown.enter="onRenameEnter"
+            @keydown.esc="onRenameEsc"
             @blur="commitRename"
             @dblclick.stop
           />
