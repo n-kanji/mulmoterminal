@@ -42,7 +42,7 @@ import { mountNextQueueRoutes } from "./routes/next-queue-routes.js";
 import { drainNextQueue } from "./session/next-queue-drain.js";
 import { setNextQueueLiveness } from "./session/next-queue.js";
 import { onTurnEnd } from "./session/turn-end.js";
-import { currentAgentSessionId } from "./session/session-alias.js";
+import { currentAgentSessionId, initSessionAliasPersistence } from "./session/session-alias.js";
 import { sessionLastTurn } from "./session/session-reads.js";
 import { NEXT_QUEUE_CHANNEL } from "../common/nextQueue.js";
 import { existingDir } from "./config/workspace.js";
@@ -598,6 +598,12 @@ mountTerminalWebSockets({
   spawnLauncherPty,
   resolveLauncher,
 });
+
+// Restore the /clear-alias pairings, so a pane forked right after a deploy still branches
+// the conversation it SHOWS, not the pre-/clear transcript its pane id names
+// (session-alias.ts). Best-effort like the other hydrations: a hook that lands during the
+// file read simply wins — hydration only fills ids nothing live has claimed.
+void initSessionAliasPersistence();
 
 // A bind failure (most often the port already in use) must not surface as an unhandled
 // 'error' event / stack trace — exit with a clear message and the code the launcher reads

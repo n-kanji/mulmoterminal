@@ -7,6 +7,7 @@ import { getUserMcpServers } from "../config/config-routes.js";
 import { SANDBOX_HOST } from "../infra/sandbox.js";
 import { buildClaudeArgs } from "../agents/claude-args.js";
 import { knownSessions, launchChoices, ptys } from "./registry.js";
+import { resolveAliasedSessionId } from "./session-alias.js";
 import { ptySpawn, sandboxWouldRun, spawnSandboxEntry } from "./pty-spawn.js";
 import { attachDraftInjection } from "./draft-injection.js";
 import { withChannelConsent } from "./channel-consent.js";
@@ -47,7 +48,10 @@ export interface SpawnClaudeOptions {
 function rememberedChoice(sessionId: string, resume: string | null, fork: boolean): DirModelChoice | undefined {
   const own = launchChoices.get(sessionId);
   if (own || !fork || !resume) return own;
-  return launchChoices.get(resume);
+  // A fork's `resume` may be the source pane's post-/clear agent id (ws-routes translates it
+  // so the branch carries what the pane SHOWS); launch choices are keyed by the PANE id, so
+  // translate back or a cleared pane's fork would silently fall to the directory default.
+  return launchChoices.get(resume) ?? launchChoices.get(resolveAliasedSessionId(resume));
 }
 
 // Brand-new (or restarted-idle) session: surface it in the sidebar before it's persisted. A

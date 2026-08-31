@@ -28,9 +28,10 @@ import { handleCommandFrame } from "../session/pty-connection.js";
 import { closeWithError } from "../session/ws-frames.js";
 import { ProviderRefusedError } from "../session/provider-env.js";
 import { sessionExistsOnDisk } from "../session/session-reads.js";
+import { currentAgentSessionId } from "../session/session-alias.js";
 import {
   canStartLauncher,
-  resolveFork,
+  resolveForkRequest,
   resolveReattachableId,
   resolveSession,
   resumeLossNotice,
@@ -82,11 +83,15 @@ function queuedFirstTurn(resume: string | null, attachGuiMcp: boolean, cwd: stri
 // Fork-local (iTerm2 mode, R12): `?fork=<session id>` — the cell's Fork button opened this
 // column to BRANCH that conversation. Only a genuinely fresh connection can fork (a reattach
 // or a resume already has a conversation of its own), and the source must have a transcript
-// on disk, because `--fork-session` is a mode of `--resume`.
+// on disk, because `--fork-session` is a mode of `--resume`. The rule itself — including
+// translating the pane id to the conversation the pane SHOWS after a /clear (operator report
+// 2026-08-31) — lives in resolveForkRequest (pure/tested); this only wires the live lookups.
 function resolveClaudeFork(url: URL, cwd: string, fresh: boolean): ForkPlan {
-  const raw = url.searchParams.get("fork");
-  const from = raw && SESSION_ID_RE.test(raw) ? raw : null;
-  return resolveFork(from, raw !== null, { fresh, sourceOnDisk: !!from && sessionExistsOnDisk(from, cwd) });
+  return resolveForkRequest(url.searchParams.get("fork"), (s) => SESSION_ID_RE.test(s), {
+    fresh,
+    currentAgentId: currentAgentSessionId,
+    sourceOnDisk: (id) => sessionExistsOnDisk(id, cwd),
+  });
 }
 
 // The first turn a fresh spawn auto-runs, if any. A reattach must not consume one — nothing

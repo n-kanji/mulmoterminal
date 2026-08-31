@@ -66,6 +66,28 @@ export function resolveFork(from: string | null, asked: boolean, facts: ForkFact
   return { kind: "fork", from };
 }
 
+export interface ForkRequestFacts {
+  fresh: boolean;
+  // The agent's CURRENT own id for a pane that /clear-ed or /compact-ed (session-alias.ts),
+  // or undefined when the two still agree. The on-screen conversation lives in the
+  // transcript named by THIS id — the pane-id file stopped growing at the /clear.
+  currentAgentId: (pane: string) => string | undefined;
+  sourceOnDisk: (id: string) => boolean;
+}
+
+// The full `?fork=` decision, deps injected so the whole rule is testable without a
+// filesystem. The grid can only send the PANE's id, so the source is translated to the
+// pane's current agent id first — forking the pane id itself branched a stale pre-/clear
+// conversation the operator read as "a different pane's content" (operator report
+// 2026-08-31). Deliberately NO pane-id fallback when the current id has no transcript yet
+// (a /clear with no prompt since): that fallback IS the stale-fork bug, so it must refuse
+// (resolveFork's `unavailable`) instead.
+export function resolveForkRequest(raw: string | null, isSessionId: (s: string) => boolean, facts: ForkRequestFacts): ForkPlan {
+  const pane = raw && isSessionId(raw) ? raw : null;
+  const from = pane ? (facts.currentAgentId(pane) ?? pane) : null;
+  return resolveFork(from, raw !== null, { fresh: facts.fresh, sourceOnDisk: !!from && facts.sourceOnDisk(from) });
+}
+
 // ── telling the operator a requested session could not be continued ────────────
 
 // The notice for a pane whose requested session id could NOT be served — no live pty, no

@@ -3,6 +3,7 @@ import {
   resolveSession,
   type SessionFacts,
   resolveFork,
+  resolveForkRequest,
   resolveReattachableId,
   resumeLossNotice,
   canStartLauncher,
@@ -160,5 +161,57 @@ describe("resolveFork", () => {
 
   it("reports unavailable when the param is not a session id at all", () => {
     expect(resolveFork(null, true, { fresh: true, sourceOnDisk: false })).toEqual({ kind: "unavailable", from: null });
+  });
+});
+
+// The full `?fork=` decision, with the /clear translation folded in. The grid can only send
+// the PANE's id; after a /clear the on-screen conversation lives in the transcript named by
+// Claude's own newer id, and forking the pane id branched the stale pre-/clear conversation
+// (operator report 2026-08-31: "the new pane showed a different pane's content").
+describe("resolveForkRequest", () => {
+  const PANE = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const CURRENT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+  const isSessionId = (s: string) => /^[0-9a-f-]{36}$/.test(s);
+  const never = () => undefined;
+
+  it("forks the pane id itself for a pane that never cleared", () => {
+    const plan = resolveForkRequest(PANE, isSessionId, { fresh: true, currentAgentId: never, sourceOnDisk: (id) => id === PANE });
+    expect(plan).toEqual({ kind: "fork", from: PANE });
+  });
+
+  // The regression this exists for: the source pane /clear-ed days ago, so its pane-id file
+  // is a frozen pre-/clear conversation while the on-screen one lives under the newer id.
+  it("forks the pane's CURRENT agent id after a /clear, not the stale pane id", () => {
+    const plan = resolveForkRequest(PANE, isSessionId, {
+      fresh: true,
+      currentAgentId: (pane) => (pane === PANE ? CURRENT : undefined),
+      sourceOnDisk: (id) => id === CURRENT || id === PANE, // BOTH exist — the stale one must lose
+    });
+    expect(plan).toEqual({ kind: "fork", from: CURRENT });
+  });
+
+  // No pane-id fallback: right after a /clear with no prompt since, the newer id has no
+  // transcript yet. Falling back to the (existing!) pane-id file would silently branch the
+  // pre-/clear conversation — the exact bug — so it must refuse instead.
+  it("refuses rather than fall back to the stale pane id when the current id has no transcript", () => {
+    const plan = resolveForkRequest(PANE, isSessionId, {
+      fresh: true,
+      currentAgentId: () => CURRENT,
+      sourceOnDisk: (id) => id === PANE,
+    });
+    expect(plan).toEqual({ kind: "unavailable", from: CURRENT });
+  });
+
+  it("reports unavailable for a param that is not a session id, without consulting the lookups", () => {
+    const plan = resolveForkRequest("not-an-id", isSessionId, { fresh: true, currentAgentId: never, sourceOnDisk: () => true });
+    expect(plan).toEqual({ kind: "unavailable", from: null });
+  });
+
+  it("does nothing without a fork param", () => {
+    expect(resolveForkRequest(null, isSessionId, { fresh: true, currentAgentId: never, sourceOnDisk: () => true })).toEqual({ kind: "none" });
+  });
+
+  it("ignores the param once this connection has a session of its own", () => {
+    expect(resolveForkRequest(PANE, isSessionId, { fresh: false, currentAgentId: never, sourceOnDisk: () => true })).toEqual({ kind: "none" });
   });
 });
