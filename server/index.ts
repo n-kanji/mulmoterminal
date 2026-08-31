@@ -603,7 +603,7 @@ mountTerminalWebSockets({
 // the conversation it SHOWS, not the pre-/clear transcript its pane id names
 // (session-alias.ts). Best-effort like the other hydrations: a hook that lands during the
 // file read simply wins — hydration only fills ids nothing live has claimed.
-void initSessionAliasPersistence();
+void initSessionAliasPersistence((id) => ptys.has(id));
 
 // A bind failure (most often the port already in use) must not surface as an unhandled
 // 'error' event / stack trace — exit with a clear message and the code the launcher reads

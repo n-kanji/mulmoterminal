@@ -48,7 +48,14 @@ export function noteSessionAlias(header: unknown, bodyId: unknown): void {
   if (typeof header !== "string" || typeof bodyId !== "string") return;
   if (!header || !bodyId) return;
   if (header === bodyId) {
-    if (aliases.size) forgetSessionAliases(header);
+    // `header` provably runs as ITSELF, so two things follow: nothing may still alias TO
+    // it, and it can no longer BE an alias for another pane. The second matters because
+    // the session list offers every on-disk .jsonl — including a post-/clear agent id's —
+    // so that id can be resumed in a cell of its own, and a kept `A -> P` entry would
+    // route the new pane's mission / next-queue writes into pane P.
+    const wasAlias = aliases.delete(header);
+    forgetSessionAliases(header); // persists only when it dropped something
+    if (wasAlias) persistAliases();
     return;
   }
   if (aliases.get(bodyId)?.mt === header) return; // every hook repeats the pair — record once
@@ -102,16 +109,19 @@ export function parseAliases(raw: unknown): Array<{ agent: string } & AliasRecor
   return out;
 }
 
-/** Which entries survive a save: recent ones, newest first and capped. Pure so the aging
- *  rule is testable without a filesystem. */
+/** Which entries survive a save: everything for a pane that is still live, plus recent
+ *  entries for panes that are not — newest first and capped. Pure so the aging rule is
+ *  testable without a filesystem. The live guard mirrors pruneMissions: `at` is written
+ *  once (the /clear), so without it a pane cleared longer ago than the age cap would lose
+ *  its pairing on any save and the stale-fork bug would quietly return. */
 export function pruneAliases(
   entries: Iterable<readonly [string, AliasRecord]>,
-  opts: { now: number; maxAgeMs?: number; maxEntries?: number },
+  opts: { now: number; isLive?: (mt: string) => boolean; maxAgeMs?: number; maxEntries?: number },
 ): Record<string, AliasRecord> {
   const maxAgeMs = opts.maxAgeMs ?? ALIAS_MAX_AGE_MS;
   const maxEntries = opts.maxEntries ?? ALIAS_MAX_ENTRIES;
   const kept = [...entries]
-    .filter(([, rec]) => opts.now - rec.at <= maxAgeMs)
+    .filter(([, rec]) => opts.isLive?.(rec.mt) || opts.now - rec.at <= maxAgeMs)
     .sort((a, b) => b[1].at - a[1].at)
     .slice(0, maxEntries);
   return Object.fromEntries(kept);
@@ -124,6 +134,9 @@ const ALIASES_FILE = path.join(MULMOTERMINAL_HOME, "session-aliases.json");
 // import-time writer would scribble into the developer's real ~/.mulmoterminal (the same
 // reason session-mission-route.spec mocks the mission store).
 let persistEnabled = false;
+// Whether a pane still runs (injected at boot with the ptys registry) — a live pane's
+// pairing survives pruning regardless of age.
+let isLivePane: (mt: string) => boolean = () => false;
 // Serialised into one chain like the other persisted tables: two saves racing would
 // interleave a read-modify-write and lose one of them.
 let persistChain: Promise<void> = Promise.resolve();
@@ -132,10 +145,7 @@ function persistAliases(): void {
   persistChain = persistChain
     .then(() => fs.mkdir(MULMOTERMINAL_HOME, { recursive: true }))
     .then(async () => {
-      const next = pruneAliases(
-        [...aliases].map(([agent, rec]) => [agent, rec] as const),
-        { now: Date.now() },
-      );
+      const next = pruneAliases(aliases, { now: Date.now(), isLive: isLivePane });
       // Prune the in-memory map to match, or a dropped entry comes straight back on the next save.
       for (const agent of [...aliases.keys()]) if (!(agent in next)) aliases.delete(agent);
       await fs.writeFile(ALIASES_FILE, JSON.stringify(next));
@@ -145,7 +155,8 @@ function persistAliases(): void {
 
 /** Hydrate from disk and arm persistence. Called once at server boot; a hook that lands
  *  during the file read simply wins — only ids nothing live has claimed are restored. */
-export async function initSessionAliasPersistence(): Promise<void> {
+export async function initSessionAliasPersistence(isLive: (mt: string) => boolean): Promise<void> {
+  isLivePane = isLive;
   try {
     const parsed = parseAliases(JSON.parse(await fs.readFile(ALIASES_FILE, "utf8")));
     for (const { agent, mt, at } of parsed) if (!aliases.has(agent)) aliases.set(agent, { mt, at });

@@ -88,6 +88,16 @@ describe("session aliases", () => {
     expect(currentAgentSessionId(MT)).toBeUndefined();
     expect(resolveAliasedSessionId(AGENT)).toBe(AGENT);
   });
+
+  // The session list offers every on-disk .jsonl, so a post-/clear agent id can be resumed
+  // in a cell of its OWN — it is then a pane in its own right, and a kept `A -> P` entry
+  // would route the new pane's mission / next-queue writes into pane P (a silent 200 that
+  // changes nothing on screen, the failure mode this store's header comment warns about).
+  it("stops translating an id once a pane runs AS it", () => {
+    noteSessionAlias(MT, AGENT); // MT cleared; its agent id is AGENT
+    noteSessionAlias(AGENT, AGENT); // AGENT's transcript opened in a cell of its own
+    expect(resolveAliasedSessionId(AGENT)).toBe(AGENT);
+  });
 });
 
 describe("alias persistence rules (pure)", () => {
@@ -106,6 +116,14 @@ describe("alias persistence rules (pure)", () => {
   it("parses nothing from a non-object file", () => {
     expect(parseAliases(null)).toEqual([]);
     expect(parseAliases([1, 2])).toEqual([]);
+  });
+
+  // `at` is written once (the /clear) and never refreshed, so without the live guard a pane
+  // cleared longer ago than the age cap would lose its pairing on any save — and the
+  // stale-fork bug this store fixes would quietly return after 30 days.
+  it("keeps a live pane's pairing however old the /clear was", () => {
+    const kept = pruneAliases([[AGENT, { mt: MT, at: 0 }]], { now: 1e12, isLive: (mt) => mt === MT, maxAgeMs: 50 });
+    expect(Object.keys(kept)).toEqual([AGENT]);
   });
 
   it("ages out old pairings and caps the count, newest kept", () => {
