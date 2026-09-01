@@ -35,6 +35,7 @@ import {
   resolveReattachableId,
   resolveSession,
   resumeLossNotice,
+  resumeTranscriptFor,
   type ForkPlan,
   type SessionResolution,
 } from "../session/session-resolve.js";
@@ -101,18 +102,41 @@ function resolveClaudeFork(url: URL, cwd: string, fresh: boolean): ForkPlan {
 // account switcher killed this very session moments ago, and the nudge — keyed to its id,
 // single use, short TTL — is what puts the fleet back to work after the swap. A fork is a
 // new branch, not the killed pane coming back, so it never takes one.
-function spawnInitialPrompt(live: boolean, fork: boolean, resume: string | null, attachGuiMcp: boolean, cwd: string): string | undefined {
+function spawnInitialPrompt(
+  live: boolean,
+  fork: boolean,
+  resume: string | null,
+  attachGuiMcp: boolean,
+  cwd: string,
+  paneId: string | null,
+): string | undefined {
   if (live) return undefined;
   const queued = queuedFirstTurn(resume, attachGuiMcp, cwd);
   if (queued) return queued;
-  return fork ? undefined : takeResumeNudge(resume);
+  // The nudge is keyed by the PANE id the restart route killed (resume-nudge.ts), which is
+  // no longer always the transcript being resumed: after a /clear the cold resume follows
+  // the agent's newer id (resumeTranscriptFor), and the nudge must not get lost in that
+  // translation.
+  return fork || !resume ? undefined : takeResumeNudge(paneId);
 }
 
 function resolveClaudeSession(requested: string | null, cwd: string): SessionResolution {
   const hasLivePty = !!requested && ptys.has(requested);
   const tmuxAlive = !hasLivePty && !!requested && tmuxHasSession(requested);
-  const onDisk = !hasLivePty && !!requested && sessionExistsOnDisk(requested, cwd);
-  return resolveSession(requested, { hasLivePty, tmuxAlive, onDisk }, randomUUID);
+  // After a /clear the conversation the pane SHOWS lives in the agent's newest id, so a cold
+  // resume follows the same translation the Fork button does (resumeTranscriptFor) — resuming
+  // the pane id itself brought back a stale pre-/clear conversation the operator read as "a
+  // completely different pane" (operator report 2026-09-01, a parked pane reaped after a
+  // reload). The pane still runs AS its own id (`sessionId` is untouched), so hooks, activity
+  // and the grid cell all keep their key.
+  const transcript =
+    !hasLivePty && requested ? resumeTranscriptFor(requested, { currentAgentId: currentAgentSessionId, onDisk: (id) => sessionExistsOnDisk(id, cwd) }) : null;
+  const res = resolveSession(requested, { hasLivePty, tmuxAlive, onDisk: transcript !== null }, randomUUID);
+  if (res.resume && transcript && transcript !== res.resume) {
+    console.log(`[ws] resuming ${res.resume} via its current agent id ${transcript} (post-/clear transcript)`);
+    return { ...res, resume: transcript };
+  }
+  return res;
 }
 
 // What a /ws connection will do, decided before anything is sent or spawned: the session
@@ -356,7 +380,7 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     // file. On reconnect, re-sync it from the (now-refreshed) Keychain so a token that
     // rotated since spawn doesn't leave the reattached session stuck at "Not logged in".
     if (live?.sandbox) writeSandboxCredentials(sessionId);
-    const initialPrompt = spawnInitialPrompt(!!live, fork, resume, attachGuiMcp, cwd);
+    const initialPrompt = spawnInitialPrompt(!!live, fork, resume, attachGuiMcp, cwd, requested);
     entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork });
   } catch (err) {
     // A failed spawn (claude missing, or node-pty's spawn-helper not executable)

@@ -85,7 +85,10 @@ export function currentAgentSessionId(mulmoId: string): string | undefined {
   return latest;
 }
 
-/** Drop a torn-down session's aliases, so the map does not grow for the life of the process. */
+/** Drop every alias pointing at `mulmoId`. Called only for a pane that provably runs as its
+ *  own id again (noteSessionAlias) — NOT on reap: a reaped pane's pairing is what lets a cold
+ *  `--resume` of its id follow the post-/clear conversation (resumeTranscriptFor), and
+ *  pruneAliases already bounds the map's growth. */
 export function forgetSessionAliases(mulmoId: string): void {
   let dropped = false;
   for (const [agentId, rec] of aliases) {

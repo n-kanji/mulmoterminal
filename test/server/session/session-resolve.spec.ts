@@ -6,6 +6,7 @@ import {
   resolveForkRequest,
   resolveReattachableId,
   resumeLossNotice,
+  resumeTranscriptFor,
   canStartLauncher,
 } from "../../../server/session/session-resolve.js";
 
@@ -129,6 +130,41 @@ describe("canStartLauncher", () => {
 
   it("allows the shell button, which has no configured index", () => {
     expect(canStartLauncher(facts({ isShell: true }))).toBe(true);
+  });
+});
+
+// Which transcript a cold `--resume` of a pane id reads (operator report 2026-09-01): after a
+// /clear the conversation the pane SHOWS lives in the agent's newest id, so resuming the pane
+// id itself — what a parked pane reaped after a reload used to do — brought back the stale
+// pre-/clear conversation, read as "a completely different pane".
+describe("resumeTranscriptFor", () => {
+  const PANE = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const CURRENT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+  it("resumes the pane's own transcript when it never cleared", () => {
+    expect(resumeTranscriptFor(PANE, { currentAgentId: () => undefined, onDisk: (id) => id === PANE })).toBe(PANE);
+  });
+
+  it("resumes the CURRENT agent id after a /clear, not the stale pane id", () => {
+    const facts = { currentAgentId: (pane: string) => (pane === PANE ? CURRENT : undefined), onDisk: (id: string) => id === CURRENT || id === PANE };
+    expect(resumeTranscriptFor(PANE, facts)).toBe(CURRENT);
+  });
+
+  // Unlike a fork (which refuses), a reconnect falls back: refusing would leave the pane
+  // dead, and the pane-id transcript is the closest conversation on disk.
+  it("falls back to the pane id when the current agent id has no transcript yet", () => {
+    expect(resumeTranscriptFor(PANE, { currentAgentId: () => CURRENT, onDisk: (id) => id === PANE })).toBe(PANE);
+  });
+
+  it("resumes the current agent id even when the pane id was never persisted", () => {
+    // A pane that /clear-ed before its first prompt has no pane-id file at all; only the
+    // agent-id transcript exists, and it must still be reachable on reconnect.
+    expect(resumeTranscriptFor(PANE, { currentAgentId: () => CURRENT, onDisk: (id) => id === CURRENT })).toBe(CURRENT);
+  });
+
+  it("returns null when neither transcript exists", () => {
+    expect(resumeTranscriptFor(PANE, { currentAgentId: () => undefined, onDisk: () => false })).toBeNull();
+    expect(resumeTranscriptFor(PANE, { currentAgentId: () => CURRENT, onDisk: () => false })).toBeNull();
   });
 });
 

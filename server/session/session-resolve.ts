@@ -88,6 +88,31 @@ export function resolveForkRequest(raw: string | null, isSessionId: (s: string) 
   return resolveFork(from, raw !== null, { fresh: facts.fresh, sourceOnDisk: !!from && facts.sourceOnDisk(from) });
 }
 
+// ── which transcript a cold reconnect resumes (operator report 2026-09-01) ─────
+
+export interface ResumeTranscriptFacts {
+  // The agent's CURRENT own id after a /clear or /compact (session-alias.ts), or undefined
+  // when the pane still provably runs as its own id.
+  currentAgentId: (pane: string) => string | undefined;
+  // Whether an id has an on-disk transcript in the target workspace — the only thing
+  // `--resume` reads.
+  onDisk: (id: string) => boolean;
+}
+
+/** The transcript a cold `--resume` of a pane id should actually read. After a /clear the
+ *  conversation the pane SHOWS lives in the agent's newest id — the pane-id file stopped
+ *  growing at the /clear — so this is the same translation forking does (resolveForkRequest):
+ *  without it, a pane whose pty/tmux died (a parked pane reaped after a reload, a reboot)
+ *  came back showing its stale pre-/clear conversation, which the operator read as "a
+ *  completely different pane". Unlike a fork, a current id with no transcript yet falls back
+ *  to the pane's own: refusing would leave a reconnecting pane dead, and the pane-id
+ *  transcript is the closest thing on disk. Null when neither exists (nothing to resume). */
+export function resumeTranscriptFor(pane: string, facts: ResumeTranscriptFacts): string | null {
+  const agentId = facts.currentAgentId(pane);
+  if (agentId && facts.onDisk(agentId)) return agentId;
+  return facts.onDisk(pane) ? pane : null;
+}
+
 // ── telling the operator a requested session could not be continued ────────────
 
 // The notice for a pane whose requested session id could NOT be served — no live pty, no

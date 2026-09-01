@@ -34,7 +34,6 @@ import { parseWaitGraceMs, reapDecisionFor, reapTimerDelay, shouldForgetActivity
 import { sessionRow, shouldRefreshReply } from "./activity-transition.js";
 import { flagEffect, type ActivityFlag } from "./activity-flag.js";
 import { missionOf } from "./mission-store.js";
-import { forgetSessionAliases } from "./session-alias.js";
 import type { WaitKind } from "../../common/paneState.js";
 import type { WorkPhase } from "./workPhase.js";
 import { readLatestResponse } from "./session-reads.js";
@@ -145,7 +144,13 @@ function reap(deps: SessionLifecycleDeps, id: string) {
   deps.forgetTitle(id);
   deps.sessionActivityPublisher.forget(id); // drop the phone's copy so its picker has no ghosts
   deps.forgetWorkPhase(id); // the live turn dies with the session
-  forgetSessionAliases(id); // and any post-/clear id that pointed at it
+  // Deliberately NOT forgetSessionAliases(id): the alias table is the only record of which
+  // conversation a torn-down pane was showing, and a cold `--resume` of that pane id needs it
+  // to follow the post-/clear transcript (resumeTranscriptFor — operator report 2026-09-01:
+  // a parked pane, reaped 30s after a reload, came back showing its stale pre-/clear
+  // conversation because reap had dropped the pairing). Growth is bounded by pruneAliases
+  // (age + entry caps), and an agent id resumed as its OWN pane still sheds its alias via
+  // noteSessionAlias's header===bodyId rule.
   titleInFlight.delete(id);
   lastTitledUserTurns.delete(id); // teardown only — kept across /clear as the re-title baseline
   lastTitleAttemptMs.delete(id);
