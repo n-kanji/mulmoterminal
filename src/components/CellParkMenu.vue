@@ -8,6 +8,7 @@
 // so it stays in place rather than teleporting like NextQueueMenu.
 import { ref, watch, onUnmounted, useTemplateRef, nextTick } from "vue";
 import { MAX_PARK_NOTE } from "./gridTabs";
+import { imeSafeKey } from "../composables/imeSafeKey";
 
 const emit = defineEmits<{ (e: "park", note: string): void }>();
 
@@ -30,11 +31,14 @@ function park() {
   emit("park", note.value);
   note.value = "";
 }
+// IME-confirm Enter must not park with a stale (usually empty) note, and composition-cancel
+// Esc must not close the menu — the same trap the rename inputs fell into (see imeSafeKey):
+// v-model has not received the composed text at that keydown, so the operator's note was
+// silently dropped and the card shelved as "（再開条件なし）" (operator report 2026-09-01).
+const confirmPark = imeSafeKey(park);
+const closeMenu = imeSafeKey(() => (open.value = false));
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    park();
-  }
+  if (e.key === "Enter" && !e.shiftKey) confirmPark(e);
 }
 </script>
 
@@ -57,7 +61,7 @@ function onKeydown(e: KeyboardEvent) {
       v-if="open"
       data-testid="cell-park-menu"
       class="absolute right-0 top-full z-20 mt-1 flex w-[260px] flex-col gap-1 rounded-md border border-border bg-panel p-2 shadow-[0_6px_18px_rgba(0,0,0,0.35)]"
-      @keydown.escape="open = false"
+      @keydown.escape="closeMenu"
       @mousedown.stop
       @click.stop
     >
