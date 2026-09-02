@@ -51,6 +51,7 @@ import { TERMINAL_SCROLLBACK_DEFAULT } from "../../common/terminalScrollback";
 import { getTerminalSubmitMode } from "./terminalSubmitMode";
 import { createFilePathLinkProvider } from "./terminalFilePathLinkProvider";
 import { filesGotoFile } from "./useFilesView";
+import { guardNativePaste } from "./nativePasteGuard";
 
 export type ConnStatus = "connecting" | "connected" | "disconnected";
 
@@ -361,6 +362,9 @@ function buildTerminal(swallowedMouseModes: Set<number>, font: TerminalFont): Te
   host.style.width = "100%";
   host.style.height = "100%";
   term.open(host);
+  // Paste must not linger in xterm's helper textarea — that residue is what a voice-input Cmd+V
+  // landing mid-IME-composition makes xterm re-send as a duplicated paragraph (see the module).
+  guardNativePaste(term.textarea);
   // Fork-local: margins around the text like the Claude desktop app. On term.element
   // (not host) so FitAddon subtracts the padding when proposing cols/rows.
   if (term.element) term.element.style.padding = "10px 12px";
