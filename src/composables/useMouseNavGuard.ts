@@ -8,10 +8,21 @@
 // back/forward. This window-level net preventDefaults them on every event Chrome might
 // hang the navigation off (mousedown, mouseup, auxclick), so the press does nothing
 // instead of tearing the user away from their terminals.
+//
+// Operator report 2026-09-02: preventDefault alone was not enough. The listeners ran in the
+// bubble phase, so xterm's own mousedown handler had already fired — and xterm focuses the
+// terminal on ANY mousedown, whichever button. A side button pressed while the pointer rested
+// over some other pane moved keyboard focus to that pane. So the guard now runs in the
+// CAPTURE phase on window (the first listener the event meets) and also stops propagation:
+// nothing below — xterm, a cell header, a drag handle — ever sees a side-button press.
 type MouseNavTarget = Pick<Window, "addEventListener" | "removeEventListener">;
 
 const BACK_BUTTON = 3;
 const FORWARD_BUTTON = 4;
+
+// Every event a side-button press produces that anything might act on. `pointer*` are
+// included because a handler bound to those would otherwise still see the press.
+export const NAV_BUTTON_EVENTS = ["pointerdown", "pointerup", "mousedown", "mouseup", "auxclick"] as const;
 
 export function isNavButton(button: number): boolean {
   return button === BACK_BUTTON || button === FORWARD_BUTTON;
@@ -19,14 +30,12 @@ export function isNavButton(button: number): boolean {
 
 export function installMouseNavGuard(target: MouseNavTarget = window): () => void {
   const guard = (event: Event) => {
-    if (isNavButton((event as MouseEvent).button)) event.preventDefault();
+    if (!isNavButton((event as MouseEvent).button)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
   };
-  target.addEventListener("mousedown", guard);
-  target.addEventListener("mouseup", guard);
-  target.addEventListener("auxclick", guard);
+  for (const type of NAV_BUTTON_EVENTS) target.addEventListener(type, guard, { capture: true });
   return () => {
-    target.removeEventListener("mousedown", guard);
-    target.removeEventListener("mouseup", guard);
-    target.removeEventListener("auxclick", guard);
+    for (const type of NAV_BUTTON_EVENTS) target.removeEventListener(type, guard, { capture: true });
   };
 }
