@@ -109,6 +109,9 @@ const props = defineProps<
     // Fork-local (iTerm2 mode, R10): the operator's own name for this pane, persisted in the
     // grid state. Null/absent = unnamed, and the strip shows the AI summary as before.
     name?: string | null;
+    // Fork-local (iTerm2 mode, 2026-09-03): the note this pane was last parked with, offered
+    // as the default the next time it is parked. Null/absent = never parked.
+    parkNote?: string | null;
     // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button —
     // the session id to branch from. Consumed once (see forkFrom below).
     initialFork?: string | null;
@@ -1413,7 +1416,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           </button>
           <!-- Park (2026-08-26): shelve this column into the dock with a "resume when" note,
                session intact. Only once there is a session to come back to. -->
-          <CellParkMenu v-if="sessionId" @park="(note) => emit('park', note)" />
+          <CellParkMenu v-if="sessionId" :initial="parkNote" @park="(note) => emit('park', note)" />
           <CellChromeButtons :expanded="expanded" hide-expand @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>

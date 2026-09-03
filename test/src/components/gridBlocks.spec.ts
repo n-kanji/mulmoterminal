@@ -128,7 +128,11 @@ describe("parking", () => {
     const s = parkCell(s0, 1, "  川上さんの返信が来たら  再開 ", NOW);
     expect(uids(s)).toEqual([0, 2]);
     expect(s.parked).toEqual([
-      { cell: { uid: 1, session: U(1), cwd: "/p", launcher: undefined, agent: undefined, name: "決済" }, note: "川上さんの返信が来たら 再開", at: NOW },
+      {
+        cell: { uid: 1, session: U(1), cwd: "/p", launcher: undefined, agent: undefined, name: "決済", parkNote: "川上さんの返信が来たら 再開" },
+        note: "川上さんの返信が来たら 再開",
+        at: NOW,
+      },
     ]);
     expect(parkCell(s0, 5, "x", NOW)).toBe(s0);
   });
@@ -170,6 +174,49 @@ describe("parking", () => {
     expect(s.parked?.[0].note).toHaveLength(MAX_PARK_NOTE);
     expect(removeParked(s, 0).parked).toBeUndefined();
     expect(removeParked(s, 7)).toBe(s);
+  });
+
+  // Operator report 2026-09-03: the note used to live only on the dock entry, so a pane that
+  // came back and went out again started from an empty box every time.
+  it("a pane brought back remembers its note, and re-parking offers it as the default", () => {
+    let s = parkCell(make(running(3)), 1, "川上さんの返信が来たら", NOW);
+    expect(s.parked?.[0].cell.parkNote).toBe("川上さんの返信が来たら");
+    s = setParkNote(s, 1, "価格が決まったら");
+    s = unparkCell(s, 1);
+    expect(s.cells.find((c) => c.uid === 1)?.parkNote).toBe("価格が決まったら");
+    // The grid cell is what the park menu reads its default from; parking again with that
+    // default keeps the note, parking with a new one replaces it.
+    s = parkCell(s, 1, "価格が決まったら", NOW + 1);
+    expect(s.parked?.[0].note).toBe("価格が決まったら");
+    s = unparkCell(s, 1);
+    s = parkCell(s, 1, "  別の条件  ", NOW + 2);
+    expect(s.parked?.[0]).toMatchObject({ note: "別の条件", cell: { parkNote: "別の条件" } });
+  });
+
+  it("a note cleared in the dock comes back as no note, not an empty string", () => {
+    let s = parkCell(make(running(2)), 0, "wait", NOW);
+    s = setParkNote(s, 0, "   ");
+    s = unparkCell(s, 0);
+    expect(s.cells.find((c) => c.uid === 0)).not.toHaveProperty("parkNote");
+    expect(parkCell(s, 0, "", NOW).parked?.[0].cell).not.toHaveProperty("parkNote");
+  });
+
+  it("the remembered note survives a reload on grid and parked cells alike, re-trimmed", () => {
+    const raw = JSON.stringify({
+      cells: [
+        { ...cell(0, U(0)), parkNote: "  on the grid  " },
+        { ...cell(1, U(1)), parkNote: "" },
+        { ...cell(2, U(2)), parkNote: 5 },
+      ],
+      expanded: null,
+      page: 0,
+      nextUid: 3,
+      sortMode: "manual",
+      parked: [{ cell: { uid: 7, session: U(7), cwd: "/q", parkNote: "x".repeat(MAX_PARK_NOTE + 5) }, note: "when X", at: NOW }],
+    });
+    const s = parsed(raw);
+    expect(s.cells.map((c) => c.parkNote)).toEqual(["on the grid", undefined, undefined]);
+    expect(s.parked?.[0].cell.parkNote).toHaveLength(MAX_PARK_NOTE);
   });
 
   it("survives a reload after the grid's uids, dropping entries without a session", () => {

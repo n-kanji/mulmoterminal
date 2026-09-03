@@ -91,13 +91,16 @@ export function parkCell(state: GridState, uid: number, note: string, now: numbe
   const cell = state.cells.find((c) => c.uid === uid);
   if (!canPark(cell) || !cell) return state;
   const next = closeCell(state, uid, order);
+  const trimmed = parkNote(note);
   const kept: Cell = { uid: cell.uid, session: cell.session, cwd: cell.cwd, launcher: cell.launcher ?? undefined, agent: cell.agent, name: cell.name };
-  return { ...next, parked: [...parkedOf(next), { cell: kept, note: parkNote(note), at: now }] };
+  if (trimmed) kept.parkNote = trimmed;
+  return { ...next, parked: [...parkedOf(next), { cell: kept, note: trimmed, at: now }] };
 }
 
 /** Bring a parked pane back, onto the page being looked at (its first free slot, else the end
  *  of the grid — the same placement "+ Terminal" uses), un-zooming like any add. Refused when
- *  the grid is full. */
+ *  the grid is full. The dock's note (as last edited there) rides back on the cell as
+ *  `parkNote`, so the next park starts from it (operator report 2026-09-03). */
 export function unparkCell(state: GridState, uid: number): GridState {
   const entry = parkedOf(state).find((p) => p.cell.uid === uid);
   if (!entry) return state;
@@ -105,10 +108,13 @@ export function unparkCell(state: GridState, uid: number): GridState {
   const parked = parkedOf(state).filter((p) => p.cell.uid !== uid);
   const base = { ...state, parked: parked.length ? parked : undefined };
   const expanded = zoomedUid(state) !== null ? null : state.expanded;
+  const back: Cell = { ...entry.cell };
+  if (entry.note) back.parkNote = entry.note;
+  else delete back.parkNote;
   const slot = freeSlot(state, state.page);
-  const filled = slot >= 0 ? insertAt(state, slot, entry.cell) : null;
+  const filled = slot >= 0 ? insertAt(state, slot, back) : null;
   if (filled) return clampPage({ ...base, cells: filled, page: pageOfIndex(slot), expanded });
-  const cells = [...state.cells, entry.cell];
+  const cells = [...state.cells, back];
   return { ...base, cells, page: pageCount(cells.length) - 1, expanded };
 }
 

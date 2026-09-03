@@ -404,6 +404,7 @@ watch(
             :reorderable="reorderable"
             :auto-launch="cell.uid === autoLaunchUid"
             :name="cell.name ?? null"
+            :park-note="cell.parkNote ?? null"
             :page-targets="pageTargets?.[cell.uid]"
             @rename="(value) => emit('rename', cell.uid, value)"
             @move-to-page="(page) => emit('move-to-page', cell.uid, page)"

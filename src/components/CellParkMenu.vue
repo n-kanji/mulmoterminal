@@ -6,10 +6,16 @@
 // Same open/close mechanics as CellPageMenu: outside mousedown or Escape closes; `.stop` keeps
 // the trigger from also firing the header's click-to-zoom. The box is short (one sentence),
 // so it stays in place rather than teleporting like NextQueueMenu.
+//
+// `initial` (operator report 2026-09-03) is the note this pane was last parked with: the box
+// opens holding it, selected, so Enter re-parks with the same condition and typing replaces it.
+// Before this, every park started from an empty box and the operator retyped the same sentence
+// each time a pane came back and went out again.
 import { ref, watch, onUnmounted, useTemplateRef, nextTick } from "vue";
 import { MAX_PARK_NOTE } from "./gridTabs";
 import { imeSafeKey } from "../composables/imeSafeKey";
 
+const props = defineProps<{ initial?: string | null }>();
 const emit = defineEmits<{ (e: "park", note: string): void }>();
 
 const open = ref(false);
@@ -21,15 +27,18 @@ function onOutside(e: MouseEvent) {
 }
 watch(open, (o) => {
   if (o) {
+    note.value = props.initial ?? "";
     document.addEventListener("mousedown", onOutside);
-    void nextTick(() => input.value?.focus());
+    void nextTick(() => {
+      input.value?.focus();
+      if (note.value) input.value?.select();
+    });
   } else document.removeEventListener("mousedown", onOutside);
 });
 onUnmounted(() => document.removeEventListener("mousedown", onOutside));
 function park() {
   open.value = false;
   emit("park", note.value);
-  note.value = "";
 }
 // IME-confirm Enter must not park with a stale (usually empty) note, and composition-cancel
 // Esc must not close the menu — the same trap the rename inputs fell into (see imeSafeKey):

@@ -37,6 +37,11 @@ export interface Cell {
   // turn and the directory is shared by half the grid, so neither can say WHICH of the four
   // panes in this repo is which. Absent = the pane has no name and shows its summary.
   name?: string;
+  // Fork-local (iTerm2 mode, operator report 2026-09-03): the LAST "resume when" note this pane
+  // was parked with. A pane that comes back from the dock keeps it, so parking it again offers
+  // the same note instead of an empty box — the operator wrote the condition once and it holds
+  // until they change it or the pane is closed. Persisted with the cell; absent = never parked.
+  parkNote?: string;
   // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button and
   // starts as a BRANCH of that session (`--resume <id> --fork-session`). One-shot: cleared
   // by setSession the moment the branch has an id of its own, so it can never fork twice.
@@ -911,6 +916,9 @@ const asPages = (v: unknown): PageMeta[] | undefined => {
 
 export const separatorLabel = (label: string): string | undefined => label.trim().slice(0, MAX_SEPARATOR_LABEL) || undefined;
 export const parkNote = (note: string): string => note.replace(/\s+/gu, " ").trim().slice(0, MAX_PARK_NOTE);
+// A cell's remembered park note: re-trimmed like every persisted string, and an empty one is no
+// note at all (the field is absent, not ""), so a never-parked cell and a cleared one look alike.
+const asParkNote = (v: unknown): string | undefined => (typeof v === "string" && parkNote(v)) || undefined;
 
 // Persisted separators: each must point at a cell that survived the parse (by its persisted
 // uid, translated to the renumbered one); one per cell. Malformed entries are dropped, never
@@ -945,6 +953,7 @@ const asParked = (v: unknown, firstUid: number): ParkedCell[] | undefined => {
         launcher: asLauncher(c.launcher),
         agent: c.agent === "codex" ? "codex" : undefined,
         name: typeof c.name === "string" ? cellName(c.name) : undefined,
+        parkNote: asParkNote(c.parkNote),
       },
       note: typeof entry.note === "string" ? parkNote(entry.note) : "",
       at: typeof entry.at === "number" ? entry.at : 0,
@@ -990,6 +999,7 @@ export function parseGridState(raw: string | null): GridState | null {
             // Re-trimmed on the way in, not trusted: the blob is hand-editable, and a 10k-char
             // "name" would take the status strip apart on every pane in the workspace.
             name: typeof c.name === "string" ? cellName(c.name) : undefined,
+            parkNote: asParkNote(c.parkNote),
           },
     );
     const expandedIdx = running.findIndex((c: Cell) => c.uid === parsed.expanded);
