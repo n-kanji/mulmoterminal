@@ -1076,9 +1076,13 @@ onUnmounted(() => {
 });
 const stateExplainer = computed(() => STATE_EXPLAINER[status.value]);
 
-// Double-clicking the identity text opens the rename in place. Deliberately NOT on the header
-// row above: a click there zooms the cell, so a double-click would zoom and un-zoom on its way
-// to the input — this row has no click action to fight with, and it is where the name shows.
+// The name is edited in place from the HEADER (operator request 2026-09-04: "the same as the
+// separator's name" — a visible chip that a single click opens; before this the rename hid
+// behind a double-click on the strip text and the operator never found it). The chip is a
+// <button>, so shouldZoomOnHeaderClick declines it the way it declines every header button;
+// the input it turns into is declined the same way. Double-clicking the strip text still opens
+// the same editor. While the editor is open the header stops being a drag handle — a text
+// selection inside the input would otherwise start a column drag.
 const renaming = ref(false);
 const nameDraft = ref("");
 const nameInput = useTemplateRef<HTMLInputElement>("nameInput");
@@ -1285,7 +1289,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         :class="[statusClass, headerStatusClass, expanded ? '' : `is-zoomable ${CELL_HEADER_ZOOMABLE}`]"
         :style="headerStyle"
         :title="headerTitle"
-        draggable="true"
+        :draggable="!renaming"
         @dragstart="onHeaderDragStart"
         @click="onHeaderClick"
       >
@@ -1303,6 +1307,39 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                thumbnail, leaving only dir + what it's doing + a zoom button. -->
           <template v-if="!filmstrip">
             <DirBadge :name="headerDirName" :color="dirConfig.badgeColor" />
+            <!-- The pane's NAME (R10), right after the project it belongs to — the one thing
+                 that tells four panes on one repo apart. Click to rename (single click, like
+                 the separator's label); unnamed panes show a dim "名前" that invites one.
+                 Enter commits, Esc cancels, blur commits. -->
+            <input
+              v-if="renaming"
+              ref="nameInput"
+              v-model="nameDraft"
+              data-testid="cell-name-input"
+              class="w-0 min-w-0 flex-auto rounded-[3px] border border-accent bg-input px-1 py-0 font-sans text-[12px] leading-[16px] text-fg outline-none"
+              :maxlength="MAX_CELL_NAME"
+              placeholder="このペインの名前"
+              aria-label="Pane name"
+              spellcheck="false"
+              @click.stop
+              @dblclick.stop
+              @keydown.enter="onRenameEnter"
+              @keydown.esc="onRenameEsc"
+              @blur="commitRename"
+            />
+            <button
+              v-else
+              type="button"
+              data-testid="cell-name"
+              class="max-w-[22ch] flex-none cursor-text truncate rounded-[3px] border-0 bg-transparent px-1 py-0 font-sans text-[12px] leading-[16px] hover:bg-hover"
+              :class="named ? 'font-semibold text-accent' : 'text-secondary opacity-60 hover:opacity-100'"
+              :data-named="named ? 'true' : undefined"
+              :title="named ? `名前: ${name}（クリックで変更）` : 'このペインに名前を付ける'"
+              :aria-label="named ? `Pane name: ${name}` : 'Name this pane'"
+              @click.stop="startRename"
+            >
+              {{ named ? name : "名前" }}
+            </button>
             <template v-for="chip in cellChips" :key="chip.key">
               <GitBranchChip v-if="chip.builtin === 'git'" :status="gitStatus" :hide-dirty="isWorktreeCell" />
               <button
@@ -1342,8 +1379,8 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
             </template>
           </template>
           <!-- The only stretch element in row 1 — empty on purpose (P0-3: one truncate
-               per row, and row 1 has nothing worth truncating). -->
-          <span class="min-w-0 flex-auto" />
+               per row; the name chip clips at its own cap). Yields to the name input. -->
+          <span v-if="!renaming" class="min-w-0 flex-auto" />
         </div>
         <!-- The action buttons (attach / toolbar toggle / fork / restore-when-expanded /
              close) stay on row 1 (the info row) and OUTSIDE the info track, so they're
@@ -1434,24 +1471,9 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                takes the space rather than a placeholder taking a column-width of it. -->
           <span v-if="stripLabel" data-testid="cell-strip-state" :class="[CELL_STRIP_WORD, stripStatusClass]" :title="statusLabel">{{ stripLabel }}</span>
           <!-- The row's one flexible element: NAME if the operator set one, else the mission,
-               else the AI summary. Double-click to rename in place; Enter commits, Esc
-               cancels, blur commits. -->
-          <input
-            v-if="renaming"
-            ref="nameInput"
-            v-model="nameDraft"
-            data-testid="cell-strip-name-input"
-            class="min-w-0 flex-auto rounded-[3px] border border-accent bg-input px-1 py-0 font-sans text-[12px] leading-[16px] text-fg outline-none"
-            :maxlength="MAX_CELL_NAME"
-            aria-label="Pane name"
-            spellcheck="false"
-            @keydown.enter="onRenameEnter"
-            @keydown.esc="onRenameEsc"
-            @blur="commitRename"
-            @dblclick.stop
-          />
+               else the AI summary. Double-click opens the header's name editor (the
+               pre-2026-09-04 gesture, kept for hands that learned it). -->
           <span
-            v-else
             data-testid="cell-strip-summary"
             :class="[CELL_STRIP_MAIN, named ? 'font-medium' : '']"
             :data-named="named ? 'true' : undefined"

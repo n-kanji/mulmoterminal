@@ -106,30 +106,79 @@ describe("the status strip shows the pane's name", () => {
   });
 });
 
-describe("renaming a pane in place", () => {
-  it("opens on a double-click, seeded with the current name", async () => {
+// 2026-09-04: the name moved INTO the header as a chip a single click opens — the same gesture
+// as the separator's label. The operator's mission / last-prompt rows never updated reliably,
+// so the name they type themselves is the thing that tells panes apart, and it has to be
+// visible and one click away, not hidden behind a double-click on the strip text.
+describe("the header's name chip", () => {
+  it("shows the name next to the project badge, marked as named", async () => {
+    const w = await mountCell({ name: "決済まわり" });
+    const chip = w.find('[data-testid="cell-name"]');
+    expect(chip.text()).toBe("決済まわり");
+    expect(chip.attributes("data-named")).toBe("true");
+    expect(chip.element.tagName).toBe("BUTTON"); // a button: shouldZoomOnHeaderClick declines it
+  });
+
+  it("invites a name on an unnamed pane instead of showing nothing", async () => {
+    const w = await mountCell();
+    const chip = w.find('[data-testid="cell-name"]');
+    expect(chip.text()).toBe("名前");
+    expect(chip.attributes("data-named")).toBeUndefined();
+  });
+
+  it("opens the editor on a single click, seeded with the current name, without zooming", async () => {
     const w = await mountCell({ name: "api" });
-    await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");
-    const input = w.find('[data-testid="cell-strip-name-input"]');
+    await w.find('[data-testid="cell-name"]').trigger("click");
+    const input = w.find('[data-testid="cell-name-input"]');
     expect(input.exists()).toBe(true);
     expect((input.element as HTMLInputElement).value).toBe("api");
     expect(input.attributes("maxlength")).toBe(String(MAX_CELL_NAME));
+    expect(w.find('[data-testid="cell-name"]').exists()).toBe(false); // the chip IS the input now
+    expect(w.emitted("toggle-expand")).toBeUndefined();
+  });
+
+  // Selecting text inside the input by dragging must not pick the whole column up.
+  it("stops the header being a drag handle while the editor is open", async () => {
+    const w = await mountCell({ name: "api" });
+    const header = () => w.find(".cell-header");
+    expect(header().attributes("draggable")).toBe("true");
+    await w.find('[data-testid="cell-name"]').trigger("click");
+    expect(header().attributes("draggable")).toBe("false");
+    await w.find('[data-testid="cell-name-input"]').trigger("keydown.esc");
+    expect(header().attributes("draggable")).toBe("true");
+  });
+
+  it("does not zoom the cell when the click lands inside the input", async () => {
+    const w = await mountCell({ name: "api" });
+    await w.find('[data-testid="cell-name"]').trigger("click");
+    await w.find('[data-testid="cell-name-input"]').trigger("click");
+    expect(w.emitted("toggle-expand")).toBeUndefined();
+  });
+});
+
+describe("renaming a pane in place", () => {
+  it("still opens on a double-click of the strip text, seeded with the current name", async () => {
+    const w = await mountCell({ name: "api" });
+    await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");
+    const input = w.find('[data-testid="cell-name-input"]');
+    expect(input.exists()).toBe(true);
+    expect((input.element as HTMLInputElement).value).toBe("api");
   });
 
   it("commits on Enter and emits the new name for the grid to persist", async () => {
     const w = await mountCell();
     await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");
-    await w.find('[data-testid="cell-strip-name-input"]').setValue("決済");
-    await w.find('[data-testid="cell-strip-name-input"]').trigger("keydown.enter");
+    await w.find('[data-testid="cell-name-input"]').setValue("決済");
+    await w.find('[data-testid="cell-name-input"]').trigger("keydown.enter");
     expect(w.emitted("rename")).toEqual([["決済"]]);
-    expect(w.find('[data-testid="cell-strip-name-input"]').exists()).toBe(false);
+    expect(w.find('[data-testid="cell-name-input"]').exists()).toBe(false);
   });
 
   it("commits on blur — clicking away is a commit, not a loss", async () => {
     const w = await mountCell();
     await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");
-    await w.find('[data-testid="cell-strip-name-input"]').setValue("api");
-    await w.find('[data-testid="cell-strip-name-input"]').trigger("blur");
+    await w.find('[data-testid="cell-name-input"]').setValue("api");
+    await w.find('[data-testid="cell-name-input"]').trigger("blur");
     expect(w.emitted("rename")).toEqual([["api"]]);
   });
 
@@ -138,13 +187,13 @@ describe("renaming a pane in place", () => {
   it("commits exactly once for Enter-then-blur, and not at all after Esc", async () => {
     const w = await mountCell({ name: "api" });
     await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");
-    await w.find('[data-testid="cell-strip-name-input"]').setValue("payments");
-    await w.find('[data-testid="cell-strip-name-input"]').trigger("keydown.enter");
+    await w.find('[data-testid="cell-name-input"]').setValue("payments");
+    await w.find('[data-testid="cell-name-input"]').trigger("keydown.enter");
     expect(w.emitted("rename")).toHaveLength(1);
 
     await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");
-    await w.find('[data-testid="cell-strip-name-input"]').setValue("scrapped");
-    await w.find('[data-testid="cell-strip-name-input"]').trigger("keydown.esc");
+    await w.find('[data-testid="cell-name-input"]').setValue("scrapped");
+    await w.find('[data-testid="cell-name-input"]').trigger("keydown.esc");
     await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick"); // the input is gone
     expect(w.emitted("rename")).toHaveLength(1);
   });
@@ -152,13 +201,12 @@ describe("renaming a pane in place", () => {
   it("clears the name when the field is emptied", async () => {
     const w = await mountCell({ name: "api" });
     await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");
-    await w.find('[data-testid="cell-strip-name-input"]').setValue("");
-    await w.find('[data-testid="cell-strip-name-input"]').trigger("keydown.enter");
+    await w.find('[data-testid="cell-name-input"]').setValue("");
+    await w.find('[data-testid="cell-name-input"]').trigger("keydown.enter");
     expect(w.emitted("rename")).toEqual([[""]]);
   });
 
-  // The rename lives on the STRIP, not the header row above it: a click on the header zooms
-  // the cell, so a double-click there would zoom and un-zoom on the way to the input.
+  // The strip has no click action, so the double-click there never fights the header's zoom.
   it("does not zoom the cell — the strip has no click action to fight with", async () => {
     const w = await mountCell();
     await w.find('[data-testid="cell-strip-summary"]').trigger("dblclick");

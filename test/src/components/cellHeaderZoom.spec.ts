@@ -34,6 +34,13 @@ describe("shouldZoomOnHeaderClick", () => {
     expect(shouldZoomOnHeaderClick(path, false)).toBe(false);
   });
 
+  // 2026-09-04: the header's name chip becomes an <input> while editing; a click to place the
+  // caret must not zoom the cell out from under it.
+  it("ignores clicks inside the pane-name input", () => {
+    const input = document.createElement("input");
+    expect(shouldZoomOnHeaderClick(input, false)).toBe(false);
+  });
+
   it("zooms on a null / non-element target of a non-expanded cell (no button in the path)", () => {
     expect(shouldZoomOnHeaderClick(null, false)).toBe(true);
   });
