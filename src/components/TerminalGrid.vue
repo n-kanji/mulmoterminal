@@ -17,6 +17,7 @@ import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
 import { shouldFlipZoom } from "./cellChromeRules";
 import { weightOf, dragWeights, columnKeyDelta } from "./columnWidth";
+import type { CellGroup } from "./cellGroups";
 
 // Renders the grid, auto-sized to the cell count, fully controlled by GridView:
 // `cells` is the active page's slice (≤ PAGE_SIZE) when nothing is zoomed, and `expandedUid`
@@ -73,6 +74,9 @@ const props = defineProps<{
   // Separators (2026-08-26): the named line standing before a cell, keyed by that cell's uid.
   // Rendered as a 14px track of its own between the columns.
   separators?: Record<number, Separator>;
+  // Parent / child sets (2026-09-08): the family colour and parent name per uid, for the
+  // cells that are in one. Decided by GridView against the full list.
+  groups?: Record<number, CellGroup>;
 }>();
 const emit = defineEmits<{
   // `park` / `separator-*` (2026-08-26): the block line's own controls (id, not uid) and the
@@ -489,6 +493,7 @@ watch(
             :auto-launch="cell.uid === autoLaunchUid"
             :name="cell.name ?? null"
             :park-note="cell.parkNote ?? null"
+            :group="groups?.[cell.uid] ?? null"
             :page-targets="pageTargets?.[cell.uid]"
             @rename="(value) => emit('rename', cell.uid, value)"
             @move-to-page="(page) => emit('move-to-page', cell.uid, page)"

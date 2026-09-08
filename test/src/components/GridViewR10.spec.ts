@@ -56,7 +56,7 @@ const ToolbarStub = {
   template: '<div class="toolbar-stub" />',
 };
 // The grid, reduced to the cells it is asked to render (their order is what this suite reads).
-const GridStub = { name: "TerminalGrid", props: ["cells", "listRows", "expandedUid"], emits: ["status"], template: '<div class="grid-stub" />' };
+const GridStub = { name: "TerminalGrid", props: ["cells", "listRows", "expandedUid", "groups"], emits: ["status", "session"], template: '<div class="grid-stub" />' };
 
 // Wrapped in <KeepAlive>, as the router mounts it: the grid registers the agent-column opener
 // in `onActivated`, which never fires for a component mounted bare — and an unregistered opener
@@ -203,6 +203,22 @@ describe("a column opened by the agent self-drive API", () => {
     await flushPromises();
     const opened = (grid(w).props("cells") as Cell[]).find((c) => c.cwd === "/w/worker");
     expect(opened?.name).toBe("worker-3");
+  });
+
+  it("seats a column beside the pane that asked for it, and marks it as that pane's child", async () => {
+    const w = await mountGrid();
+    const parentId = "11111111-2222-4333-8444-555555555555";
+    const parentUid = (grid(w).props("cells") as Cell[])[0].uid;
+    grid(w).vm.$emit("session", parentUid, parentId);
+    await flushPromises();
+    openAgentColumn({ cwd: "/w/worker", label: "worker-3", parent: parentId });
+    await flushPromises();
+    const after = grid(w).props("cells") as Cell[];
+    const at = after.findIndex((c) => c.cwd === "/w/worker");
+    expect(after[at]?.parent).toBe(parentUid);
+    expect(after[at - 1]?.uid).toBe(parentUid);
+    const groups = grid(w).props("groups") as Record<number, { parent: string | null }>;
+    expect(groups[after[at]?.uid ?? -1]?.parent).toBeTruthy();
   });
 
   it("leaves a column unnamed when the request carried no label", async () => {

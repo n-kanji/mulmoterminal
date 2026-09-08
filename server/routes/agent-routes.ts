@@ -50,12 +50,12 @@ function openColumn(req: Request, res: Response, deps: AgentRouteDeps): void {
     res.status(decision.status).json({ error: decision.error });
     return;
   }
-  const { cwd, prompt, label } = decision.request;
+  const { cwd, prompt, label, parent } = decision.request;
   // Parked BEFORE the request goes out so it cannot lose a race with a browser that opens
   // the socket immediately, and taken back below if no browser took the request at all —
   // otherwise it would ambush the next column the user opens here by hand.
   if (prompt) queueAgentPrompt(cwd, prompt);
-  const event: AgentColumnEvent = { cwd, label };
+  const event: AgentColumnEvent = { cwd, label, parent };
   if (!deps.publishToOne(AGENT_COLUMN_CHANNEL, event)) {
     if (prompt) dropAgentPrompt(cwd, prompt);
     res.status(409).json({ error: NO_GRID_ERROR });

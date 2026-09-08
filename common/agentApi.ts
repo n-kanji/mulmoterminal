@@ -24,13 +24,19 @@ export interface AgentColumnEvent {
   /** A human name for the column, or null. The grid has no per-cell name field yet (R10);
    *  it is carried here so the cell can wear it the day that lands, and is logged meanwhile. */
   label: string | null;
+  /** Parent (operator request 2026-09-08): the mulmoterminal session id of the pane that ASKED
+   *  for this column — its tmux session name minus the `mt-` prefix — or null. The grid seats
+   *  the new column right beside that pane and shows the two as a set (a shared colour band,
+   *  the child naming its parent), so a Layer 2 / worker pane reads as belonging to the pane
+   *  that spawned it. Absent on events from before this existed. */
+  parent?: string | null;
 }
 
 export const agentColumnEventOf = (data: unknown): AgentColumnEvent | null => {
   if (!isRecord(data)) return null;
-  const { cwd, label } = data;
+  const { cwd, label, parent } = data;
   if (typeof cwd !== "string" || !cwd) return null;
-  return { cwd, label: typeof label === "string" && label ? label : null };
+  return { cwd, label: typeof label === "string" && label ? label : null, parent: typeof parent === "string" && parent ? parent : null };
 };
 
 /** POST /api/workspace/column answers with this on success. `prompt` says whether a first

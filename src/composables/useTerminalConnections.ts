@@ -365,9 +365,11 @@ function buildTerminal(swallowedMouseModes: Set<number>, font: TerminalFont): Te
   // Paste must not linger in xterm's helper textarea — that residue is what a voice-input Cmd+V
   // landing mid-IME-composition makes xterm re-send as a duplicated paragraph (see the module).
   guardNativePaste(term.textarea);
-  // Fork-local: margins around the text like the Claude desktop app. On term.element
-  // (not host) so FitAddon subtracts the padding when proposing cols/rows.
-  if (term.element) term.element.style.padding = "10px 12px";
+  // Fork-local: the thinnest margin the text can have and still not touch the pane's edge.
+  // It was 10px 12px "like the Claude desktop app" until the operator pointed at the black
+  // band it painted around every pane's text (2026-09-08): at ten columns that is 240px of
+  // the screen showing nothing. On term.element (not host) so FitAddon subtracts it.
+  if (term.element) term.element.style.padding = "1px 2px";
   guardMouseClicks(term, swallowedMouseModes);
   // Render each glyph in its own cell (canvas) instead of the default DOM renderer, which flows text
   // as inline runs: a full-width CJK glyph that isn't exactly 2× the Latin cell lets a long Japanese

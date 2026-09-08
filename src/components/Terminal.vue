@@ -458,7 +458,7 @@ onUnmounted(() => {
     </div>
     <div
       ref="terminalRef"
-      class="min-h-0 flex-1 p-0.5"
+      class="min-h-0 flex-1 p-0"
       :class="{ '[outline:2px_dashed_var(--accent)] [outline-offset:-2px]': dragOver }"
       @dragover="onDragOver"
       @dragleave="dragOver = false"

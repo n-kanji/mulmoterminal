@@ -9,6 +9,10 @@ export interface AgentColumnRequest {
   /** The first turn to auto-run, or null. Held server-side (agent-prompt-queue.ts). */
   prompt: string | null;
   label: string | null;
+  /** The session id of the pane that asked (operator request 2026-09-08), or null. Accepted
+   *  with or without the tmux `mt-` prefix, because `tmux display-message -p '#{session_name}'`
+   *  is how a pane learns its own id and that is what it prints. */
+  parent: string | null;
 }
 
 export type AgentColumnDecision = { ok: true; request: AgentColumnRequest } | { ok: false; status: number; error: string };
@@ -32,6 +36,8 @@ export const NO_GRID_ERROR = "no MulmoTerminal browser is open — the grid open
 // argument at all — but a megabyte of text is a mistake, not a first turn.
 const MAX_PROMPT = 100_000;
 const MAX_LABEL = 120;
+const MAX_PARENT = 120;
+const TMUX_PREFIX = "mt-";
 
 function optionalText(value: unknown, max: number, field: string): { ok: true; text: string | null } | { ok: false; error: string } {
   if (value === undefined || value === null) return { ok: true, text: null };
@@ -52,10 +58,13 @@ export function decideAgentColumn({ body, resolveDir, listenerCount }: AgentColu
   if (!prompt.ok) return { ok: false, status: 400, error: prompt.error };
   const label = optionalText(record.label, MAX_LABEL, "label");
   if (!label.ok) return { ok: false, status: 400, error: label.error };
+  const parent = optionalText(record.parent, MAX_PARENT, "parent");
+  if (!parent.ok) return { ok: false, status: 400, error: parent.error };
+  const parentId = parent.text?.startsWith(TMUX_PREFIX) ? parent.text.slice(TMUX_PREFIX.length) || null : parent.text;
 
   // Checked last so a malformed request is told what is wrong with it rather than about the
   // browser, and asked BEFORE publishing: a fire-and-forget publish cannot report delivery,
   // so "nobody was there" would otherwise be indistinguishable from success.
   if (listenerCount < 1) return { ok: false, status: 409, error: NO_GRID_ERROR };
-  return { ok: true, request: { cwd, prompt: prompt.text, label: label.text } };
+  return { ok: true, request: { cwd, prompt: prompt.text, label: label.text, parent: parentId } };
 }

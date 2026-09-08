@@ -15,6 +15,7 @@ import {
   setCellAgent,
   setCellName,
   setColumnWidths,
+  isHole,
   closeCell,
   toggleExpand,
   switchPage,
@@ -75,6 +76,7 @@ import {
   unparkCell,
 } from "./gridBlocks";
 import ParkedDock, { type ParkedCard } from "./ParkedDock.vue";
+import { cellGroups } from "./cellGroups";
 import { gridShortcutFor, isEditableTarget, type GridShortcut } from "../composables/gridShortcut";
 import { useCaptureKeydown } from "../composables/useCaptureKeydown";
 import { imeSafeKey } from "../composables/imeSafeKey";
@@ -406,8 +408,8 @@ const onSession = (uid: number, id: string) => {
 // column already running claude in that project (addCellWithCwd + TerminalCell autoLaunch).
 // `name` (R10) is only ever set by the agent self-drive API's `label`; a chip click passes none.
 const quickLaunchUid = ref<number | null>(null);
-function onQuickLaunch(path: string, name?: string | null) {
-  const next = addCellWithCwd(state.value, path, name);
+function onQuickLaunch(path: string, name?: string | null, parentUid?: number) {
+  const next = addCellWithCwd(state.value, path, name, parentUid);
   if (next.uid < 0) return; // grid full — the chip does nothing rather than half-launching
   state.value = next.state;
   quickLaunchUid.value = next.uid;
@@ -672,7 +674,15 @@ const detachAgentColumn = () => {
 // R10: the request's `label` is the new column's NAME. It was carried on the event from the
 // day the API landed and logged in the meantime, because the grid had no per-cell name field
 // then; now it lands on the cell and the column arrives saying why it exists.
-onActivated(() => (offAgentColumn = registerAgentColumnHandler(({ cwd, label }) => onQuickLaunch(cwd, label))));
+// `parent` (2026-09-08) names the asking pane by session id; the column is seated beside that
+// pane and linked to it. A parent this grid does not hold (another workspace, already closed)
+// just means a column of its own — never a refusal.
+const parentUidOf = (session: string | null | undefined): number | undefined =>
+  session ? state.value.cells.find((c) => !isHole(c) && c.session === session)?.uid : undefined;
+onActivated(() => (offAgentColumn = registerAgentColumnHandler(({ cwd, label, parent }) => onQuickLaunch(cwd, label, parentUidOf(parent)))));
+// Parent / child sets (2026-09-08), computed against the FULL list: a parent may sit on
+// another page and still lend its colour and name to the child on this one.
+const groups = computed(() => cellGroups(state.value.cells, home.value));
 onDeactivated(detachAgentColumn);
 onBeforeUnmount(detachAgentColumn);
 
@@ -908,6 +918,7 @@ function configureAppearance() {
         class="flex-1 min-h-0 min-w-0"
         :cells="renderCells"
         :separators="separatorsForGrid"
+        :groups="groups"
         :expanded-uid="expandedUid"
         :auto-launch-uid="quickLaunchUid"
         :list-rows="listRows"

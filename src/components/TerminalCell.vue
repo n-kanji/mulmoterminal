@@ -13,6 +13,7 @@ import { applyActivityPush } from "./cellActivity";
 import { preferredLaunchDir, shouldSyncLaunchDir } from "./launchDir";
 import { headerStyleFor, cellStyleFor } from "./cellHeaderStyle";
 import DirBadge from "./DirBadge.vue";
+import type { CellGroup } from "./cellGroups";
 import GitBranchChip from "./GitBranchChip.vue";
 import ModelContextBadge from "./ModelContextBadge.vue";
 import ModelPicker from "./ModelPicker.vue";
@@ -115,6 +116,9 @@ const props = defineProps<
     // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button —
     // the session id to branch from. Consumed once (see forkFrom below).
     initialFork?: string | null;
+    // Parent / child set (2026-09-08): this pane's family colour (a band along the top edge)
+    // and, on a child, what to call its parent in the header. Null = not in a set.
+    group?: CellGroup | null;
   }
 >();
 const emit = defineEmits<
@@ -1251,8 +1255,12 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
 <template>
   <div
     class="cell @container/pane relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border bg-[var(--cell-bg,var(--bg-base))]"
-    :class="[statusClass, cellStatusClass, { 'cell-file-drop [outline:2px_dashed_var(--accent)] [outline-offset:-2px]': fileDragOver }]"
-    :style="cellStyle"
+    :class="[
+      statusClass,
+      cellStatusClass,
+      { 'cell-file-drop [outline:2px_dashed_var(--accent)] [outline-offset:-2px]': fileDragOver, 'cell-grouped': !!group },
+    ]"
+    :style="[cellStyle, group ? { '--group-color': group.color } : null]"
     @dragover="onCellDragOver"
     @dragleave="onCellDragLeave"
     @drop="onCellDrop"
@@ -1307,6 +1315,16 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                thumbnail, leaving only dir + what it's doing + a zoom button. -->
           <template v-if="!filmstrip">
             <DirBadge :name="headerDirName" :color="dirConfig.badgeColor" />
+            <!-- A child pane names its parent (2026-09-08), in the family's colour, so the
+                 worker column reads as belonging to the pane that opened it. -->
+            <span
+              v-if="group?.parent"
+              data-testid="cell-parent"
+              class="max-w-[14ch] flex-none truncate rounded-[10px] border px-1.5 text-[10px] font-semibold leading-[1.6]"
+              :style="{ color: group.color, borderColor: group.color }"
+              :title="`親ペイン: ${group.parent}`"
+              >↳ {{ group.parent }}</span
+            >
             <!-- The pane's NAME (R10), right after the project it belongs to — the one thing
                  that tells four panes on one repo apart. Click to rename (single click, like
                  the separator's label); unnamed panes show a dim "名前" that invites one.

@@ -1614,3 +1614,57 @@ describe("setColumnWidths (a dragged column keeps its share)", () => {
     expect(parseGridState(JSON.stringify(s))?.cells[0].width).toBe(1.75);
   });
 });
+
+describe("parent / child panes (operator request 2026-09-08)", () => {
+  const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const base: GridState = {
+    cells: [
+      { uid: 0, session: U(0), cwd: "/a" },
+      { uid: 1, session: U(1), cwd: "/b" },
+      { uid: 2, session: U(2), cwd: "/c" },
+    ],
+    expanded: null,
+    page: 0,
+    nextUid: 3,
+    sortMode: "manual",
+  };
+  it("a column asked for by a pane is seated right beside it and linked to it", () => {
+    const next = addCellWithCwd(base, "/w", "worker", 0);
+    expect(next.uid).toBe(3);
+    expect(next.state.cells.map((c) => c.uid)).toEqual([0, 3, 1, 2]);
+    expect(next.state.cells[1]).toMatchObject({ cwd: "/w", name: "worker", parent: 0 });
+  });
+  it("a parent this grid does not hold means a column of its own, as before", () => {
+    const next = addCellWithCwd(base, "/w", "worker", 42);
+    expect(next.state.cells.at(-1)).toMatchObject({ cwd: "/w", name: "worker" });
+    expect(next.state.cells.at(-1)).not.toHaveProperty("parent");
+  });
+  it("the Fork button's branch is the source's child", () => {
+    const next = forkCell(base, 1);
+    expect(next.state.cells[2]).toMatchObject({ fork: U(1), parent: 1 });
+  });
+  it("closing the parent leaves the children standing on their own", () => {
+    const linked = addCellWithCwd(base, "/w", "worker", 0).state;
+    const closed = closeCell(linked, 0);
+    expect(closed.cells.find((c) => c.cwd === "/w")).not.toHaveProperty("parent");
+  });
+  it("the link survives the blob and follows the renumbered uids", () => {
+    const raw = JSON.stringify({
+      ...base,
+      cells: [
+        { uid: 7, session: U(7), cwd: "/p" },
+        { uid: 3, session: null, cwd: "/dropped" },
+        { uid: 9, session: U(9), cwd: "/w", parent: 7 },
+        { uid: 11, session: U(11), cwd: "/orphan", parent: 3 },
+        { uid: 12, session: U(12), cwd: "/self", parent: 12 },
+      ],
+    });
+    const s = parseGridState(raw);
+    expect(s?.cells.map((c) => [c.uid, c.parent])).toEqual([
+      [0, undefined],
+      [1, 0],
+      [2, undefined],
+      [3, undefined],
+    ]);
+  });
+});

@@ -48,6 +48,13 @@ export interface Cell {
   // columns (TerminalGrid), and it rides with the cell through reorders, auto-sort and page
   // moves — the operator widened THIS pane, not the third slot. Persisted with the cell.
   width?: number;
+  // Fork-local (iTerm2 mode, operator request 2026-09-08): the uid of the pane this column was
+  // opened FROM — the Fork button's source, or the pane whose agent asked for it over
+  // POST /api/workspace/column with a `parent`. The grid shows the two as a set (cellGroups):
+  // a shared colour band and the child naming its parent, so a worker pane reads as belonging
+  // to the pane that spawned it. Persisted (remapped with the uids on load); dropped when the
+  // parent closes. Absent = a column of its own.
+  parent?: number;
   // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button and
   // starts as a BRANCH of that session (`--resume <id> --fork-session`). One-shot: cleared
   // by setSession the moment the branch has an id of its own, so it can never fork twice.
@@ -417,9 +424,17 @@ export function moveCellToPage(state: GridState, uid: number, targetPage: number
 // uid so the caller can target the auto-launch; -1 means "full, nothing added".
 // `name` (R10) is the column's operator-visible name. The chip strip never passes one; the agent
 // self-drive API does, so a column an agent opened for itself arrives already saying WHY.
-export function addCellWithCwd(state: GridState, cwd: string, name?: string | null): { state: GridState; uid: number } {
+// `parentUid` (2026-09-08) is the pane that asked for this column: the new one is seated right
+// beside it and linked to it, instead of landing wherever the page has room.
+export function addCellWithCwd(state: GridState, cwd: string, name?: string | null, parentUid?: number): { state: GridState; uid: number } {
   const expanded = zoomedUid(state) !== null ? null : state.expanded;
   const named = name ? cellName(name) : undefined;
+  const parent = parentUid !== undefined ? state.cells.find((c) => c.uid === parentUid && !isHole(c)) : undefined;
+  if (parent) {
+    const uid = state.nextUid;
+    const next = insertCellAfter(state, parent.uid, { session: null, cwd, name: named, parent: parent.uid });
+    return next === state ? { state, uid: -1 } : { state: { ...next, expanded }, uid };
+  }
   const open = trailingLaunchIndex(state);
   if (open >= 0) {
     const reuse = state.cells[open];
@@ -476,6 +491,12 @@ export const cellName = (name: string): string | undefined => name.trim().slice(
 export function setCellName(state: GridState, uid: number, name: string): GridState {
   return { ...state, cells: state.cells.map((c) => (c.uid === uid ? { ...c, name: cellName(name) } : c)) };
 }
+
+const withoutParent = (c: Cell): Cell => {
+  const rest: Cell = { ...c };
+  delete rest.parent;
+  return rest;
+};
 
 // Column widths (operator request 2026-09-08): the weights a drag produced, keyed by uid. A
 // weight of exactly 1 (or an unsane one) drops the field, so the cell is back on the equal
@@ -539,7 +560,7 @@ export function forkCell(state: GridState, uid: number): { state: GridState; uid
   const source = state.cells.find((c) => c.uid === uid);
   if (!source || isHole(source) || !source.session) return { state, uid: -1 };
   const uidNext = state.nextUid;
-  const next = insertCellAfter(state, uid, { session: null, cwd: source.cwd, fork: source.session });
+  const next = insertCellAfter(state, uid, { session: null, cwd: source.cwd, fork: source.session, parent: uid });
   // insertCellAfter returns the SAME state when the grid is full — no cell, so no uid.
   return next === state ? { state, uid: -1 } : { state: next, uid: uidNext };
 }
@@ -559,7 +580,11 @@ export function closeCell(state: GridState, uid: number, order?: number[]): Grid
   const at = state.cells.findIndex((c) => c.uid === uid);
   // R1: on a pinned page the slot stays with the page (removeAt leaves a hole), so the reflow
   // stops at the workspace boundary instead of dragging the next one's terminals back.
-  const { cells, nextUid } = at < 0 ? { cells: state.cells, nextUid: state.nextUid } : removeAt(state, at);
+  const removed = at < 0 ? { cells: state.cells, nextUid: state.nextUid } : removeAt(state, at);
+  const { nextUid } = removed;
+  // The closed pane's children stand on their own now (2026-09-08): a `parent` naming a uid
+  // that no longer exists would be a link to nothing, and uids are never reused.
+  const cells = removed.cells.map((c) => (c.parent === uid ? withoutParent(c) : c));
   const expanded = state.expanded === uid ? expandNeighbour(order, uid, cells) : state.expanded;
   const separators = at < 0 ? state.separators : separatorsAfterRemoval(state.separators, uid, cells, at);
   return ensureEntry(clampPage({ ...state, cells, nextUid, expanded, separators }));
@@ -1024,6 +1049,13 @@ export function parseGridState(raw: string | null): GridState | null {
             width: cellWidth(c.width),
           },
     );
+    // Parent links (2026-09-08) point at persisted uids; re-point them at the renumbered ones
+    // the same way separators are, and drop a link to a cell that did not survive the parse.
+    for (const [i, raw] of (running as Cell[]).entries()) {
+      if (typeof raw.parent !== "number") continue;
+      const p = running.findIndex((r: Cell) => r.uid === raw.parent && !isHole(r));
+      if (p >= 0 && p !== i) cells[i] = { ...cells[i], parent: p };
+    }
     const expandedIdx = running.findIndex((c: Cell) => c.uid === parsed.expanded);
     const expanded = typeof parsed.expanded === "number" && expandedIdx >= 0 ? expandedIdx : null;
     const page = Number.isSafeInteger(parsed.page) && parsed.page >= 0 ? parsed.page : 0;

@@ -95,7 +95,7 @@ describe("POST /api/workspace/column", () => {
     expect(res.statusCode).toBe(200);
     expect(res.payload).toEqual({ ok: true, cwd: PROJECT, label: "parser", prompt: true });
     // The event carries WHERE, never the text that will auto-run.
-    expect(published).toHaveBeenCalledWith(AGENT_COLUMN_CHANNEL, { cwd: PROJECT, label: "parser" });
+    expect(published).toHaveBeenCalledWith(AGENT_COLUMN_CHANNEL, { cwd: PROJECT, label: "parser", parent: null });
     expect(takeAgentPrompt(PROJECT)).toBe("start on the parser");
   });
 

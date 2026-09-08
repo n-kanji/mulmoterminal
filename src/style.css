@@ -233,3 +233,9 @@
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
   background: var(--text-dim);
 }
+
+/* Parent / child panes (2026-09-08): every pane in a family wears the family's colour as a band
+   along its top edge — the one mark that survives every header colour and status tint. */
+.cell.cell-grouped {
+  box-shadow: inset 0 3px 0 0 var(--group-color);
+}
