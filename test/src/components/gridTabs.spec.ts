@@ -36,6 +36,7 @@ import {
   zoomedUid,
   visibleCells,
   parseGridState,
+  setColumnWidths,
   migrateLegacy,
   initialState,
   type CellStatus,
@@ -1570,5 +1571,46 @@ describe("keyboard page moves (stepPage)", () => {
   it("drops an abandoned trailing launch cell on the way, like clicking the tab does", () => {
     const withLaunch = make([...running(PAGE_SIZE), cell(PAGE_SIZE)], { page: 0 });
     expect(stepPage(withLaunch, 1).cells).toHaveLength(PAGE_SIZE);
+  });
+});
+
+describe("setColumnWidths (a dragged column keeps its share)", () => {
+  const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const base: GridState = {
+    cells: [
+      { uid: 0, session: U(0), cwd: "/a" },
+      { uid: 1, session: U(1), cwd: "/b" },
+      { uid: 2, session: U(2), cwd: "/c" },
+    ],
+    expanded: null,
+    page: 0,
+    nextUid: 3,
+    sortMode: "manual",
+  };
+  it("sets the pair's weights and leaves the rest alone", () => {
+    const s = setColumnWidths(base, { 0: 1.5, 1: 0.5 });
+    expect(s.cells.map((c) => c.width)).toEqual([1.5, 0.5, undefined]);
+  });
+  it("a weight of 1 (or garbage) drops the field, so the equal split has no width noise", () => {
+    const dragged = setColumnWidths(base, { 0: 1.5, 1: 0.5 });
+    const reset = setColumnWidths(dragged, { 0: undefined, 1: 1 });
+    expect(reset.cells.map((c) => "width" in c)).toEqual([false, false, false]);
+    expect(setColumnWidths(base, { 2: NaN }).cells[2]).not.toHaveProperty("width");
+  });
+  it("persists through the blob and is re-sanitised on the way in", () => {
+    const raw = JSON.stringify({
+      ...base,
+      cells: [
+        { uid: 0, session: U(0), cwd: "/a", width: 1.75 },
+        { uid: 1, session: U(1), cwd: "/b", width: "wide" },
+        { uid: 2, session: U(2), cwd: "/c", width: -3 },
+      ],
+      parked: [{ cell: { uid: 5, session: U(5), cwd: "/p", width: 0.5 }, note: "", at: 1 }],
+    });
+    const s = parseGridState(raw);
+    expect(s?.cells.map((c) => c.width)).toEqual([1.75, undefined, undefined]);
+    expect(s?.parked?.[0].cell.width).toBe(0.5);
+    // Round trip: the blob JSON.stringify writes is what parse reads back.
+    expect(parseGridState(JSON.stringify(s))?.cells[0].width).toBe(1.75);
   });
 });

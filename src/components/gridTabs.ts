@@ -2,6 +2,7 @@ import type { RunCommand } from "./runCommand";
 import { isRecord } from "../../common/isRecord";
 import { paneStateOf, type PaneState, type WaitKind } from "../../common/paneState";
 import { MAX_CELLS } from "./gridLayout";
+import { cellWidth } from "./columnWidth";
 
 // The grid is ONE flat, ordered list of terminal cells, split into pages of
 // PAGE_SIZE (the tabs). Closing a cell reflows the whole list so later pages pack forward
@@ -42,6 +43,11 @@ export interface Cell {
   // the same note instead of an empty box — the operator wrote the condition once and it holds
   // until they change it or the pane is closed. Persisted with the cell; absent = never parked.
   parkNote?: string;
+  // Fork-local (iTerm2 mode, operator request 2026-09-08): this column's share of its page, as
+  // a CSS `fr` weight. Absent = 1, the equal split. Set by dragging the line between two
+  // columns (TerminalGrid), and it rides with the cell through reorders, auto-sort and page
+  // moves — the operator widened THIS pane, not the third slot. Persisted with the cell.
+  width?: number;
   // Fork-local (iTerm2 mode, R12): this cell was opened by another cell's Fork button and
   // starts as a BRANCH of that session (`--resume <id> --fork-session`). One-shot: cleared
   // by setSession the moment the branch has an id of its own, so it can never fork twice.
@@ -469,6 +475,20 @@ export const cellName = (name: string): string | undefined => name.trim().slice(
 // `label` both land here — so the trimming rule cannot differ between them.
 export function setCellName(state: GridState, uid: number, name: string): GridState {
   return { ...state, cells: state.cells.map((c) => (c.uid === uid ? { ...c, name: cellName(name) } : c)) };
+}
+
+// Column widths (operator request 2026-09-08): the weights a drag produced, keyed by uid. A
+// weight of exactly 1 (or an unsane one) drops the field, so the cell is back on the equal
+// split and the persisted blob stays free of `width: 1` noise. Uids not in `widths` keep theirs.
+export function setColumnWidths(state: GridState, widths: Record<number, number | undefined>): GridState {
+  const cells = state.cells.map((c) => {
+    if (!(c.uid in widths)) return c;
+    const width = cellWidth(widths[c.uid]);
+    const rest: Cell = { ...c };
+    delete rest.width;
+    return width === undefined ? rest : { ...rest, width };
+  });
+  return { ...state, cells };
 }
 
 // Record which agent a cell launched (only "codex" is stored; Claude is the default/absent) so a
@@ -954,6 +974,7 @@ const asParked = (v: unknown, firstUid: number): ParkedCell[] | undefined => {
         agent: c.agent === "codex" ? "codex" : undefined,
         name: typeof c.name === "string" ? cellName(c.name) : undefined,
         parkNote: asParkNote(c.parkNote),
+        width: cellWidth(c.width),
       },
       note: typeof entry.note === "string" ? parkNote(entry.note) : "",
       at: typeof entry.at === "number" ? entry.at : 0,
@@ -1000,6 +1021,7 @@ export function parseGridState(raw: string | null): GridState | null {
             // "name" would take the status strip apart on every pane in the workspace.
             name: typeof c.name === "string" ? cellName(c.name) : undefined,
             parkNote: asParkNote(c.parkNote),
+            width: cellWidth(c.width),
           },
     );
     const expandedIdx = running.findIndex((c: Cell) => c.uid === parsed.expanded);

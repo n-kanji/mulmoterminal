@@ -14,6 +14,7 @@ import {
   setCwd,
   setCellAgent,
   setCellName,
+  setColumnWidths,
   closeCell,
   toggleExpand,
   switchPage,
@@ -469,6 +470,8 @@ const onAgent = (uid: number, agent: "claude" | "codex") => (state.value = setCe
 // R10: the cell's inline rename. Persisted with the rest of the grid state (the `state` watcher
 // writes localStorage), so a pane keeps its name across a reload like its session and dir do.
 const onRename = (uid: number, name: string) => (state.value = setCellName(state.value, uid, name));
+// Column widths (operator request 2026-09-08): the grid measured and clamped, we just keep it.
+const onResize = (widths: Record<number, number | undefined>) => (state.value = setColumnWidths(state.value, widths));
 // Pass the on-screen order so closing the zoomed cell stays zoomed on its filmstrip
 // neighbour (previous, or next when it was the first) instead of collapsing the grid.
 const onClose = (uid: number) =>
@@ -925,6 +928,7 @@ function configureAppearance() {
         @record-cwd="recordPreset"
         @remove-preset="onRemovePreset"
         @rename="onRename"
+        @resize="onResize"
         @close="onClose"
         @toggle-expand="onToggleExpand"
         @focus-cell="focusedCellUid = $event"

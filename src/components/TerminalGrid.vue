@@ -16,6 +16,7 @@ import type { PrPhase, WorkPhase } from "./rosterPhase";
 import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
 import { shouldFlipZoom } from "./cellChromeRules";
+import { weightOf, dragWeights, columnKeyDelta } from "./columnWidth";
 
 // Renders the grid, auto-sized to the cell count, fully controlled by GridView:
 // `cells` is the active page's slice (≤ PAGE_SIZE) when nothing is zoomed, and `expandedUid`
@@ -88,6 +89,9 @@ const emit = defineEmits<{
   // destination page for the whole column (target = the page number).
   (e: "reorder" | "move-to-page", uid: number, target: number): void;
   (e: "status", uid: number, value: CellStatus): void;
+  // Column widths (operator request 2026-09-08): the line between two columns was dragged (or
+  // double-clicked back to the equal split); the new weights, keyed by uid.
+  (e: "resize", widths: Record<number, number | undefined>): void;
   (e: "agent", uid: number, value: "claude" | "codex"): void;
   // Shared preset list events — uid-less since they mutate the one config list.
   (e: "record-cwd" | "remove-preset", value: string): void;
@@ -96,13 +100,93 @@ const emit = defineEmits<{
 // Separators are tracks of their own — `14px` between two `1fr`s — so a line never narrows a
 // pane. Without any, the track template is exactly gridLayout's.
 const SEPARATOR_TRACK = "18px";
+// A column's track is its weight in `fr` (columnWidth): an undragged page is exactly
+// gridLayout's equal split, a dragged one keeps the operator's proportions.
 const gridStyle = computed(() => {
   const base = trackStyle(layoutForCount(props.cells.length));
   const seps = props.separators;
-  if (!seps || props.cells.every((c) => !seps[c.uid])) return base;
-  const tracks = props.cells.map((c) => (seps[c.uid] ? `${SEPARATOR_TRACK} 1fr` : "1fr")).join(" ");
+  const plain = props.cells.every((c) => !seps?.[c.uid] && c.width === undefined);
+  if (plain) return base;
+  const tracks = props.cells.map((c) => (seps?.[c.uid] ? `${SEPARATOR_TRACK} ${weightOf(c)}fr` : `${weightOf(c)}fr`)).join(" ");
   return { ...base, gridTemplateColumns: tracks };
 });
+
+// Column resize (operator request 2026-09-08). The line between two neighbouring columns is a
+// handle: an absolutely-positioned grid child pinned to the LEFT column's track (`grid-column`
+// places it, `position: absolute` keeps it out of the track template), straddling the 1px gap.
+// Both lines of the span are named: for an absolutely-positioned child an `auto` end line is
+// the container's far padding edge, which would park every handle at the right of the grid.
+// Dragging it moves width from one neighbour to the other and nothing else on the page moves;
+// double-click puts the pair back on the equal split. The PTY follows live: the cells' own
+// ResizeObservers refit xterm as the tracks change, the same way the App splitter works.
+//
+// Each column's 1-based grid track, counting the separator tracks standing before it.
+const trackOf = computed(() => {
+  const out = new Map<number, number>();
+  let track = 0;
+  for (const c of props.cells) {
+    if (props.separators?.[c.uid]) track += 1;
+    track += 1;
+    out.set(c.uid, track);
+  }
+  return out;
+});
+// The handles: one after every column but the page's last.
+const handles = computed(() =>
+  props.cells.flatMap((c, i) => {
+    const right = props.cells[i + 1];
+    return right ? [{ left: c, right, track: trackOf.value.get(c.uid) ?? 1 }] : [];
+  }),
+);
+
+// Apply a pixel delta to the pair — measured, clamped, converted, emitted. The weights are
+// read from the LIVE cells by uid, not from the pair captured at mousedown: every move event
+// changes them, and a stale weight would shrink the pair's total a little per event, handing
+// the rest of the page width the operator never dragged.
+function resizePair(leftUid: number, rightUid: number, dx: number) {
+  const left = props.cells.find((c) => c.uid === leftUid);
+  const right = props.cells.find((c) => c.uid === rightUid);
+  const l = cellEl(leftUid);
+  const r = cellEl(rightUid);
+  if (!left || !right || !l || !r) return;
+  const w = dragWeights(l.getBoundingClientRect().width, r.getBoundingClientRect().width, weightOf(left), weightOf(right), dx);
+  if (w) emit("resize", { [leftUid]: w.left, [rightUid]: w.right });
+}
+let stopColumnDrag: (() => void) | null = null;
+function startColumnDrag(e: MouseEvent, left: Cell, right: Cell) {
+  const { uid: leftUid } = left;
+  const { uid: rightUid } = right;
+  if (e.button !== 0) return;
+  e.preventDefault();
+  stopColumnDrag?.();
+  let lastX = e.clientX;
+  const onMove = (ev: MouseEvent) => {
+    const dx = ev.clientX - lastX;
+    if (dx === 0) return;
+    lastX = ev.clientX;
+    resizePair(leftUid, rightUid, dx);
+  };
+  const onUp = () => stopColumnDrag?.();
+  stopColumnDrag = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    stopColumnDrag = null;
+  };
+  // Keep the resize cursor and suppress text selection for the whole drag.
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
+function onColumnKey(e: KeyboardEvent, left: Cell, right: Cell) {
+  const dx = columnKeyDelta(e.key);
+  if (dx === null) return;
+  e.preventDefault();
+  resizePair(left.uid, right.uid, dx);
+}
+const resetPair = (left: Cell, right: Cell) => emit("resize", { [left.uid]: undefined, [right.uid]: undefined });
 const separatorBefore = (uid: number): Separator | undefined => props.separators?.[uid];
 // A line can walk onto the neighbouring column unless that column already has one.
 const separatorCan = (uid: number, dir: -1 | 1): boolean => {
@@ -425,6 +509,23 @@ watch(
           />
         </Teleport>
       </template>
+      <!-- The lines between neighbouring columns (operator request 2026-09-08). Out of the
+           track flow, so they never cost a pane a pixel. -->
+      <div
+        v-for="h in handles"
+        :key="`handle-${h.left.uid}-${h.right.uid}`"
+        class="col-handle"
+        :style="{ gridColumn: `${h.track} / ${h.track + 1}` }"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-label="Resize columns"
+        :data-resize-left="h.left.uid"
+        title="ドラッグで列幅を変更（ダブルクリックで均等に戻す）"
+        @mousedown="(e) => startColumnDrag(e, h.left, h.right)"
+        @dblclick.prevent="resetPair(h.left, h.right)"
+        @keydown="(e) => onColumnKey(e, h.left, h.right)"
+      />
     </div>
   </div>
 </template>
@@ -446,6 +547,31 @@ watch(
   display: grid;
   padding: 1px;
   box-sizing: border-box;
+  /* The column handles are absolutely positioned against their track (see .col-handle). */
+  position: relative;
+}
+
+/* A column's right edge, straddling the 1px gap to the next column: 7px of grab area, a
+   3px overlap onto each pane. Invisible until hovered or focused, so the grid stays the grid. */
+.col-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -4px;
+  width: 7px;
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 120ms;
+}
+.col-handle:hover,
+.col-handle:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+/* Zoomed (roster or filmstrip): the grid is off-screen or a strip; the lines mean nothing. */
+.stage.zoomed .col-handle {
+  display: none;
 }
 
 /* Fork-local (iTerm2 mode): the focused cell no longer scales (see `.focused`), so the

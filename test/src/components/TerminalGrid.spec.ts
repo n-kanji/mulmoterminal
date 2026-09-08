@@ -353,3 +353,55 @@ describe("grid cockpit (list view)", () => {
     expect(w.find('[data-testid="cockpit-badge"]').exists()).toBe(false);
   });
 });
+
+describe("column resize handles (operator request 2026-09-08)", () => {
+  const handlesOf = (w: ReturnType<typeof mount>) => w.findAll('[role="separator"][aria-label="Resize columns"]');
+  it("stands one handle between every pair of columns, none after the last", () => {
+    const w = mountGrid([cell(0), cell(1), cell(2)]);
+    const hs = handlesOf(w);
+    expect(hs).toHaveLength(2);
+    expect(hs.map((h) => h.attributes("data-resize-left"))).toEqual(["0", "1"]);
+    // Pinned to the LEFT column's track — both lines named, an `auto` end would be the grid's
+    // far edge for an absolutely-positioned child — so it sits on that column's right edge.
+    expect(hs.map((h) => (h.element as HTMLElement).style.gridColumn)).toEqual(["1 / 2", "2 / 3"]);
+    expect(handlesOf(mountGrid([cell(0)]))).toHaveLength(0);
+  });
+  it("lays the tracks from the cells' weights; an undragged page is the plain equal split", async () => {
+    const w = mountGrid([cell(0), cell(1), cell(2)]);
+    const grid = () => (w.find(".grid").element as HTMLElement).style.gridTemplateColumns;
+    expect(grid()).toBe("1fr 1fr 1fr");
+    await w.setProps({ cells: [{ ...cell(0), width: 1.5 }, { ...cell(1), width: 0.5 }, cell(2)] });
+    expect(grid()).toBe("1.5fr 0.5fr 1fr");
+  });
+  it("a separator track counts: the handle after the column behind a line sits two tracks over", async () => {
+    const w = mount(TerminalGrid, {
+      props: {
+        cells: [cell(0), cell(1), { ...cell(2), width: 2 }],
+        separators: { 1: { id: 9, beforeUid: 1 } },
+        expandedUid: null,
+        listRows: [],
+        cancelUids: [],
+        defaultCwd: "/work",
+        presets: [],
+        launchers: [],
+        home: "/work",
+        openSessionIds: [],
+        openCwds: [],
+        listMode: true,
+      },
+    });
+    await nextTick();
+    expect((w.find(".grid").element as HTMLElement).style.gridTemplateColumns).toBe("1fr 18px 1fr 2fr");
+    expect(handlesOf(w).map((h) => (h.element as HTMLElement).style.gridColumn)).toEqual(["1 / 2", "3 / 4"]);
+  });
+  it("double-click on a handle asks for the pair back on the equal split", async () => {
+    const w = mountGrid([{ ...cell(0), width: 1.5 }, { ...cell(1), width: 0.5 }, cell(2)]);
+    await handlesOf(w)[0].trigger("dblclick");
+    expect(w.emitted("resize")).toEqual([[{ 0: undefined, 1: undefined }]]);
+  });
+  it("hides the handles while a cell is zoomed", () => {
+    const w = mountGrid([cell(0), cell(1)], 0);
+    // Still in the DOM (the stylesheet hides them), but never for a lone column.
+    expect(handlesOf(w)).toHaveLength(1);
+  });
+});
