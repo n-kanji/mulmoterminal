@@ -397,11 +397,16 @@ describe("column resize handles (operator request 2026-09-08)", () => {
   it("double-click on a handle asks for the pair back on the equal split", async () => {
     const w = mountGrid([{ ...cell(0), width: 1.5 }, { ...cell(1), width: 0.5 }, cell(2)]);
     await handlesOf(w)[0].trigger("dblclick");
-    expect(w.emitted("resize")).toEqual([[{ 0: undefined, 1: undefined }]]);
+    // The KEYS must be present: setColumnWidths only touches uids named in the payload, so an
+    // empty object would be a reset that resets nothing (toEqual would not notice).
+    const payload = w.emitted("resize")?.[0]?.[0] as Record<string, unknown>;
+    expect(Object.keys(payload)).toEqual(["0", "1"]);
+    expect(Object.values(payload)).toEqual([undefined, undefined]);
   });
-  it("hides the handles while a cell is zoomed", () => {
+  it("marks the stage zoomed so the stylesheet can hide the handles", async () => {
     const w = mountGrid([cell(0), cell(1)], 0);
-    // Still in the DOM (the stylesheet hides them), but never for a lone column.
+    await nextTick();
+    expect(w.find(".stage").classes()).toContain("zoomed");
     expect(handlesOf(w)).toHaveLength(1);
   });
 });

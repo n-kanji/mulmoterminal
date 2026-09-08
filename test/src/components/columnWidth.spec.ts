@@ -42,6 +42,8 @@ describe("column weights", () => {
     expect(cellWidth(1)).toBeUndefined();
     expect(cellWidth(0)).toBeUndefined();
     expect(cellWidth(-2)).toBeUndefined();
+    // Rounds to 0 — a 0fr track — so it is dropped, not kept.
+    expect(cellWidth(0.0004)).toBeUndefined();
     expect(cellWidth(NaN)).toBeUndefined();
     expect(cellWidth("2")).toBeUndefined();
     expect(cellWidth(undefined)).toBeUndefined();
@@ -55,8 +57,10 @@ describe("column weights", () => {
     // Cannot push the neighbour under the floor.
     expect(dragSplit(400, 400, 500, 200)).toEqual({ leftPx: 600, rightPx: 200 });
     expect(dragSplit(400, 400, -500, 200)).toEqual({ leftPx: 200, rightPx: 600 });
-    // A pair too narrow for two minimums refuses to move at all.
-    expect(dragSplit(150, 150, 50, 200)).toEqual({ leftPx: 150, rightPx: 150 });
+    // A pair too narrow for two minimums (ten columns on a laptop) still trades width, down
+    // to a quarter of the pair — a dead handle with no feedback was the alternative.
+    expect(dragSplit(150, 150, 50, 200)).toEqual({ leftPx: 200, rightPx: 100 });
+    expect(dragSplit(150, 150, 500, 200)).toEqual({ leftPx: 225, rightPx: 75 });
   });
   it("dragWeights moves weight between the pair and conserves their total", () => {
     expect(dragWeights(400, 400, 1, 1, 100)).toEqual({ left: 1.25, right: 0.75 });
@@ -65,7 +69,7 @@ describe("column weights", () => {
     expect(w).toEqual({ left: 1, right: 1 });
     // A drag that the floor clamps to nothing is null, not a no-op emit.
     expect(dragWeights(200, 600, 0.5, 1.5, -50)).toBeNull();
-    expect(dragWeights(150, 150, 1, 1, 50)).toBeNull();
+    expect(dragWeights(150, 150, 1, 1, 0)).toBeNull();
     // Many small events do not drift: replaying step by step lands where one jump does.
     let leftPx = 683;
     let rightPx = 683;

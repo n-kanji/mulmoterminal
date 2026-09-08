@@ -40,8 +40,11 @@ export function dockKeyWidth(key: string, current: number): number | null {
 
 // ---- grid columns ---------------------------------------------------------------------
 
-// A pane narrower than this reflows xterm into garbage, so a drag stops here.
+// A pane narrower than this reflows xterm into garbage, so a drag stops here — unless the
+// pair is already narrower than that (ten columns on a laptop): then the floor is a quarter of
+// the pair, so a narrow page still trades width instead of the handle going silently dead.
 export const MIN_COLUMN_PX = 200;
+export const columnFloor = (pairPx: number, minPx = MIN_COLUMN_PX): number => Math.min(minPx, pairPx / 4);
 export const COLUMN_STEP = 16;
 // The persisted weight is bounded: a page never has more than MAX_CELLS columns, so a weight
 // beyond this can only come from a hand-edited blob, and one that large would starve the
@@ -54,21 +57,22 @@ export const DEFAULT_WEIGHT = 1;
 // A cell's persisted weight, or undefined for anything that is not a sane positive number
 // (absent, hand-edited to a string, zero, NaN, absurd).
 export function cellWidth(v: unknown): number | undefined {
-  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
   const w = Number(Math.min(v, MAX_WEIGHT).toFixed(WEIGHT_DECIMALS));
-  return w === DEFAULT_WEIGHT ? undefined : w;
+  // Checked AFTER rounding: 0.0004 rounds to 0, and a 0fr track is a pane with no width.
+  return w > 0 && w !== DEFAULT_WEIGHT ? w : undefined;
 }
 
 export const weightOf = (cell: { width?: number }): number => cell.width ?? DEFAULT_WEIGHT;
 
 // The two neighbours after the operator dragged the line between them by `dx` pixels.
 // `leftPx` / `rightPx` are what the two columns measure now; the pair's total is conserved
-// and neither may go under `minPx`. When the pair cannot even hold two minimums (a narrow
-// window), the drag is refused: the current split is returned unchanged.
+// and neither may go under the floor (columnFloor: `minPx`, or a quarter of the pair when
+// the pair is narrower than two of those).
 export function dragSplit(leftPx: number, rightPx: number, dx: number, minPx = MIN_COLUMN_PX): { leftPx: number; rightPx: number } {
   const total = leftPx + rightPx;
-  if (total < minPx * 2) return { leftPx, rightPx };
-  const next = Math.max(minPx, Math.min(total - minPx, leftPx + dx));
+  const floor = columnFloor(total, minPx);
+  const next = Math.max(floor, Math.min(total - floor, leftPx + dx));
   return { leftPx: next, rightPx: total - next };
 }
 
