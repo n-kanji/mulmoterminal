@@ -6,6 +6,9 @@ import {
   queueAgentPrompt,
   queuedAgentPromptCount,
   takeAgentPrompt,
+  rememberFirstTurn,
+  recallFirstTurn,
+  FIRST_TURN_TTL_MS,
 } from "../../../server/session/agent-prompt-queue.js";
 
 const PROJECT = "/home/u/project";
@@ -66,5 +69,29 @@ describe("agent prompt queue", () => {
     dropAgentPrompt(PROJECT, "undelivered");
 
     expect(takeAgentPrompt(PROJECT, T0)).toBe("keep");
+  });
+});
+
+describe("the first turn a pane was given, kept for a restart (2026-09-08)", () => {
+  it("recalls the turn under the session it was typed into, and only that session", () => {
+    clearAgentPrompts();
+    rememberFirstTurn("s1", "read HANDOVER and start", 1_000);
+    expect(recallFirstTurn("s1", 2_000)).toBe("read HANDOVER and start");
+    expect(recallFirstTurn("s2", 2_000)).toBeUndefined();
+    expect(recallFirstTurn(null, 2_000)).toBeUndefined();
+  });
+  it("is not consumed by a recall — a pane that dies twice restarts twice", () => {
+    clearAgentPrompts();
+    rememberFirstTurn("s1", "go", 1_000);
+    expect(recallFirstTurn("s1", 2_000)).toBe("go");
+    expect(recallFirstTurn("s1", 3_000)).toBe("go");
+  });
+  it("expires after the TTL and is cleared with the queue", () => {
+    clearAgentPrompts();
+    rememberFirstTurn("s1", "go", 1_000);
+    expect(recallFirstTurn("s1", 1_000 + FIRST_TURN_TTL_MS + 1)).toBeUndefined();
+    rememberFirstTurn("s1", "go", 1_000);
+    clearAgentPrompts();
+    expect(recallFirstTurn("s1", 1_001)).toBeUndefined();
   });
 });

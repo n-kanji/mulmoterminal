@@ -41,7 +41,7 @@ import {
 } from "../session/session-resolve.js";
 import type { PtyEntry } from "../session/types.js";
 import type { SpawnClaudePty, SpawnCodexPty, SpawnCommandPty, SpawnLauncherPty, ResolveLauncher } from "../session/spawners.js";
-import { takeAgentPrompt } from "../session/agent-prompt-queue.js";
+import { takeAgentPrompt, rememberFirstTurn, recallFirstTurn } from "../session/agent-prompt-queue.js";
 import { takeResumeNudge } from "../session/resume-nudge.js";
 import { terminalWsKind, type TerminalWsKind } from "./terminal-ws-path.js";
 import { normalizeAgent, parseIndexParam } from "./routeParams.js";
@@ -113,11 +113,33 @@ function spawnInitialPrompt(
   if (live) return undefined;
   const queued = queuedFirstTurn(resume, attachGuiMcp, cwd);
   if (queued) return queued;
+  // A pane that died before its first turn ran (operator request 2026-09-08): the cell asks
+  // for its old id again, there is no transcript to resume, and the turn it was given is
+  // typed again (agent-prompt-queue.ts, rememberFirstTurn). A fork or a resume has a
+  // conversation of its own and never takes one.
+  if (!fork && !resume) return recallFirstTurn(paneId);
   // The nudge is keyed by the PANE id the restart route killed (resume-nudge.ts), which is
   // no longer always the transcript being resumed: after a /clear the cold resume follows
   // the agent's newer id (resumeTranscriptFor), and the nudge must not get lost in that
   // translation.
-  return fork || !resume ? undefined : takeResumeNudge(paneId);
+  return takeResumeNudge(paneId);
+}
+
+// spawnInitialPrompt, plus the bookkeeping a restart needs: the turn is remembered under the
+// id this spawn RUNS as (a restart is minted a fresh one), so a pane that dies again before
+// the turn runs can be restarted again. A reattach or a resume has nothing to remember.
+function firstTurnFor(
+  sessionId: string,
+  live: boolean,
+  fork: boolean,
+  resume: string | null,
+  attachGuiMcp: boolean,
+  cwd: string,
+  paneId: string | null,
+): string | undefined {
+  const prompt = spawnInitialPrompt(live, fork, resume, attachGuiMcp, cwd, paneId);
+  if (prompt && !live && !resume) rememberFirstTurn(sessionId, prompt);
+  return prompt;
 }
 
 function resolveClaudeSession(requested: string | null, cwd: string): SessionResolution {
@@ -380,7 +402,7 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     // file. On reconnect, re-sync it from the (now-refreshed) Keychain so a token that
     // rotated since spawn doesn't leave the reattached session stuck at "Not logged in".
     if (live?.sandbox) writeSandboxCredentials(sessionId);
-    const initialPrompt = spawnInitialPrompt(!!live, fork, resume, attachGuiMcp, cwd, requested);
+    const initialPrompt = firstTurnFor(sessionId, !!live, fork, resume, attachGuiMcp, cwd, requested);
     entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork });
   } catch (err) {
     // A failed spawn (claude missing, or node-pty's spawn-helper not executable)

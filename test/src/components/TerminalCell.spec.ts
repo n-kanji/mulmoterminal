@@ -26,7 +26,7 @@ vi.mock("../../../src/components/Terminal.vue", () => ({
   default: {
     name: "TerminalView",
     props: ["sessionId", "connectKey", "cwd", "hideHeader", "fork"],
-    emits: ["session", "cwd"],
+    emits: ["session", "cwd", "exit"],
     // Render the header-actions slot so the cell's icon buttons (moved onto the
     // terminal's header row) are present in the test DOM — but only when the header
     // is shown, mirroring Terminal.vue's `v-if="!hideHeader"`.
@@ -1963,5 +1963,25 @@ describe("TerminalCell", () => {
       expect(term.props("fork")).toBeNull();
       expect(w.emitted("session")?.[0]).toEqual(["88888888-8888-8888-8888-888888888888"]);
     });
+  });
+});
+
+describe("a pane whose session ended offers a restart in place (2026-09-08)", () => {
+  it("shows the restart bar on exit, and a click reconnects the same cell and hides it", async () => {
+    mockFetch();
+    const w = mountCell("11111111-2222-4333-8444-555555555555", { initialCwd: "/home/me/proj" });
+    await flushPromises();
+    expect(w.find('[data-testid="cell-ended"]').exists()).toBe(false);
+    const term = w.findComponent({ name: "TerminalView" });
+    const key = term.props("connectKey") as number;
+    term.vm.$emit("exit");
+    await flushPromises();
+    expect(w.find('[data-testid="cell-ended"]').exists()).toBe(true);
+    await w.find('[data-testid="cell-relaunch"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-testid="cell-ended"]').exists()).toBe(false);
+    // Same cell, same session id asked for again — the server decides resume vs restart.
+    expect(term.props("connectKey")).toBe(key + 1);
+    expect(term.props("sessionId")).toBe("11111111-2222-4333-8444-555555555555");
   });
 });

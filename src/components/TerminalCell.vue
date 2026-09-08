@@ -149,6 +149,20 @@ const sessionId = ref<string | null>(props.initialSessionId);
 // persisted cell on reload so a codex cell reconnects to /ws/codex.
 const agent = ref<"claude" | "codex">(props.initialAgent === "codex" ? "codex" : "claude");
 const connectKey = ref(0);
+// The session ended under this pane (operator request 2026-09-08): the process exited or
+// never started — Claude's "trust this folder?" answered No, a wrapper that failed to load.
+// Before this the pane sat at "[session ended]" with the close button as its only exit. Now
+// it offers a restart in place: same directory, same cell, same name; the server resumes the
+// transcript if the conversation had begun, else starts over and retypes the first turn the
+// pane was opened with (ws-routes spawnInitialPrompt).
+const ended = ref(false);
+function onSessionEnd() {
+  ended.value = true;
+}
+function relaunch() {
+  ended.value = false;
+  connectKey.value++;
+}
 // Fork-local (iTerm2 mode, R12): the session this cell branches from, while it has none of
 // its own. Cleared in onSession — the server has named the branch, so every later connect
 // (reconnect, reload) resumes THAT id instead of forking the source again.
@@ -394,6 +408,7 @@ let recordNextCwd = false;
 function launchIn(dir: string | null) {
   cwd.value = dir;
   sessionId.value = null; // new session — the server generates the id
+  ended.value = false;
   connectKey.value++;
   launched.value = true;
   emit("agent", agent.value); // let the grid persist which agent this cell launched
@@ -664,6 +679,7 @@ function resume(s: ResumableSession) {
   // Use the cwd those rows were fetched for, not the (possibly-changed) input.
   cwd.value = resumableCwd.value ?? (dirInput.value.trim() || props.defaultCwd);
   sessionId.value = s.id;
+  ended.value = false;
   connectKey.value++;
   launched.value = true;
   recordNextCwd = false; // resuming isn't a fresh launch — don't record its cwd
@@ -856,6 +872,7 @@ function teardown() {
   // the socket is open, so a disconnected cell's close button would otherwise leave its tmux alive.
   if (id) fetch(`/api/session/${encodeURIComponent(id)}/terminate`, { method: "POST" }).catch(() => {});
   launched.value = false;
+  ended.value = false;
   recordNextCwd = false; // drop any pending fresh-launch record from a torn-down session
   sessionId.value = null;
   working.value = false;
@@ -1547,6 +1564,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         run-menu
         @session="onSession"
         @cwd="onServerCwd"
+        @exit="onSessionEnd"
         @run="(cmd) => emit('runSpare', cmd)"
       >
         <!-- Row 2 — the cell's icon actions, gathered onto the terminal's header row. -->
@@ -1618,6 +1636,34 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           </button>
         </template>
       </TerminalView>
+      <!-- The session ended (2026-09-08): a restart in place, where the eye lands when a pane
+           goes quiet. Above the next-queue button (z-14), below the overlays (z-15+) that
+           cover the whole terminal. -->
+      <div
+        v-if="ended && launched"
+        data-testid="cell-ended"
+        class="absolute inset-x-0 bottom-0 z-[14] flex items-center gap-2 border-t border-[var(--warn)] bg-panel px-3 py-1.5 font-sans text-[12px] text-fg"
+        role="status"
+      >
+        <span class="material-symbols-outlined flex-none text-[16px] text-[var(--warn)]" aria-hidden="true">error</span>
+        <span class="min-w-0 flex-auto truncate">セッションが終了しました（起動失敗、または終了）</span>
+        <button
+          type="button"
+          data-testid="cell-relaunch"
+          class="flex-none cursor-pointer rounded-[4px] border-0 bg-accent px-2 py-0.5 text-[12px] font-semibold text-white hover:brightness-110"
+          title="同じディレクトリ・同じ名前でこのペインを再起動する。会話が始まっていれば続きから、まだなら最初の指示をもう一度入れて起動し直す"
+          @click="relaunch"
+        >
+          同じ設定で再起動
+        </button>
+        <button
+          type="button"
+          class="flex-none cursor-pointer rounded-[4px] border border-border bg-transparent px-2 py-0.5 text-[12px] text-fg hover:bg-hover"
+          @click="close"
+        >
+          閉じる
+        </button>
+      </div>
       <!-- The next-instruction queue (2026-08-26) sits at the bottom-right, beside the
            agent's own input line: the operator's eye is there when the thought "and then
            do X" arrives, not on the header. Claude only — delivery rides Claude's Stop

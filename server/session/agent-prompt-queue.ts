@@ -68,7 +68,43 @@ export function queuedAgentPromptCount(cwd?: string): number {
   return total;
 }
 
-/** Empty the queue. Test seam — the map is module state shared by every spec in a file. */
+// ---- the first turn a session was GIVEN, kept for a restart (operator request 2026-09-08) ----
+//
+// A column opened by the API can die before its first turn ever runs: Claude's "trust this
+// folder?" answered No, a wrapper that fails to load, a bad --add-dir. The queued prompt was
+// consumed at spawn and typed into a PTY that is now gone, and the pane sits at
+// "[session ended]" with nothing to restart. So the typed first turn is remembered under the
+// session it was typed into; when that pane is relaunched (the cell keeps asking for its old
+// id, which has no transcript because the turn never ran), the restart takes it again.
+// Single-keyed by session id, so a hand-opened pane in the same directory never inherits it.
+
+/** How long a first turn stays restartable. Long enough to notice a dead pane after lunch. */
+export const FIRST_TURN_TTL_MS = 30 * 60_000;
+
+const firstTurns = new Map<string, QueuedPrompt>();
+
+/** Remember the first turn typed into `sessionId`, so a restart of that pane can retype it. */
+export function rememberFirstTurn(sessionId: string, prompt: string, now: number = Date.now()): void {
+  firstTurns.set(sessionId, { prompt, at: now });
+}
+
+/** The first turn `sessionId` was given, if it is still within its TTL. Not consumed: a pane
+ *  that dies twice before the turn runs gets it a third time; a pane whose turn DID run has a
+ *  transcript, resumes instead of restarting, and never asks. */
+export function recallFirstTurn(sessionId: string | null, now: number = Date.now()): string | undefined {
+  if (!sessionId) return undefined;
+  const entry = firstTurns.get(sessionId);
+  if (!entry) return undefined;
+  if (now - entry.at > FIRST_TURN_TTL_MS) {
+    firstTurns.delete(sessionId);
+    return undefined;
+  }
+  return entry.prompt;
+}
+
+/** Empty the queue and the remembered first turns. Test seam — module state shared by every
+ *  spec in a file. */
 export function clearAgentPrompts(): void {
   queued.clear();
+  firstTurns.clear();
 }
