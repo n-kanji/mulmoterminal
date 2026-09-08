@@ -1637,8 +1637,8 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         </template>
       </TerminalView>
       <!-- The session ended (2026-09-08): a restart in place, where the eye lands when a pane
-           goes quiet. Above the next-queue button (z-14), below the overlays (z-15+) that
-           cover the whole terminal. -->
+           goes quiet. The next-queue button (below) steps aside while it shows — there is no
+           session to queue for, and it sat on the bar's close button. -->
       <div
         v-if="ended && launched"
         data-testid="cell-ended"
@@ -1668,7 +1668,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
            agent's own input line: the operator's eye is there when the thought "and then
            do X" arrives, not on the header. Claude only — delivery rides Claude's Stop
            hook. Below the diff / transcript overlays (z-15) so they cover it when open. -->
-      <div v-if="sessionId && agent !== 'codex'" class="absolute bottom-2 right-3 z-[14]">
+      <div v-if="sessionId && agent !== 'codex' && !ended" class="absolute bottom-2 right-3 z-[14]">
         <NextQueueMenu :session-id="sessionId" floating />
       </div>
       <div
