@@ -94,3 +94,81 @@ export function appendBoundedOutput(buffer: string, data: string, limit: number)
   const cut = combined.slice(cutAt);
   return cut.slice(splitSequenceLength(combined, cutAt, cut));
 }
+
+// ---------------------------------------------------------------------------------------
+// Mode state that fell off the FRONT of the tail.
+//
+// The replay is written into a terminal that was just reset, so it starts from "every
+// private mode off, normal buffer". That is only right if the bytes that turned the modes
+// on are still in the tail. They are not, for long: tmux enters the alternate screen
+// (`CSI ? 1049 h`) once, as the very first bytes after attach, and never again — every
+// later redraw repaints in place. After a megabyte of output the tail begins somewhere
+// inside those repaints, and a reattach replays full-screen frames into the NORMAL
+// buffer: the screen looks right, but xterm is not in the alternate buffer, so the wheel
+// scrolls xterm's (empty) scrollback instead of reaching tmux / the app. The pane shows
+// exactly one screen and cannot scroll back. Only panes that were reattached after
+// enough output show it, which is why it looks random.
+//
+// So each time the tail drops bytes, the dropped bytes are folded into the set of private
+// modes that were ON at the new head, and a replay starts by re-asserting those. The
+// dropped region always holds whole sequences: appendBoundedOutput cuts on a sequence
+// boundary, and the previous head was such a boundary too.
+
+export interface ReplayTail {
+  readonly text: string;
+  /** DEC private modes (`CSI ? Pm h`) on at the start of `text`, in the order they were set. */
+  readonly headModes: ReadonlySet<number>;
+}
+
+export const EMPTY_REPLAY_TAIL: ReplayTail = { text: "", headModes: new Set() };
+
+const PRIVATE_MODE_RE = new RegExp(ESC + "\\[\\?([0-9;:]*)([hl])", "g");
+
+/** Fold every DECSET/DECRST in `dropped` into `modes`. Exported for tests. */
+export function foldPrivateModes(modes: ReadonlySet<number>, dropped: string): Set<number> {
+  const out = new Set(modes);
+  for (const match of dropped.matchAll(PRIVATE_MODE_RE)) {
+    const set = match[2] === "h";
+    for (const param of match[1].split(";")) {
+      // A parameter may carry colon sub-parameters; the mode is the leading number.
+      const mode = Number.parseInt(param, 10);
+      if (Number.isNaN(mode)) continue;
+      if (set) {
+        out.delete(mode); // re-add so the set keeps SET order, not first-seen order
+        out.add(mode);
+      } else out.delete(mode);
+    }
+  }
+  return out;
+}
+
+export function appendReplayTail(tail: ReplayTail, data: string, limit: number): ReplayTail {
+  const text = appendBoundedOutput(tail.text, data, limit);
+  const droppedLength = tail.text.length + data.length - text.length;
+  if (droppedLength === 0) return { text, headModes: tail.headModes };
+  // Sliced off the parts rather than off a second `tail.text + data`: this runs on every
+  // chunk of every pane, and flattening a megabyte twice per chunk is a cost worth skipping.
+  const dropped = droppedLength <= tail.text.length ? tail.text.slice(0, droppedLength) : tail.text + data.slice(0, droppedLength - tail.text.length);
+  return { text, headModes: foldPrivateModes(tail.headModes, dropped) };
+}
+
+// The alternate-screen modes go first: 1049 also clears the screen it switches to, and
+// everything else must land in THAT buffer.
+const ALT_SCREEN_MODES = new Set([47, 1047, 1049]);
+
+// One sequence per mode, never a combined `CSI ? 1049 ; 1000 h`: the client drops a
+// SET whose parameters are ALL mouse modes (src/composables/mouseTrackingModes.ts) and
+// lets a mixed one through, so bundling a mouse mode with 1049 would hand xterm native
+// mouse tracking — and turn a drag back into escape bytes typed at the prompt (#729).
+export function replayPrefix(headModes: ReadonlySet<number>): string {
+  const modes = [...headModes];
+  const ordered = [...modes.filter((m) => ALT_SCREEN_MODES.has(m)), ...modes.filter((m) => !ALT_SCREEN_MODES.has(m))];
+  return ordered.map((mode) => `${ESC}[?${mode}h`).join("");
+}
+
+/** What a reattaching client is sent: the head modes, then the tail minus its queries. */
+export const replayOf = (tail: ReplayTail): string => replayPrefix(tail.headModes) + stripTerminalQueries(tail.text);
+
+/** What a headless render consumes: the head modes, then the tail verbatim (queries are
+ *  kept there on purpose — see headlessScreen.ts). */
+export const screenSourceOf = (tail: ReplayTail): string => replayPrefix(tail.headModes) + tail.text;

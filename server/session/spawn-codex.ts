@@ -11,7 +11,7 @@ import { claimedCodexRollouts, codexRolloutIds, ptys } from "./registry.js";
 import { ptySpawn } from "./pty-spawn.js";
 import { attachCodexAutoRun } from "./draft-injection.js";
 import { sendExitAndClose, sendFrame } from "./ws-frames.js";
-import { appendBoundedOutput } from "./terminal-replay.js";
+import { EMPTY_REPLAY_TAIL, appendReplayTail } from "./terminal-replay.js";
 import type { PtyEntry } from "./types.js";
 import type { SpawnDeps } from "./spawn-deps.js";
 
@@ -28,7 +28,7 @@ const activityDepsFor = (sessionId: string, entry: PtyEntry, deps: SpawnDeps) =>
 export function createCodexSpawner(deps: SpawnDeps) {
   function wireCodexRelay(entry: PtyEntry, sessionId: string, onOutput?: (data: string) => void): void {
     entry.term.onData((data) => {
-      entry.buffer = appendBoundedOutput(entry.buffer, data, deps.outputBufferLimit);
+      entry.buffer = appendReplayTail(entry.buffer, data, deps.outputBufferLimit);
       sendFrame(entry.ws, { type: "output", data });
       onOutput?.(data);
     });
@@ -73,7 +73,7 @@ export function createCodexSpawner(deps: SpawnDeps) {
     const via = tmux ? " via tmux" : "";
     const resumeNote = resumeRolloutId ? ` (resume ${resumeRolloutId})` : "";
     console.log(`[pty] spawned codex (pid=${term.pid}${via}) in ${cwd}${resumeNote}`);
-    const entry: PtyEntry = { term, ws, buffer: "", cwd, tmux, active: false, agent: "codex" };
+    const entry: PtyEntry = { term, ws, buffer: EMPTY_REPLAY_TAIL, cwd, tmux, active: false, agent: "codex" };
     ptys.set(sessionId, entry);
     if (resumeRolloutId) {
       codexRolloutIds.set(sessionId, resumeRolloutId);

@@ -6,13 +6,14 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { restartClaudePanes, paneNeedsNudge } from "../../../server/session/restart-claude-panes.js";
 import { takeResumeNudge, clearResumeNudges } from "../../../server/session/resume-nudge.js";
 import type { PtyEntry } from "../../../server/session/types.js";
+import { EMPTY_REPLAY_TAIL } from "../../../server/session/terminal-replay.js";
 
 function fakeEntry(agent: "claude" | "codex", withWs: boolean): PtyEntry & { closedWs: { close: ReturnType<typeof vi.fn> } | null } {
   const ws = withWs ? { close: vi.fn() } : null;
   return {
     term: { kill: vi.fn() } as unknown as PtyEntry["term"],
     ws: ws as unknown as PtyEntry["ws"],
-    buffer: "",
+    buffer: EMPTY_REPLAY_TAIL,
     cwd: "/w",
     active: false,
     agent,

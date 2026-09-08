@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { createConnectionHandlers, handleCommandFrame } from "../../../server/session/pty-connection.js";
 import type { PtyEntry } from "../../../server/session/types.js";
+import { EMPTY_REPLAY_TAIL } from "../../../server/session/terminal-replay.js";
+import type { ReplayTail } from "../../../server/session/terminal-replay.js";
+
+const tailOf = (text: string, headModes: number[] = []): ReplayTail => ({ text, headModes: new Set(headModes) });
 
 const OPEN = 1;
 const CLOSED = 3;
@@ -60,7 +64,7 @@ function setup() {
 // PtyEntry carries fields these handlers never touch; the fakes model the ones they do.
 function entryWith(over: Partial<PtyEntry> = {}) {
   const { term } = fakeTerm();
-  return { term, ws: null, buffer: "", cwd: "/ws", active: false, agent: "claude", ...over } as unknown as PtyEntry;
+  return { term, ws: null, buffer: EMPTY_REPLAY_TAIL, cwd: "/ws", active: false, agent: "claude", ...over } as unknown as PtyEntry;
 }
 
 describe("handleClientFrame", () => {
@@ -238,7 +242,7 @@ describe("reattachPty", () => {
   it("replays the buffered tail so the reattached view has context", () => {
     const { reattachPty } = setup();
     const s = fakeSocket();
-    const entry = entryWith({ ws: null, buffer: "previous output" });
+    const entry = entryWith({ ws: null, buffer: tailOf("previous output") });
     reattachPty(entry, s.ws as never, SESSION);
     expect(s.parsed()).toEqual([{ type: "output", data: "previous output" }]);
   });
@@ -246,15 +250,26 @@ describe("reattachPty", () => {
   it("strips terminal queries from the replay so xterm does not answer them as input", () => {
     const { reattachPty } = setup();
     const s = fakeSocket();
-    const entry = entryWith({ ws: null, buffer: "before\x1b[c after" });
+    const entry = entryWith({ ws: null, buffer: tailOf("before\x1b[c after") });
     reattachPty(entry, s.ws as never, SESSION);
     expect(s.parsed()[0].data).not.toContain("\x1b[c");
+  });
+
+  // tmux enters the alternate screen ONCE, at attach; after a megabyte of repaints that
+  // byte is gone from the tail, and a replay into a reset terminal left xterm in the normal
+  // buffer — one screen, nothing to scroll. The head modes travel with the tail instead.
+  it("re-asserts the private modes that scrolled out of the tail before the replay", () => {
+    const { reattachPty } = setup();
+    const s = fakeSocket();
+    const entry = entryWith({ ws: null, buffer: tailOf("\x1b[1;1Hframe", [1049, 1000, 1006]) });
+    reattachPty(entry, s.ws as never, SESSION);
+    expect(s.parsed()[0].data).toBe("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[1;1Hframe");
   });
 
   it("sends nothing when there is no buffered output", () => {
     const { reattachPty } = setup();
     const s = fakeSocket();
-    reattachPty(entryWith({ ws: null, buffer: "" }), s.ws as never, SESSION);
+    reattachPty(entryWith({ ws: null, buffer: EMPTY_REPLAY_TAIL }), s.ws as never, SESSION);
     expect(s.sent).toEqual([]);
   });
 
@@ -264,7 +279,7 @@ describe("reattachPty", () => {
     const { reattachPty } = setup();
     const old = fakeSocket();
     const fresh = fakeSocket();
-    const entry = entryWith({ ws: old.ws as never, buffer: "" });
+    const entry = entryWith({ ws: old.ws as never, buffer: EMPTY_REPLAY_TAIL });
     reattachPty(entry, fresh.ws as never, SESSION);
     expect(old.parsed()).toEqual([{ type: "superseded" }]);
     expect(old.closeCount()).toBe(1);
@@ -274,7 +289,7 @@ describe("reattachPty", () => {
   it("does not supersede the same socket reattaching to itself", () => {
     const { reattachPty } = setup();
     const s = fakeSocket();
-    const entry = entryWith({ ws: s.ws as never, buffer: "" });
+    const entry = entryWith({ ws: s.ws as never, buffer: EMPTY_REPLAY_TAIL });
     reattachPty(entry, s.ws as never, SESSION);
     expect(s.parsed()).toEqual([]);
     expect(s.closeCount()).toBe(0);
@@ -284,7 +299,7 @@ describe("reattachPty", () => {
     const { reattachPty } = setup();
     const old = fakeSocket(CLOSED);
     const fresh = fakeSocket();
-    reattachPty(entryWith({ ws: old.ws as never, buffer: "" }), fresh.ws as never, SESSION);
+    reattachPty(entryWith({ ws: old.ws as never, buffer: EMPTY_REPLAY_TAIL }), fresh.ws as never, SESSION);
     expect(old.sent).toEqual([]);
     expect(old.closeCount()).toBe(0);
   });

@@ -12,7 +12,7 @@ import { ptySpawn, sandboxWouldRun, spawnSandboxEntry } from "./pty-spawn.js";
 import { attachDraftInjection } from "./draft-injection.js";
 import { withChannelConsent } from "./channel-consent.js";
 import { sendExitAndClose, sendFrame } from "./ws-frames.js";
-import { appendBoundedOutput } from "./terminal-replay.js";
+import { EMPTY_REPLAY_TAIL, appendReplayTail } from "./terminal-replay.js";
 import { sessionExistsOnDisk } from "./session-reads.js";
 import type { PtyEntry } from "./types.js";
 import type { SpawnDeps } from "./spawn-deps.js";
@@ -141,7 +141,7 @@ export function createClaudeSpawner(deps: SpawnDeps) {
       if (sandbox) return spawnSandboxEntry(sessionId, args, cwd, ws, dir.addDirs);
       const { term, tmux } = ptySpawn(sessionId, deps.claudeBin, args, cwd, true, resolved.unset);
       console.log(`[pty] spawned claude (pid=${term.pid}${tmux ? " via tmux" : ""}) in ${cwd}`);
-      return { term, ws, buffer: "", cwd, tmux, active: false, agent: "claude" };
+      return { term, ws, buffer: EMPTY_REPLAY_TAIL, cwd, tmux, active: false, agent: "claude" };
     }
     ptys.set(sessionId, entry);
 
@@ -158,7 +158,7 @@ export function createClaudeSpawner(deps: SpawnDeps) {
 
     // PTY -> browser (buffering a bounded tail for reattach).
     entry.term.onData((data) => {
-      entry.buffer = appendBoundedOutput(entry.buffer, data, deps.outputBufferLimit);
+      entry.buffer = appendReplayTail(entry.buffer, data, deps.outputBufferLimit);
       sendFrame(entry.ws, { type: "output", data });
       scanForDraftReady(data);
     });

@@ -9,7 +9,7 @@ import type { IPty } from "node-pty";
 import type { WebSocket } from "ws";
 import { messageOf } from "../errors.js";
 import { isResizeFrame } from "./ws-frames.js";
-import { stripTerminalQueries } from "./terminal-replay.js";
+import { replayOf } from "./terminal-replay.js";
 import type { PtyEntry } from "./types.js";
 
 /** A frame as it arrives off the socket. Only `toString()` is used — ws hands us a
@@ -65,10 +65,11 @@ export function createConnectionHandlers(deps: ConnectionDeps) {
       entry.ws.close();
     }
     entry.ws = ws;
-    if (entry.buffer && ws.readyState === ws.OPEN) {
-      // Strip terminal queries from the replay so xterm doesn't re-answer them as stray input
-      // (e.g. a DA reply surfacing as "0;276;0c" in the prompt) — see terminal-replay.ts.
-      ws.send(JSON.stringify({ type: "output", data: stripTerminalQueries(entry.buffer) }));
+    if (entry.buffer.text && ws.readyState === ws.OPEN) {
+      // The replay re-asserts the private modes that scrolled out of the tail (the
+      // alternate screen above all) and strips terminal queries so xterm doesn't re-answer
+      // them as stray input (e.g. a DA reply surfacing as "0;276;0c") — see terminal-replay.ts.
+      ws.send(JSON.stringify({ type: "output", data: replayOf(entry.buffer) }));
     }
     return entry;
   }

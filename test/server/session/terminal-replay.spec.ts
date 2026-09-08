@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { appendBoundedOutput, stripTerminalQueries } from "../../../server/session/terminal-replay.js";
+import headless from "@xterm/headless";
+import {
+  appendBoundedOutput,
+  appendReplayTail,
+  foldPrivateModes,
+  replayOf,
+  replayPrefix,
+  screenSourceOf,
+  stripTerminalQueries,
+} from "../../../server/session/terminal-replay.js";
+import type { ReplayTail } from "../../../server/session/terminal-replay.js";
+
+const { Terminal } = headless;
 
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
@@ -147,5 +159,74 @@ describe("appendBoundedOutput", () => {
   it("stays within the limit", () => {
     const stream = `${"z".repeat(500)}\n${"w".repeat(500)}`;
     expect(appendBoundedOutput(stream, "more", 64).length).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("replay head modes", () => {
+  const tail = (text: string, headModes: number[] = []): ReplayTail => ({ text, headModes: new Set(headModes) });
+
+  it("folds only the DROPPED bytes: a mode set inside the retained tail is not a head mode", () => {
+    const out = appendReplayTail(tail(""), `${ESC}[?2004h${"x".repeat(20)}${ESC}[?1000h`, 12);
+    expect(out.headModes).toEqual(new Set([2004]));
+    expect(out.text).toBe(`${"x".repeat(4)}${ESC}[?1000h`);
+  });
+
+  it("keeps nothing while under the limit", () => {
+    const out = appendReplayTail(tail(""), `${ESC}[?1049h hi`, 100);
+    expect(out.headModes.size).toBe(0);
+    expect(out.text).toBe(`${ESC}[?1049h hi`);
+  });
+
+  it("a reset that also scrolled out cancels the set", () => {
+    expect(foldPrivateModes(new Set(), `${ESC}[?1000h${ESC}[?1000l`)).toEqual(new Set());
+    expect(foldPrivateModes(new Set([25]), `${ESC}[?25l`)).toEqual(new Set());
+  });
+
+  it("reads every parameter of a combined SET, and the leading number of a colon sub-parameter", () => {
+    expect(foldPrivateModes(new Set(), `${ESC}[?1000;1006h${ESC}[?2026:1h`)).toEqual(new Set([1000, 1006, 2026]));
+  });
+
+  it("accumulates across appends, so a mode set long before the window is still known", () => {
+    let t = appendReplayTail(tail(""), `${ESC}[?1049h${ESC}[?1h`, 8);
+    for (let i = 0; i < 50; i++) t = appendReplayTail(t, `${ESC}[K${i}\r\n`, 8);
+    expect(t.headModes).toEqual(new Set([1049, 1]));
+    expect(t.text.length).toBeLessThanOrEqual(8);
+  });
+
+  it("emits one sequence per mode with the alternate screen first, mouse modes unbundled", () => {
+    expect(replayPrefix(new Set([1000, 2004, 1049]))).toBe(`${ESC}[?1049h${ESC}[?1000h${ESC}[?2004h`);
+    expect(replayPrefix(new Set())).toBe("");
+  });
+
+  it("replayOf strips queries from the tail but not the re-asserted modes", () => {
+    expect(replayOf(tail(`a${ESC}[cb`, [1049]))).toBe(`${ESC}[?1049hab`);
+    expect(screenSourceOf(tail(`a${ESC}[cb`, [1049]))).toBe(`${ESC}[?1049ha${ESC}[cb`);
+  });
+
+  // The failure as a terminal sees it. A tmux attach (captured from tmux 3.6a) opens the
+  // alternate screen and mouse tracking, then repaints in place forever. Once the tail
+  // window has slid past the attach, a replay must still land the emulator in the
+  // alternate buffer with mouse tracking on — that is the state the wheel handler gates on.
+  it("a replay whose window slid past the tmux attach still lands xterm in the alternate buffer", async () => {
+    const attach = `${ESC}[?1049h${ESC}[22;0;0t${ESC}[?1h${ESC}=${ESC}[H${ESC}[2J${ESC}[?2004h${ESC}[?1006h${ESC}[?1000h${ESC}[?1002h`;
+    const frame = (n: number) => `${ESC}[1;1H${ESC}[Kframe ${n}${ESC}[2;1H${ESC}[Kstill here`;
+    const limit = 200;
+    let t = appendReplayTail(tail(""), attach, limit);
+    for (let i = 0; i < 30; i++) t = appendReplayTail(t, frame(i), limit);
+    expect(t.text).not.toContain("1049h");
+
+    const before = new Terminal({ cols: 40, rows: 5, allowProposedApi: true });
+    await new Promise<void>((r) => before.write(stripTerminalQueries(t.text), r));
+    expect(before.buffer.active.type).toBe("normal"); // the bug: nothing to scroll, nothing reported
+
+    const after = new Terminal({ cols: 40, rows: 5, allowProposedApi: true });
+    await new Promise<void>((r) => after.write(replayOf(t), r));
+    expect(after.buffer.active.type).toBe("alternate");
+    expect(after.modes.mouseTrackingMode).toBe("drag");
+    expect(after.modes.bracketedPasteMode).toBe(true);
+    expect(after.modes.applicationCursorKeysMode).toBe(true);
+    expect(after.buffer.active.getLine(0)?.translateToString(true)).toBe("frame 29");
+    before.dispose();
+    after.dispose();
   });
 });

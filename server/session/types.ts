@@ -5,6 +5,7 @@ import type { IPty } from "node-pty";
 import type { WebSocket } from "ws";
 import type { SessionAgent } from "../../common/sessionAgent.js";
 import type { WaitKind } from "../../common/paneState.js";
+import type { ReplayTail } from "./terminal-replay.js";
 
 export interface Activity {
   working?: boolean;
@@ -22,7 +23,7 @@ export interface Activity {
 export interface PtyEntry {
   term: IPty;
   ws: WebSocket | null;
-  buffer: string;
+  buffer: ReplayTail;
   cwd: string; // the dir the PTY actually runs in (reported on reattach)
   // True when this session is the user's actively-viewed pane: the single-view open
   // session, or a focused/zoomed grid cell. Gates the attention flag — a socket being

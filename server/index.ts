@@ -56,6 +56,7 @@ import { createScheduledSessionRegistry, scheduledSessionInUse, scheduledSession
 import { claudeAdapter } from "./agents/claude.js";
 import { codexAdapter } from "./agents/codex.js";
 import { renderScreen } from "./session/headlessScreen.js";
+import { screenSourceOf } from "./session/terminal-replay.js";
 import { agentFromPaneCommand, buildSessionList, captureSessionScreen, type SessionScreenMeta } from "./backends/remoteHost/terminalScreen.js";
 import type { SessionAgent } from "../common/sessionAgent.js";
 import { quickCommandsForAgent } from "./backends/remoteHost/quickCommands.js";
@@ -432,7 +433,7 @@ const remoteHostCaptureTerminalScreen = (sessionId: string) =>
     captureStyledPane: tmuxCaptureStyledPane,
     sourceOf: (id) => {
       const entry = ptys.get(id);
-      return entry ? { buffer: entry.buffer, cols: entry.term.cols, rows: entry.term.rows } : undefined;
+      return entry ? { buffer: screenSourceOf(entry.buffer), cols: entry.term.cols, rows: entry.term.rows } : undefined;
     },
     render: renderScreen,
     metaOf: remoteHostSessionScreenMeta,
