@@ -35,6 +35,9 @@ export const routes: RouteRecordRaw[] = [
   { path: "/wiki/pages/:slug", name: "wikiPage", component: Stub },
   { path: "/wiki/graph", name: "wikiGraph", component: Stub },
   { path: "/wiki/lint", name: "wikiLint", component: Stub },
+  // The reader (plans/reader-view.md): the inbox for the briefs Claude writes for the
+  // operator. Fork-local; opens in its own tab, the open doc is `?doc=`.
+  { path: "/reader", name: "reader", component: Stub },
   // Unknown URLs land on the default view — via `/`, so they follow it wherever it points.
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];

@@ -27,7 +27,10 @@ export function defaultReaderRoots(home: string, exists: (p: string) => boolean 
   const candidates = [
     path.join(home, "Projects"),
     path.join(home, "Obsidian"),
-    path.join(home, "Library/CloudStorage/GoogleDrive-kanji@spaceengine.io/共有ドライブ/orosy_all core member/組織共有ドキュメント [GitHub管理]/AI-派生開発プロジェクト"),
+    path.join(
+      home,
+      "Library/CloudStorage/GoogleDrive-kanji@spaceengine.io/共有ドライブ/orosy_all core member/組織共有ドキュメント [GitHub管理]/AI-派生開発プロジェクト",
+    ),
   ];
   return candidates.filter((dir) => exists(dir)).map((dir) => ({ dir }));
 }
@@ -220,31 +223,29 @@ export class ReaderRegistry {
    *  after files were moved by hand. Returns how many were new. */
   async rescan(): Promise<{ found: number; added: number }> {
     this.load();
-    let found = 0;
-    let added = 0;
-    const visit = async (dir: string, depth: number): Promise<void> => {
-      if (depth > MAX_DEPTH) return;
-      let entries: fs.Dirent[];
-      try {
-        entries = await fs.promises.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        const name = entry.name;
-        if (entry.isDirectory()) {
-          if (name.startsWith(".") || SKIP_DIRS.has(name)) continue;
-          await visit(path.join(dir, name), depth + 1);
-        } else if (entry.isFile() && name.toLowerCase().endsWith(".html")) {
-          const result = this.register(path.join(dir, name));
-          if (result.ok) {
-            found += 1;
-            if (result.added) added += 1;
-          }
-        }
-      }
-    };
-    for (const { dir } of this.roots) await visit(dir, 0);
-    return { found, added };
+    const tally = { found: 0, added: 0 };
+    for (const { dir } of this.roots) await this.walk(dir, 0, tally);
+    return tally;
+  }
+
+  private async walk(dir: string, depth: number, tally: { found: number; added: number }): Promise<void> {
+    if (depth > MAX_DEPTH) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith(".") && !SKIP_DIRS.has(entry.name)) await this.walk(path.join(dir, entry.name), depth + 1, tally);
+      else if (entry.isFile() && entry.name.toLowerCase().endsWith(".html")) this.tallyRegister(path.join(dir, entry.name), tally);
+    }
+  }
+
+  private tallyRegister(abs: string, tally: { found: number; added: number }): void {
+    const result = this.register(abs);
+    if (!result.ok) return;
+    tally.found += 1;
+    if (result.added) tally.added += 1;
   }
 }

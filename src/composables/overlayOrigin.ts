@@ -19,6 +19,7 @@ const OVERLAY_ROUTES = new Set([
   "wikiPage",
   "wikiGraph",
   "wikiLint",
+  "reader",
   "collections",
   "collectionDetail",
   "feeds",

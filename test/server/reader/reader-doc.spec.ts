@@ -3,7 +3,7 @@
 // ever performs on them (the annotations-data block, nothing else).
 import { describe, it, expect } from "vitest";
 import {
-  ANNOTATIONS_BLOCK_RE,
+  ANNOTATIONS_OPEN_TAG,
   countComments,
   docTitle,
   extractAnnotationsJson,
@@ -34,11 +34,15 @@ describe("isBrief / docTitle", () => {
 
 describe("countComments", () => {
   it("counts items and the ones not yet applied", () => {
-    const html = brief([{ id: 1, comment: "fix this" }, { id: 2, comment: "done\n\n_(反映済み 2026-09-01)_" }, { id: 3, type: "pin", comment: "here" }]);
+    const html = brief([
+      { id: 1, comment: "fix this" },
+      { id: 2, comment: "done\n\n_(反映済み 2026-09-01)_" },
+      { id: 3, type: "pin", comment: "here" },
+    ]);
     expect(countComments(html)).toEqual({ comments: 3, open: 2 });
   });
   it("treats a broken block as no comments rather than failing the listing", () => {
-    const html = brief([]).replace(ANNOTATIONS_BLOCK_RE, '<script type="application/json" id="annotations-data">{not json</script>');
+    const html = brief([]).replace(/{"items":\[\],"savedAt":null}/, "{not json");
     expect(countComments(html)).toEqual({ comments: 0, open: 0 });
   });
 });
@@ -47,10 +51,12 @@ describe("replaceAnnotationsJson", () => {
   it("rewrites only the block, and does not expand $-patterns from the comment text", () => {
     const html = brief([{ id: 1, comment: "old" }]);
     const json = JSON.stringify({ items: [{ id: 1, comment: "costs $1 and $11.38T" }] });
-    const out = replaceAnnotationsJson(html, json);
-    expect(out).not.toBeNull();
-    expect(extractAnnotationsJson(out!)).toBe(json);
-    expect(out!.replace(ANNOTATIONS_BLOCK_RE, "X")).toBe(html.replace(ANNOTATIONS_BLOCK_RE, "X"));
+    const out = replaceAnnotationsJson(html, json) ?? "";
+    expect(out).not.toBe("");
+    expect(extractAnnotationsJson(out)).toBe(json);
+    const strip = (page: string): string => page.replace(/<script type="application\/json" id="annotations-data">[^<]*<\/script>/, "X");
+    expect(strip(out)).toBe(strip(html));
+    expect(out).toContain(ANNOTATIONS_OPEN_TAG);
   });
   it("returns null for a page without a block", () => {
     expect(replaceAnnotationsJson("<html></html>", "{}")).toBeNull();

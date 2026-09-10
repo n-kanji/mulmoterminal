@@ -66,7 +66,16 @@ describe("ReaderRegistry.register", () => {
     const again = new ReaderRegistry(path.join(tmp, "home", "reader.json"), [{ dir: root }]);
     const docs = again.list();
     expect(docs).toHaveLength(1);
-    expect(docs[0]).toMatchObject({ path: abs, title: "Brief A", project: "orosy-v2", folder: "marketing", comments: 1, open: 1, readAt: null, state: "commented" });
+    expect(docs[0]).toMatchObject({
+      path: abs,
+      title: "Brief A",
+      project: "orosy-v2",
+      folder: "marketing",
+      comments: 1,
+      open: 1,
+      readAt: null,
+      state: "commented",
+    });
   });
 });
 
@@ -113,7 +122,12 @@ describe("ReaderRegistry.rescan", () => {
     write("p/.hidden/d.html", briefHtml("D"));
     const result = await registry.rescan();
     expect(result).toEqual({ found: 2, added: 2 });
-    expect(registry.list().map((d) => d.title).sort()).toEqual(["A", "B"]);
+    expect(
+      registry
+        .list()
+        .map((d) => d.title)
+        .sort(),
+    ).toEqual(["A", "B"]);
     expect(await registry.rescan()).toEqual({ found: 2, added: 0 });
   });
 });

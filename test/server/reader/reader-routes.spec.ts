@@ -56,7 +56,13 @@ describe("index routes", () => {
     const abs = write("p/a.html", briefHtml("A"));
     expect((await request(app).post("/api/reader/register").send({ path: abs })).status).toBe(200);
     expect((await request(app).post("/api/reader/register").send({})).status).toBe(400);
-    expect((await request(app).post("/api/reader/register").send({ path: path.join(tmp, "x.html") })).status).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post("/api/reader/register")
+          .send({ path: path.join(tmp, "x.html") })
+      ).status,
+    ).toBe(403);
     const list = await request(app).get("/api/reader/docs");
     expect(list.body.roots).toEqual([root]);
     expect(list.body.docs[0]).toMatchObject({ path: abs, title: "A", state: "unread" });

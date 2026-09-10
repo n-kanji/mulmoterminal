@@ -7,17 +7,50 @@
 // That block is the ONLY part of the file the reader ever rewrites (the skill's own rule:
 // Claude edits the body, the browser edits the block, neither touches the other's part).
 
-/** The marker every brief carries; a page without it is not served by the reader. */
-export const ANNOTATIONS_BLOCK_RE = /(<script[^>]*\bid="annotations-data"[^>]*>)([\s\S]*?)(<\/script>)/;
+/** The data block's opening tag, as the skill writes it (attribute order and all). Found
+ *  by plain string search rather than a regex over the tag: a freer pattern backtracks
+ *  super-linearly on a large page, and every brief on disk uses this exact form. */
+export const ANNOTATIONS_OPEN_TAG = '<script type="application/json" id="annotations-data">';
+const SCRIPT_CLOSE = "</script>";
 
-export const isBrief = (html: string): boolean => ANNOTATIONS_BLOCK_RE.test(html);
+export interface AnnotationsBlock {
+  /** Offsets of the JSON body inside the page: [bodyStart, bodyEnd). */
+  bodyStart: number;
+  bodyEnd: number;
+}
+
+/** Locate the data block, or null when the page has none (then it is not a brief). */
+export function findAnnotationsBlock(html: string): AnnotationsBlock | null {
+  const open = html.indexOf(ANNOTATIONS_OPEN_TAG);
+  if (open < 0) return null;
+  const bodyStart = open + ANNOTATIONS_OPEN_TAG.length;
+  const bodyEnd = html.indexOf(SCRIPT_CLOSE, bodyStart);
+  if (bodyEnd < 0) return null;
+  return { bodyStart, bodyEnd };
+}
+
+export const isBrief = (html: string): boolean => findAnnotationsBlock(html) !== null;
+
+/** Drop any markup inside the title text; a linear scan, not a regex (lint's backtracking rule). */
+function stripTags(s: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of s) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out;
+}
 
 /** The page title, or the file name when the page has none. */
 export function docTitle(html: string, fallback: string): string {
-  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  const raw = m?.[1] ?? "";
+  const lower = html.toLowerCase();
+  const open = lower.indexOf("<title");
+  const openEnd = open < 0 ? -1 : lower.indexOf(">", open);
+  const close = openEnd < 0 ? -1 : lower.indexOf("</title>", openEnd);
+  const raw = close < 0 ? "" : stripTags(html.slice(openEnd + 1, close));
   const text = raw
-    .replace(/<[^>]+>/g, "")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
@@ -40,11 +73,11 @@ export interface CommentCounts {
  *  A block that fails to parse counts as no comments — the reader must still list the doc
  *  (the operator wants to find it), and the skill has its own recovery for a broken block. */
 export function countComments(html: string): CommentCounts {
-  const m = ANNOTATIONS_BLOCK_RE.exec(html);
-  if (!m) return { comments: 0, open: 0 };
+  const body = extractAnnotationsJson(html);
+  if (body === null) return { comments: 0, open: 0 };
   let items: unknown[] = [];
   try {
-    const parsed: unknown = JSON.parse(m[2] || "{}");
+    const parsed: unknown = JSON.parse(body || "{}");
     if (parsed && typeof parsed === "object" && Array.isArray((parsed as { items?: unknown }).items)) {
       items = (parsed as { items: unknown[] }).items;
     }
@@ -61,16 +94,17 @@ export function countComments(html: string): CommentCounts {
 
 /** Pull the data block's JSON text out of a page (what the bridge's saved HTML carries). */
 export function extractAnnotationsJson(html: string): string | null {
-  const m = ANNOTATIONS_BLOCK_RE.exec(html);
-  return m ? m[2] : null;
+  const block = findAnnotationsBlock(html);
+  return block ? html.slice(block.bodyStart, block.bodyEnd) : null;
 }
 
-/** Replace ONLY the data block's content. The replacement is a function, never a `$n`
- *  string — a comment containing "$1" would otherwise be expanded into the tag (the skill's
+/** Replace ONLY the data block's content — by slicing, never String.replace with a `$n`
+ *  pattern: a comment containing "$1" would be expanded into the tag (the skill's
  *  documented trap). Null when the page has no block to replace. */
 export function replaceAnnotationsJson(html: string, json: string): string | null {
-  if (!ANNOTATIONS_BLOCK_RE.test(html)) return null;
-  return html.replace(ANNOTATIONS_BLOCK_RE, (_m, open: string, _body: string, close: string) => `${open}${json}${close}`);
+  const block = findAnnotationsBlock(html);
+  if (!block) return null;
+  return `${html.slice(0, block.bodyStart)}${json}${html.slice(block.bodyEnd)}`;
 }
 
 /** What a saved block must look like before it is written: an object with an `items`
@@ -99,7 +133,9 @@ export function validAnnotationsJson(json: string): boolean {
 //     reader can offer "send to pane" with it.
 //   - The unsaved guard. The layer's beforeunload handler fires on any navigation while its
 //     own `unsaved` flag is set, and a download does not clear that flag — so after the
-//     reader has written the file, the bridge lets the reload through.
+//     reader has written the file, the bridge lets the reload through. The reader then
+//     reloads the page (the layer restarts clean from the file it just wrote), and the
+//     bridge puts the scroll position back.
 //
 // Kept as plain ES5-ish script text so it runs inside any brief regardless of its age.
 export const READER_BRIDGE_SCRIPT = `<script id="reader-bridge">
@@ -132,13 +168,22 @@ export const READER_BRIDGE_SCRIPT = `<script id="reader-bridge">
     if (type !== 'beforeunload' || typeof listener !== 'function') return addEventListener(type, listener, options);
     return addEventListener(type, function (e) { if (!clean) listener.call(window, e); }, options);
   };
+  var SCROLL_KEY = 'reader:scroll:' + location.pathname;
   window.addEventListener('message', function (e) {
     var d = e.data;
     if (!d || d.type !== 'reader:saved') return;
     clean = true;
     try { localStorage.removeItem('annotations:' + location.pathname); } catch (err) {}
+    try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (err) {}
     var label = document.getElementById('ann-save-label');
     if (label) label.textContent = '保存しました';
+    var badge = document.getElementById('ann-save-badge');
+    if (badge) badge.style.display = 'none';
+  });
+  window.addEventListener('load', function () {
+    var y = null;
+    try { y = sessionStorage.getItem(SCROLL_KEY); sessionStorage.removeItem(SCROLL_KEY); } catch (err) {}
+    if (y !== null) window.scrollTo(0, Number(y));
   });
   window.parent.postMessage({ type: 'reader:ready' }, '*');
 })();

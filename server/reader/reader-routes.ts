@@ -42,7 +42,14 @@ export interface ReaderRouteDeps {
   publishToOne: (channel: string, data: unknown) => boolean;
 }
 
-const ALLOWED_CDNS = ["https://cdn.jsdelivr.net", "https://unpkg.com", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://cdn.plot.ly"].join(" ");
+const ALLOWED_CDNS = [
+  "https://cdn.jsdelivr.net",
+  "https://unpkg.com",
+  "https://cdnjs.cloudflare.com",
+  "https://fonts.googleapis.com",
+  "https://fonts.gstatic.com",
+  "https://cdn.plot.ly",
+].join(" ");
 
 export const READER_DOC_CSP = [
   "sandbox allow-scripts allow-same-origin allow-modals allow-popups allow-popups-to-escape-sandbox",
@@ -54,7 +61,9 @@ export const READER_DOC_CSP = [
   "media-src 'self' https: data: blob:",
   "connect-src 'none'",
   "form-action 'none'",
-  "frame-ancestors http://localhost:* http://127.0.0.1:* http://[::1]:*",
+  // No `[::1]` here: Chrome rejects a bracketed IPv6 host expression in frame-ancestors
+  // (a console error), and the server binds 127.0.0.1 anyway.
+  "frame-ancestors http://localhost:* http://127.0.0.1:*",
 ].join("; ");
 
 export const NO_READER_TAB_ERROR = "no reader tab is open";

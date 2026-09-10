@@ -11,6 +11,7 @@ import { viewIsGrid } from "../composables/overlayOrigin";
 import { useCollectionBrowse, browseGotoIndex, browseGotoDetail } from "../composables/useCollectionBrowse";
 import { useAccountingView, accountingViewOpen } from "../composables/useAccountingView";
 import { useWikiBrowse, wikiGotoIndex, wikiGotoTag } from "../composables/useWikiBrowse";
+import { openReaderTab, useReader } from "../composables/useReader";
 import { usePrsView, prsGotoIndex } from "../composables/usePrsView";
 import { useSoundEnabled } from "../composables/useSoundEnabled";
 import { useUpdateStatus } from "../composables/useUpdateStatus";
@@ -95,6 +96,12 @@ const { shortcuts } = useShortcuts();
 const { view: browseView } = useCollectionBrowse();
 const { isOpen: accountingOpen } = useAccountingView();
 const { isOpen: wikiOpen } = useWikiBrowse();
+const { isOpen: readerOpen } = useReader();
+// The reader lives in its own tab beside the grid (plans/reader-view.md), so this never
+// replaces the terminals: it opens, or focuses, that tab.
+function showReader(): void {
+  openReaderTab();
+}
 const { isOpen: prsOpen } = usePrsView();
 const { enabled: soundEnabled, toggle: toggleSound } = useSoundEnabled();
 const { badge: updateBadge } = useUpdateStatus();
@@ -134,7 +141,9 @@ const IT2_MODE = true;
 const inGrid = viewIsGrid;
 const onGridRoute = computed(() => route.name === "terminals");
 const inSingle = computed(() => !onGridRoute.value);
-const chatActive = computed(() => inSingle.value && browseView.value.mode === "closed" && !accountingOpen.value && !wikiOpen.value && !prsOpen.value);
+const chatActive = computed(
+  () => inSingle.value && browseView.value.mode === "closed" && !accountingOpen.value && !wikiOpen.value && !prsOpen.value && !readerOpen.value,
+);
 const collectionsActive = computed(() => browseView.value.mode === "index" && browseView.value.kind === "collection");
 const accountingActive = computed(() => accountingOpen.value);
 const wikiActive = computed(() => wikiOpen.value);
@@ -268,6 +277,8 @@ function showPrs(): void {
       <LauncherButton v-if="!inGrid" icon="apps" title="Collections" label="Collections" :active="collectionsActive" @click="showCollections" />
       <LauncherButton v-if="!inGrid" icon="account_balance" title="Accounting" label="Accounting" :active="accountingActive" @click="showAccounting" />
       <LauncherButton v-if="!inGrid" icon="menu_book" title="Wiki" label="Wiki" :active="wikiActive" @click="showWiki" />
+      <!-- Both views: the briefs Claude wrote for the operator, in their own tab. -->
+      <LauncherButton icon="inbox" title="Reader — the briefs written for you (opens its own tab)" label="Reader" :active="readerOpen" @click="showReader" />
       <!-- `template` wrapper rather than v-if on the v-for: the two directives on one element
            is a Vue anti-pattern (v-if wins and is evaluated per item). -->
       <template v-if="!inGrid">

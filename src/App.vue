@@ -11,6 +11,7 @@ import AccountingOverlay from "./components/AccountingOverlay.vue";
 import WikiBrowseOverlay from "./components/WikiBrowseOverlay.vue";
 import PrsOverlay from "./components/PrsOverlay.vue";
 import FilesOverlay from "./components/FilesOverlay.vue";
+import ReaderOverlay from "./components/ReaderOverlay.vue";
 import GridView from "./components/GridView.vue";
 import { useRoute } from "vue-router";
 import AppSettingsModal from "./components/AppSettingsModal.vue";
@@ -417,6 +418,8 @@ function onSession(id: string) {
     <PrsOverlay />
     <!-- Full-screen file explorer + editor; opened by a terminal header's Files button. -->
     <FilesOverlay />
+    <!-- The reader: the inbox for the briefs Claude writes for the operator (plans/reader-view.md). -->
+    <ReaderOverlay />
     <AppSettingsModal v-if="showSettings" :cwd="effectiveCwd" :session-id="activeId" @configure-appearance="configureAppearance" @close="closeSettings" />
   </div>
 </template>
