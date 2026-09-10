@@ -1,6 +1,7 @@
 import express from "express";
 import http from "http";
 import path from "path";
+import os from "os";
 import fs from "fs/promises";
 import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
@@ -38,6 +39,8 @@ import { createTitleManager } from "./session/session-title.js";
 import { generateHeaderTitle } from "./config/header-title.js";
 import { mountTerminalWebSockets } from "./routes/ws-routes.js";
 import { mountAgentRoutes } from "./routes/agent-routes.js";
+import { mountReaderRoutes } from "./reader/reader-routes.js";
+import { ReaderRegistry, defaultReaderRoots } from "./reader/reader-registry.js";
 import { mountNextQueueRoutes } from "./routes/next-queue-routes.js";
 import { drainNextQueue } from "./session/next-queue-drain.js";
 import { setNextQueueLiveness } from "./session/next-queue.js";
@@ -495,6 +498,17 @@ mountAgentRoutes(app, {
   // through tmux but there is nothing here to type into.
   candidates: () => [...ptys.entries()].map(([id, entry]) => ({ id, cwd: entry.cwd, agent: entry.agent, working: activity.get(id)?.working })),
   sendToSession: agentBroadcastSender,
+});
+
+// The reader (plans/reader-view.md): the inbox for the briefs Claude writes for the
+// operator. Same composition as the agent API above — it lists and types into the same live
+// sessions, through the same sender.
+const readerRegistry = new ReaderRegistry(path.join(MULMOTERMINAL_HOME, "reader.json"), defaultReaderRoots(os.homedir()));
+mountReaderRoutes(app, {
+  registry: readerRegistry,
+  panes: () => [...ptys.entries()].map(([id, entry]) => ({ id, cwd: entry.cwd, agent: entry.agent, working: activity.get(id)?.working })),
+  sendToSession: agentBroadcastSender,
+  publishToOne: (channel, data) => pubsub?.publishToOne(channel, data) ?? false,
 });
 
 // The per-pane next-instruction queue (plans/feat-next-instruction-queue.md). Same
