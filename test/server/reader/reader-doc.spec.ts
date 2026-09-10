@@ -61,6 +61,17 @@ describe("replaceAnnotationsJson", () => {
   it("returns null for a page without a block", () => {
     expect(replaceAnnotationsJson("<html></html>", "{}")).toBeNull();
   });
+  it("cannot be broken out of by a comment containing </script> or <!--", () => {
+    const html = brief([]);
+    const json = JSON.stringify({ items: [{ id: 1, comment: "close </script><img src=x onerror=alert(1)> <!-- x" }] });
+    const out = replaceAnnotationsJson(html, json) ?? "";
+    const body = extractAnnotationsJson(out) ?? "";
+    expect(body).not.toContain("</script");
+    expect(body).not.toContain("<!--");
+    expect(JSON.parse(body)).toEqual(JSON.parse(json));
+    expect(countComments(out)).toEqual({ comments: 1, open: 1 });
+    expect(out.split("</script>")).toHaveLength(2);
+  });
 });
 
 describe("validAnnotationsJson", () => {

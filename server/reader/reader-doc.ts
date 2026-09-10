@@ -104,7 +104,16 @@ export function extractAnnotationsJson(html: string): string | null {
 export function replaceAnnotationsJson(html: string, json: string): string | null {
   const block = findAnnotationsBlock(html);
   if (!block) return null;
-  return `${html.slice(0, block.bodyStart)}${json}${html.slice(block.bodyEnd)}`;
+  return `${html.slice(0, block.bodyStart)}${scriptSafeJson(json)}${html.slice(block.bodyEnd)}`;
+}
+
+/** JSON that cannot end the <script> it sits in. A comment saying "</script>" would
+ *  otherwise close the data block early — the rest of the comment lands in the page as
+ *  markup, and findAnnotationsBlock reads a truncated block next time. `\u003c` is the JSON
+ *  escape for "<", so the parsed value is unchanged; `<!--` is escaped too, since it
+ *  opens the script-data escape state that changes how a later "</script>" is read. */
+export function scriptSafeJson(json: string): string {
+  return json.replace(/<\//g, "\\u003c/").replace(/<!--/g, "\\u003c!--");
 }
 
 /** What a saved block must look like before it is written: an object with an `items`
