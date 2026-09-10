@@ -41,7 +41,11 @@ working unchanged.
 - `viewhtml` registers a brief the moment Claude writes it. **Rescan** (a button) walks
   the roots for the ones written before or moved by hand; the seed on 2026-09-10 found 192
   in 6s warm.
-- Roots: `~/Projects`, `~/Obsidian`, the Google Drive project folder — whichever exist.
+- Roots: `~/Projects` and `~/Obsidian`, whichever exist. Not the Google Drive folder under
+  `~/Library/CloudStorage`: touching a file-provider location makes macOS prompt "node wants
+  to access data from other apps" at the launchd server, once per probe, and the prompts
+  stacked into one that would not dismiss (2026-09-10). A configurable root list is the
+  way to add it back, behind an explicit opt-in.
   Grouping is root → project (first segment) → folder (the rest of the directory).
 - State is derived: unread (never opened here) / read / commented (comments without the
   skill's `反映済み` marker) / done (all applied). Filters and a title search on top.

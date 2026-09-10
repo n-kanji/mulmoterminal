@@ -20,18 +20,14 @@ export interface ReaderRoot {
   dir: string;
 }
 
-/** The roots on the operator's machine that exist. ~/Projects is where nearly every brief
- *  is; the vault and the Drive project folder hold the rest. A root that is not there is
- *  dropped, so a machine without Google Drive lists what it has. */
+/** The roots on the operator's machine that exist: ~/Projects, where nearly every brief
+ *  is, and the Obsidian vault. NOT the Google Drive folder under ~/Library/CloudStorage —
+ *  a file-provider location, which macOS guards with an "access data from other apps"
+ *  prompt aimed at this process (node, under launchd) every time it is touched. Each
+ *  server start probed it, and the operator got a prompt that never went away (2026-09-10).
+ *  A root that is not there is dropped, so a machine without a vault lists what it has. */
 export function defaultReaderRoots(home: string, exists: (p: string) => boolean = fs.existsSync): ReaderRoot[] {
-  const candidates = [
-    path.join(home, "Projects"),
-    path.join(home, "Obsidian"),
-    path.join(
-      home,
-      "Library/CloudStorage/GoogleDrive-kanji@spaceengine.io/共有ドライブ/orosy_all core member/組織共有ドキュメント [GitHub管理]/AI-派生開発プロジェクト",
-    ),
-  ];
+  const candidates = [path.join(home, "Projects"), path.join(home, "Obsidian")];
   return candidates.filter((dir) => exists(dir)).map((dir) => ({ dir }));
 }
 
