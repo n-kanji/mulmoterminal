@@ -49,6 +49,16 @@ export function annotationsJsonOf(html: string): string | null {
   const start = html.indexOf(open);
   if (start < 0) return null;
   const bodyStart = start + open.length;
-  const end = html.indexOf("</script>", bodyStart);
-  return end < 0 ? null : html.slice(bodyStart, end);
+  // The body ends at the first close tag after which the text parses: a comment may
+  // itself contain "</script>" (the layer's own JSON does not escape it).
+  for (let end = html.indexOf("</script>", bodyStart); end >= 0; end = html.indexOf("</script>", end + 9)) {
+    const body = html.slice(bodyStart, end);
+    try {
+      JSON.parse(body);
+      return body;
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
 }

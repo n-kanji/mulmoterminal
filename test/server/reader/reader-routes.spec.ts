@@ -126,17 +126,23 @@ describe("GET /api/reader/doc/<path>", () => {
     const res = await request(app).get(`/api/reader/doc${abs}`);
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/html/);
-    expect(res.headers["content-security-policy"]).toContain("sandbox allow-scripts allow-same-origin");
+    expect(res.headers["content-security-policy"]).toContain("sandbox allow-scripts allow-same-origin allow-modals;");
+    expect(res.headers["content-security-policy"]).not.toContain("allow-popups");
     expect(res.headers["content-security-policy"]).toContain("connect-src 'none'");
     expect(res.text).toContain('<script id="reader-bridge">');
     expect(res.text.indexOf("reader-bridge")).toBeLessThan(res.text.indexOf("annotations-data"));
   });
-  it("serves a sibling asset relative to the page, and nothing else", async () => {
+  it("serves a sibling asset beside a registered brief, and nothing else", async () => {
     const app = appWith();
-    write("p/a.html", briefHtml("A"));
+    const a = write("p/a.html", briefHtml("A"));
     write("p/shot.png", "png-bytes");
     write("p/secret.txt.exe", "no");
     write("p/plain.html", "<html>not a brief</html>");
+    write("elsewhere/other.png", "png-bytes");
+    // Not registered yet: nothing beside it is served.
+    expect((await request(app).get(`/api/reader/doc${path.join(root, "p", "shot.png")}`)).status).toBe(404);
+    deps.registry.register(a);
+    expect((await request(app).get(`/api/reader/doc${path.join(root, "elsewhere", "other.png")}`)).status).toBe(404);
     const png = await request(app).get(`/api/reader/doc${path.join(root, "p", "shot.png")}`);
     expect(png.status).toBe(200);
     expect(png.headers["content-type"]).toBe("image/png");

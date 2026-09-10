@@ -73,6 +73,14 @@ interface FileFacts {
   open: number;
 }
 
+function realpathOr(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 /** Directories a rescan never enters: build output, dependencies, VCS, anything hidden. */
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", ".next", "coverage", "__pycache__", "Library"]);
 const MAX_DEPTH = 8;
@@ -209,6 +217,19 @@ export class ReaderRegistry {
       result.doc.state = readerDocState(result.doc.comments, result.doc.open, entry.readAt);
     }
     return result;
+  }
+
+  /** Is `abs` inside the folder of a registered brief (or a folder below it)? Assets — a
+   *  screenshot next to the page — are served only there. */
+  isBesideBrief(abs: string): boolean {
+    this.load();
+    // Both sides canonical: the route hands over a realpath (a macOS temp dir is /private/var
+    // while its registered spelling is /var), and a brief may sit behind a symlinked dir.
+    const target = realpathOr(abs);
+    for (const docPath of this.docs.keys()) {
+      if (isWithin(realpathOr(path.dirname(docPath)), target)) return true;
+    }
+    return false;
   }
 
   /** Forget cached facts for a path (after the reader wrote it), so the next listing

@@ -55,7 +55,7 @@ async function refreshIndex(): Promise<void> {
 }
 
 const matches = (doc: ReaderDoc): boolean => {
-  if (filter.value !== "all" && doc.state !== filter.value && !(filter.value === "unread" && doc.state === "unread")) return false;
+  if (filter.value !== "all" && doc.state !== filter.value) return false;
   const q = query.value.trim().toLowerCase();
   if (!q) return true;
   return `${doc.title} ${doc.project} ${doc.folder} ${doc.path}`.toLowerCase().includes(q);
@@ -175,8 +175,12 @@ async function onBridgeSave(html: string): Promise<void> {
   try {
     const r = await saveReaderAnnotations(path, json);
     replaceDoc(r.doc);
-    frame.value?.contentWindow?.postMessage({ type: "reader:saved" }, "*");
     showToast("Comments saved to the file.");
+    // The operator may have moved to another brief while the write was in flight: the ack
+    // (which clears the page's draft and unload guard) and the remount are for the saved
+    // page only — never the one on screen now.
+    if (docPath.value !== path) return;
+    frame.value?.contentWindow?.postMessage({ type: "reader:saved", path }, docOrigin);
     // Restart the page from the file it just wrote (its own unsaved state is stale now); the
     // bridge has cleared the unload guard and keeps the scroll position across the reload.
     setTimeout(() => (reloads.value += 1), 400);
@@ -271,15 +275,30 @@ watch(
 );
 
 // ---- lifecycle -------------------------------------------------------------------------
-// `viewhtml` asks the host to show a brief; the host hands it to ONE tab, this one if it is
-// open. The index is also re-read whenever the tab comes back into view and on a slow
-// timer, since Claude marks comments applied by editing the files underneath us.
-const unsubscribeOpen = usePubSub().subscribe(READER_OPEN_CHANNEL, (data) => {
-  const event = readerOpenEventOf(data);
-  if (!event) return;
-  void refreshIndex().then(() => readerGoto(event.path));
-  window.focus();
-});
+// `viewhtml` asks the host to show a brief; the host hands it to ONE subscriber. This
+// component is mounted in every tab, so the subscription is held ONLY while the reader is
+// open — otherwise the grid tab, connected first, would take the event and be navigated
+// off the terminals (review of 16fcc53c). The index is also re-read whenever the tab comes
+// back into view and on a slow timer, since Claude marks comments applied by editing the
+// files underneath us.
+let unsubscribeOpen: (() => void) | null = null;
+watch(
+  isOpen,
+  (open) => {
+    if (open && !unsubscribeOpen) {
+      unsubscribeOpen = usePubSub().subscribe(READER_OPEN_CHANNEL, (data) => {
+        const event = readerOpenEventOf(data);
+        if (!event) return;
+        void refreshIndex().then(() => readerGoto(event.path));
+        window.focus();
+      });
+    } else if (!open && unsubscribeOpen) {
+      unsubscribeOpen();
+      unsubscribeOpen = null;
+    }
+  },
+  { immediate: true },
+);
 let timer: ReturnType<typeof setInterval> | null = null;
 const onVisible = (): void => {
   if (!document.hidden && isOpen.value) void refreshIndex();
@@ -295,7 +314,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
   document.removeEventListener("visibilitychange", onVisible);
   if (timer) clearInterval(timer);
-  unsubscribeOpen();
+  unsubscribeOpen?.();
 });
 watch(
   isOpen,
@@ -485,7 +504,7 @@ const when = (ms: number): string => {
         :key="`${frameSrc}#${reloads}`"
         :src="frameSrc"
         class="min-h-0 w-full flex-1 border-0 bg-white"
-        sandbox="allow-scripts allow-same-origin allow-modals allow-popups allow-popups-to-escape-sandbox"
+        sandbox="allow-scripts allow-same-origin allow-modals"
         allow="clipboard-write"
         title="Brief"
       />

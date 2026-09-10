@@ -50,12 +50,16 @@ working unchanged.
 
 - `GET /api/reader/doc/<absolute path>` serves the brief from its real location, so
   relative screenshots resolve; only a page with the `annotations-data` block is served,
-  and only image/style/font siblings beside it.
+  and only image/style/font siblings in a registered brief's folder (or below it).
 - The page is loaded from the **other loopback host name** (app on 127.0.0.1 → page on
   localhost, and vice versa). Its comment layer keeps a draft in localStorage, which an
   opaque-origin sandbox has none of, so the frame is `allow-same-origin` — on an origin
   that is not the app's. The response CSP keeps `connect-src 'none'` and `form-action
-  'none'`; the page's one way out is postMessage to the reader.
+  'none'`; the page's one way out is postMessage to the reader. The app answers on
+  BOTH loopback names, so the hostname alone is not a boundary: the sandbox also denies
+  popups and nested frames, or the page could open the app as a same-origin document
+  free of this CSP (found in review). A listener on its own port would make the origin
+  claim real; that is the next step if the boundary ever needs to be more than flags.
 - A **bridge** is injected at the top of `<body>` on every serve (files are never
   modified): it removes `showOpenFilePicker`, which sends the layer's save down its
   download fallback, catches that download (the blob and the anchor click) and posts the
@@ -90,6 +94,8 @@ working unchanged.
 
 - Per-pane badges in the grid ("N briefs waiting under this cwd") are not built; the
   index's per-project counts stand in for now.
+- A `target=_blank` link inside a brief does nothing (no popups). Route such links through
+  the bridge as a message if briefs ever need them.
 - The comment layer's `beforeunload` guard still fires when switching briefs with an
   unsaved comment — by design (it is the layer's), but it is a browser dialog.
 - Off loopback (a LAN host name) there is no "other" host name, so the page shares the

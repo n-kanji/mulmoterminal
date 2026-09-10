@@ -19,6 +19,11 @@
 // is on 127.0.0.1 and vice versa) so that "same origin" is a real origin that is still not
 // the app's — the page cannot reach the app's DOM, cookies or /api. `connect-src 'none'`
 // keeps it from fetching anything at all; the one way out is postMessage to the reader.
+// What the hostname trick does NOT give: a second origin the app itself refuses to answer
+// on. The app serves on either name, so the sandbox must also deny popups and nested
+// frames (default-src 'none' covers frames) — otherwise the page would open the app as a
+// same-origin document without this CSP. A listener on its own port would make the origin
+// claim real; until then, the flags below are the boundary.
 import fs from "node:fs";
 import path from "node:path";
 import type { Express, Request, Response } from "express";
@@ -52,12 +57,15 @@ const ALLOWED_CDNS = [
 ].join(" ");
 
 export const READER_DOC_CSP = [
-  "sandbox allow-scripts allow-same-origin allow-modals allow-popups allow-popups-to-escape-sandbox",
+  // No allow-popups (review of 16fcc53c): the app answers on BOTH loopback names, so a popup
+  // opened by the page at http://localhost:<port>/ would be the app, same-origin with the
+  // page, scriptable by it and free of this CSP — a way to /api/*. A brief needs no popups.
+  "sandbox allow-scripts allow-same-origin allow-modals",
   "default-src 'none'",
   `script-src 'unsafe-inline' ${ALLOWED_CDNS}`,
   `style-src 'unsafe-inline' ${ALLOWED_CDNS}`,
   `font-src ${ALLOWED_CDNS} data:`,
-  `img-src 'self' ${ALLOWED_CDNS} data: blob: https: http:`,
+  `img-src 'self' ${ALLOWED_CDNS} data: blob: https:`,
   "media-src 'self' https: data: blob:",
   "connect-src 'none'",
   "form-action 'none'",
@@ -214,6 +222,9 @@ function mountDocRoute(app: Express, deps: ReaderRouteDeps): void {
     }
     const type = assetContentType(ext);
     if (!type) return void respondFileError(req, res, 404, "not a brief asset", rel);
+    // An asset is served only beside a registered brief (its folder or below): the reader
+    // is not a file server for the roots, and the registry is what says where briefs are.
+    if (!deps.registry.isBesideBrief(abs)) return void respondFileError(req, res, 404, "not beside a registered brief", rel);
     res.setHeader("Content-Type", type);
     // An SVG/JS with script must not run in any origin that matters; media is sandboxed too.
     res.setHeader("Content-Security-Policy", "sandbox");

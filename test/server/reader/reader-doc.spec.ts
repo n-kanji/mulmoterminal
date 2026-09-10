@@ -74,6 +74,15 @@ describe("replaceAnnotationsJson", () => {
   });
 });
 
+describe("findAnnotationsBlock over a raw </script> inside a comment", () => {
+  it("ends the body where the JSON parses, not at the first close tag", () => {
+    const json = JSON.stringify({ items: [{ id: 1, comment: "a </script> b" }] });
+    const html = `<html><body><script type="application/json" id="annotations-data">${json}</script>\n</body></html>`;
+    expect(extractAnnotationsJson(html)).toBe(json);
+    expect(countComments(html)).toEqual({ comments: 1, open: 1 });
+  });
+});
+
 describe("validAnnotationsJson", () => {
   it("accepts an object with items and refuses anything that would erase comments", () => {
     expect(validAnnotationsJson('{"items":[]}')).toBe(true);

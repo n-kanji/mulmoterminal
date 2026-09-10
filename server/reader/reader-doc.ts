@@ -24,9 +24,27 @@ export function findAnnotationsBlock(html: string): AnnotationsBlock | null {
   const open = html.indexOf(ANNOTATIONS_OPEN_TAG);
   if (open < 0) return null;
   const bodyStart = open + ANNOTATIONS_OPEN_TAG.length;
-  const bodyEnd = html.indexOf(SCRIPT_CLOSE, bodyStart);
-  if (bodyEnd < 0) return null;
-  return { bodyStart, bodyEnd };
+  const first = html.indexOf(SCRIPT_CLOSE, bodyStart);
+  if (first < 0) return null;
+  // The block the reader writes escapes "</" (scriptSafeJson), but one the comment layer
+  // wrote through its own download path may carry a raw "</script>" inside a comment. The
+  // body ends at the FIRST close tag after which the text parses as JSON; a close tag inside
+  // a string leaves a truncated, unparsable prefix. A body that never parses (a broken
+  // block) ends at the first close tag, as before.
+  for (let end = first; end >= 0; end = html.indexOf(SCRIPT_CLOSE, end + SCRIPT_CLOSE.length)) {
+    if (parsesAsJson(html.slice(bodyStart, end))) return { bodyStart, bodyEnd: end };
+  }
+  return { bodyStart, bodyEnd: first };
+}
+
+function parsesAsJson(text: string): boolean {
+  if (!text.trim()) return true; // an empty block is a (comment-less) brief, not a broken one
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export const isBrief = (html: string): boolean => findAnnotationsBlock(html) !== null;
@@ -178,9 +196,15 @@ export const READER_BRIDGE_SCRIPT = `<script id="reader-bridge">
     return addEventListener(type, function (e) { if (!clean) listener.call(window, e); }, options);
   };
   var SCROLL_KEY = 'reader:scroll:' + location.pathname;
+  var DOC_PREFIX = '/api/reader/doc';
+  var ownPath = null;
+  try { ownPath = decodeURIComponent(location.pathname.slice(DOC_PREFIX.length)); } catch (e) {}
   window.addEventListener('message', function (e) {
     var d = e.data;
     if (!d || d.type !== 'reader:saved') return;
+    // Addressed: the reader may have moved on to another brief while the save was in
+    // flight, and an ack for that one must not clear THIS page's draft and unload guard.
+    if (typeof d.path === 'string' && ownPath !== null && d.path !== ownPath) return;
     clean = true;
     try { localStorage.removeItem('annotations:' + location.pathname); } catch (err) {}
     try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (err) {}
