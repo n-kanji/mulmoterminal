@@ -63,6 +63,7 @@ interface RegistryFile {
 
 interface FileFacts {
   mtime: number;
+  createdAt: number;
   size: number;
   title: string;
   comments: number;
@@ -137,7 +138,13 @@ export class ReaderRegistry {
     }
     if (!isBrief(html)) return null;
     const counts = countComments(html);
-    const facts: FileFacts = { mtime: stat.mtimeMs, size: stat.size, title: docTitle(html, path.basename(abs, ".html")), ...counts };
+    const facts: FileFacts = {
+      mtime: stat.mtimeMs,
+      createdAt: stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs,
+      size: stat.size,
+      title: docTitle(html, path.basename(abs, ".html")),
+      ...counts,
+    };
     this.facts.set(abs, facts);
     return facts;
   }
@@ -147,6 +154,7 @@ export class ReaderRegistry {
       path: abs,
       title: facts.title,
       mtime: facts.mtime,
+      createdAt: facts.createdAt,
       root: place.root,
       project: place.project,
       folder: place.folder,

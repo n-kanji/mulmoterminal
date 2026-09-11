@@ -76,6 +76,8 @@ describe("ReaderRegistry.register", () => {
       readAt: null,
       state: "commented",
     });
+    expect(docs[0].createdAt).toBeGreaterThan(0);
+    expect(docs[0].createdAt).toBeLessThanOrEqual(docs[0].mtime + 1);
   });
 });
 

@@ -18,8 +18,12 @@ export interface ReaderDoc {
   /** Absolute path on disk — the identity of the doc. */
   path: string;
   title: string;
-  /** Last-modified, ms epoch (the sort key). */
+  /** Last-modified, ms epoch — moves when a comment is saved. */
   mtime: number;
+  /** Created, ms epoch (the file's birth time; the modified time where the filesystem has
+   *  none). The order the briefs were WRITTEN in, which is what "what came in while I was
+   *  reading" means — a save does not move it. */
+  createdAt: number;
   /** Grouping: the root the doc was found under, the project inside it, the folder inside
    *  the project ("" for a doc at the project root). */
   root: string;

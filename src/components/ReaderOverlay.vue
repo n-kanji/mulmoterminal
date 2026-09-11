@@ -40,6 +40,37 @@ const filter = ref<Filter>("all");
 const query = ref("");
 const collapsed = ref(new Set<string>());
 
+// How the index is laid out (operator request 2026-09-11). Briefs arrive from many panes
+// at once, so the default is one flat list in the order they were written — the grouped
+// view hid a new brief under a folder further down. Both choices are remembered per
+// browser; a reader that comes back the way it was left is the point of remembering.
+type View = "recent" | "grouped";
+type SortKey = "created" | "modified";
+const VIEW_KEY = "reader:view";
+const SORT_KEY = "reader:sort";
+const remembered = (key: string, allowed: readonly string[], fallback: string): string => {
+  try {
+    const v = localStorage.getItem(key);
+    return v && allowed.includes(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+};
+const view = ref<View>(remembered(VIEW_KEY, ["recent", "grouped"], "recent") as View);
+const sortKey = ref<SortKey>(remembered(SORT_KEY, ["created", "modified"], "created") as SortKey);
+watch([view, sortKey], ([v, k]) => {
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+    localStorage.setItem(SORT_KEY, k);
+  } catch {
+    // per-browser convenience only
+  }
+});
+const timeOf = (doc: ReaderDoc): number => (sortKey.value === "created" ? doc.createdAt : doc.mtime);
+/** The flat list: every matching brief, newest first by the chosen clock. */
+const recent = computed<ReaderDoc[]>(() => docs.value.filter(matches).sort((a, b) => timeOf(b) - timeOf(a)));
+const placeLabel = (doc: ReaderDoc): string => (doc.folder ? `${doc.project || rootLabel(doc.root)} / ${doc.folder}` : doc.project || rootLabel(doc.root));
+
 async function refreshIndex(): Promise<void> {
   loading.value = true;
   try {
@@ -95,10 +126,13 @@ const groups = computed<ProjectGroup[]>(() => {
     folder.docs.push(doc);
     if (doc.state === "unread") group.unread += 1;
     group.open += doc.open;
-    group.latest = Math.max(group.latest, doc.mtime);
+    group.latest = Math.max(group.latest, timeOf(doc));
   }
   const out = [...byProject.values()];
-  for (const g of out) g.folders.sort((a, b) => Math.max(...b.docs.map((d) => d.mtime)) - Math.max(...a.docs.map((d) => d.mtime)));
+  for (const g of out) {
+    for (const f of g.folders) f.docs.sort((a, b) => timeOf(b) - timeOf(a));
+    g.folders.sort((a, b) => timeOf(b.docs[0]) - timeOf(a.docs[0]));
+  }
   out.sort((a, b) => b.latest - a.latest);
   return out;
 });
@@ -378,6 +412,29 @@ const when = (ms: number): string => {
             {{ f }} <span class="opacity-70">{{ counts[f] }}</span>
           </button>
         </div>
+        <div class="flex items-center gap-1 text-[11.5px]">
+          <div class="flex rounded-md border border-border" role="tablist" aria-label="Layout">
+            <button
+              v-for="v in ['recent', 'grouped'] as View[]"
+              :key="v"
+              type="button"
+              role="tab"
+              :aria-selected="view === v"
+              class="border-0 px-2 py-0.5 first:rounded-l-md last:rounded-r-md"
+              :class="view === v ? 'cursor-default bg-accent-bg text-on-accent' : 'cursor-pointer bg-transparent text-muted hover:bg-hover hover:text-fg'"
+              :title="v === 'recent' ? 'One list, newest first, whatever the folder' : 'Grouped by project and folder'"
+              @click="view = v"
+            >
+              {{ v === "recent" ? "Recent" : "By project" }}
+            </button>
+          </div>
+          <span class="flex-auto" />
+          <label class="text-muted" for="reader-sort">Sort</label>
+          <select id="reader-sort" v-model="sortKey" class="h-[22px] rounded-md border border-border bg-base px-1 text-[11.5px] text-fg">
+            <option value="created">Written (newest)</option>
+            <option value="modified">Updated (newest)</option>
+          </select>
+        </div>
         <input
           v-model="query"
           type="search"
@@ -391,7 +448,27 @@ const when = (ms: number): string => {
         <p v-if="!loading && !docs.length" class="px-3 py-8 text-center text-[12px] text-muted">
           No briefs yet. Claude registers each one it writes; press Rescan to find the ones written before.
         </p>
-        <section v-for="g in groups" :key="g.key" class="border-b border-border">
+        <template v-if="view === 'recent'">
+          <button
+            v-for="d in recent"
+            :key="d.path"
+            type="button"
+            class="flex w-full cursor-pointer items-start gap-2 border-0 border-b border-border px-3 py-1.5 text-left"
+            :class="d.path === docPath ? 'bg-accent-bg/60' : 'bg-transparent hover:bg-hover'"
+            :title="d.path"
+            @click="select(d)"
+          >
+            <span class="mt-[5px] h-[8px] w-[8px] flex-none rounded-full" :class="stateDot[d.state]" :title="stateTitle[d.state]" />
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-[12.5px] leading-snug" :class="d.state === 'unread' ? 'font-[650] text-fg' : 'text-fg'">{{ d.title }}</span>
+              <span class="block truncate text-[10.5px] text-muted">
+                {{ when(timeOf(d)) }} · {{ placeLabel(d)
+                }}<template v-if="d.comments"> · {{ d.open ? `${d.open} to apply` : `${d.comments} applied` }}</template>
+              </span>
+            </span>
+          </button>
+        </template>
+        <section v-for="g in view === 'grouped' ? groups : []" :key="g.key" class="border-b border-border">
           <button
             type="button"
             class="flex w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-3 py-1.5 text-left hover:bg-hover"
@@ -423,7 +500,7 @@ const when = (ms: number): string => {
                 <span class="min-w-0 flex-1">
                   <span class="block truncate text-[12.5px] leading-snug" :class="d.state === 'unread' ? 'font-[650] text-fg' : 'text-fg'">{{ d.title }}</span>
                   <span class="block text-[10.5px] text-muted">
-                    {{ when(d.mtime) }}<template v-if="d.comments"> · {{ d.open ? `${d.open} to apply` : `${d.comments} applied` }}</template>
+                    {{ when(timeOf(d)) }}<template v-if="d.comments"> · {{ d.open ? `${d.open} to apply` : `${d.comments} applied` }}</template>
                   </span>
                 </span>
               </button>
