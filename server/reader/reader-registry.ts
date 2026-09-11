@@ -223,6 +223,38 @@ export class ReaderRegistry {
     return result;
   }
 
+  /** The operator wants a brief back in the unread pile (a "read it later" on something the
+   *  reader, or the one-time backlog sweep, called read). */
+  markUnread(abs: string): RegisterResult {
+    const result = this.register(abs);
+    if (!result.ok) return result;
+    const entry = this.docs.get(result.doc.path);
+    if (entry) {
+      entry.readAt = null;
+      this.save();
+      result.doc.readAt = null;
+      result.doc.state = readerDocState(result.doc.comments, result.doc.open, null);
+    }
+    return result;
+  }
+
+  /** Mark several registered briefs read at once (the "mark all shown as read" button, and
+   *  the one-time sweep of the briefs written before the reader existed). Unknown paths are
+   *  skipped, not registered. Returns how many changed. */
+  markReadMany(paths: readonly string[]): number {
+    this.load();
+    let changed = 0;
+    const now = Date.now();
+    for (const p of paths) {
+      const entry = this.docs.get(path.resolve(p));
+      if (!entry || entry.readAt) continue;
+      entry.readAt = now;
+      changed += 1;
+    }
+    if (changed) this.save();
+    return changed;
+  }
+
   /** Is `abs` inside the folder of a registered brief (or a folder below it)? Assets — a
    *  screenshot next to the page — are served only there. */
   isBesideBrief(abs: string): boolean {

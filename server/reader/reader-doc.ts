@@ -110,6 +110,33 @@ export function countComments(html: string): CommentCounts {
   return { comments: items.length, open };
 }
 
+/** The block with every open comment marked applied, as the skill would write it, or null
+ *  when the page has no block or nothing was open. The operator's override for a brief
+ *  whose comments were handled without the marker being written — the reader cannot
+ *  know that, the operator can. `note` says who/when, so a later reader of the comment
+ *  can tell this from Claude's own mark. */
+export function markCommentsApplied(html: string, note: string): string | null {
+  const body = extractAnnotationsJson(html);
+  if (body === null) return null;
+  let parsed: { items?: unknown[] };
+  try {
+    parsed = JSON.parse(body || "{}") as { items?: unknown[] };
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.items)) return null;
+  let changed = 0;
+  for (const item of parsed.items) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as { comment?: unknown };
+    const comment = typeof record.comment === "string" ? record.comment : "";
+    if (comment.includes(APPLIED_MARK)) continue;
+    record.comment = `${comment}\n\n_(${APPLIED_MARK} ${note})_`;
+    changed += 1;
+  }
+  return changed ? replaceAnnotationsJson(html, JSON.stringify(parsed)) : null;
+}
+
 /** Pull the data block's JSON text out of a page (what the bridge's saved HTML carries). */
 export function extractAnnotationsJson(html: string): string | null {
   const block = findAnnotationsBlock(html);

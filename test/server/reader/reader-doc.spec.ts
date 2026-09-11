@@ -11,6 +11,7 @@ import {
   isBrief,
   replaceAnnotationsJson,
   validAnnotationsJson,
+  markCommentsApplied,
   assetContentType,
   READER_BRIDGE_SCRIPT,
 } from "../../../server/reader/reader-doc.js";
@@ -80,6 +81,23 @@ describe("findAnnotationsBlock over a raw </script> inside a comment", () => {
     const html = `<html><body><script type="application/json" id="annotations-data">${json}</script>\n</body></html>`;
     expect(extractAnnotationsJson(html)).toBe(json);
     expect(countComments(html)).toEqual({ comments: 1, open: 1 });
+  });
+});
+
+describe("markCommentsApplied", () => {
+  it("marks only the open comments, and reports nothing to do otherwise", () => {
+    const html = brief([
+      { id: 1, comment: "fix" },
+      { id: 2, comment: "ok _(反映済み 2026-09-01)_" },
+      { id: 3, type: "pin" },
+    ]);
+    const out = markCommentsApplied(html, "2026-09-11 手動") ?? "";
+    expect(countComments(out)).toEqual({ comments: 3, open: 0 });
+    const items = JSON.parse(extractAnnotationsJson(out) ?? "{}").items as { comment: string }[];
+    expect(items[0].comment).toBe("fix\n\n_(反映済み 2026-09-11 手動)_");
+    expect(items[1].comment).toBe("ok _(反映済み 2026-09-01)_");
+    expect(markCommentsApplied(out, "x")).toBeNull();
+    expect(markCommentsApplied("<html></html>", "x")).toBeNull();
   });
 });
 

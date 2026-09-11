@@ -18,7 +18,10 @@ import {
   annotationsJsonOf,
   fetchReaderIndex,
   fetchReaderPanes,
+  markReaderApplied,
   markReaderRead,
+  markReaderReadMany,
+  markReaderUnread,
   readerDocOrigin,
   readerDocUrl,
   rescanReader,
@@ -35,7 +38,7 @@ const docs = ref<ReaderDoc[]>([]);
 const roots = ref<string[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
-type Filter = "all" | "unread" | "commented" | "done";
+type Filter = "all" | "unread" | "awaiting" | "done";
 const filter = ref<Filter>("all");
 const query = ref("");
 const collapsed = ref(new Set<string>());
@@ -141,9 +144,45 @@ const rootLabel = (root: string): string => root.split("/").filter(Boolean).pop(
 const counts = computed(() => ({
   all: docs.value.length,
   unread: docs.value.filter((d) => d.state === "unread").length,
-  commented: docs.value.filter((d) => d.state === "commented").length,
+  awaiting: docs.value.filter((d) => d.state === "awaiting").length,
   done: docs.value.filter((d) => d.state === "done").length,
 }));
+const filterLabel: Record<Filter, string> = { all: "All", unread: "Unread", awaiting: "Awaiting Claude", done: "Done" };
+
+// Read state is the operator's to correct: a brief the reader called read can go back to
+// unread, and everything currently shown can be swept read at once.
+const shown = computed<ReaderDoc[]>(() => (view.value === "recent" ? recent.value : groups.value.flatMap((g) => g.folders.flatMap((f) => f.docs))));
+async function toggleRead(doc: ReaderDoc): Promise<void> {
+  try {
+    const r = doc.readAt ? await markReaderUnread(doc.path) : await markReaderRead(doc.path);
+    replaceDoc(r.doc);
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : String(e), "err");
+  }
+}
+async function markApplied(doc: ReaderDoc): Promise<void> {
+  try {
+    const r = await markReaderApplied(doc.path);
+    replaceDoc(r.doc);
+    if (r.changed) {
+      showToast("Comments marked applied.");
+      if (docPath.value === doc.path) reloads.value += 1;
+    }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : String(e), "err");
+  }
+}
+async function markShownRead(): Promise<void> {
+  const paths = shown.value.filter((d) => !d.readAt).map((d) => d.path);
+  if (!paths.length) return;
+  try {
+    const r = await markReaderReadMany(paths);
+    showToast(`${r.changed} marked read.`);
+    await refreshIndex();
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : String(e), "err");
+  }
+}
 
 function toggleProject(key: string): void {
   const next = new Set(collapsed.value);
@@ -360,15 +399,13 @@ watch(
 
 const stateDot: Record<ReaderDocState, string> = {
   unread: "bg-accent",
-  read: "bg-transparent border border-border",
-  commented: "bg-amber",
-  done: "bg-muted",
+  awaiting: "bg-amber",
+  done: "bg-transparent border border-border",
 };
 const stateTitle: Record<ReaderDocState, string> = {
   unread: "Unread",
-  read: "Read",
-  commented: "Has comments Claude has not applied yet",
-  done: "Every comment applied",
+  awaiting: "You commented; Claude has not applied it yet",
+  done: "Done — read, or every comment applied",
 };
 const when = (ms: number): string => {
   const d = new Date(ms);
@@ -391,6 +428,15 @@ const when = (ms: number): string => {
           <button
             type="button"
             class="h-[24px] cursor-pointer rounded-md border border-border bg-base px-2 text-[11px] text-secondary enabled:hover:bg-hover enabled:hover:text-fg disabled:cursor-default disabled:opacity-50"
+            :disabled="!shown.some((d) => !d.readAt)"
+            title="Mark every brief shown in the list read"
+            @click="markShownRead"
+          >
+            Mark shown read
+          </button>
+          <button
+            type="button"
+            class="h-[24px] cursor-pointer rounded-md border border-border bg-base px-2 text-[11px] text-secondary enabled:hover:bg-hover enabled:hover:text-fg disabled:cursor-default disabled:opacity-50"
             :disabled="rescanning"
             title="Walk the roots for briefs written before the reader existed, or moved by hand (slow)"
             @click="rescan"
@@ -400,16 +446,16 @@ const when = (ms: number): string => {
         </div>
         <div class="flex gap-1" role="tablist" aria-label="Filter">
           <button
-            v-for="f in ['all', 'unread', 'commented', 'done'] as Filter[]"
+            v-for="f in ['all', 'unread', 'awaiting', 'done'] as Filter[]"
             :key="f"
             type="button"
             role="tab"
             :aria-selected="filter === f"
-            class="rounded-md border-0 px-2 py-0.5 text-[11.5px] capitalize"
+            class="rounded-md border-0 px-2 py-0.5 text-[11.5px]"
             :class="filter === f ? 'cursor-default bg-accent-bg text-on-accent' : 'cursor-pointer bg-transparent text-muted hover:bg-hover hover:text-fg'"
             @click="filter = f"
           >
-            {{ f }} <span class="opacity-70">{{ counts[f] }}</span>
+            {{ filterLabel[f] }} <span class="opacity-70">{{ counts[f] }}</span>
           </button>
         </div>
         <div class="flex items-center gap-1 text-[11.5px]">
@@ -517,6 +563,24 @@ const when = (ms: number): string => {
         <span class="hidden min-w-0 truncate font-mono text-[10.5px] text-muted lg:inline" :title="docPath">{{ docPath.replace(/^\/Users\/[^/]+/, "~") }}</span>
         <span class="flex-auto" />
         <span v-if="saving" class="text-[11px] text-secondary">Saving…</span>
+        <button
+          v-if="current && current.open > 0"
+          type="button"
+          class="h-[24px] cursor-pointer rounded-md border border-border bg-base px-2 text-[11px] text-secondary enabled:hover:bg-hover enabled:hover:text-fg"
+          title="Every comment here is handled: mark them applied so the brief leaves Awaiting"
+          @click="markApplied(current)"
+        >
+          Mark applied
+        </button>
+        <button
+          v-if="current"
+          type="button"
+          class="h-[24px] cursor-pointer rounded-md border border-border bg-base px-2 text-[11px] text-secondary enabled:hover:bg-hover enabled:hover:text-fg"
+          :title="current.readAt ? 'Put this brief back in the unread pile' : 'Mark this brief read'"
+          @click="toggleRead(current)"
+        >
+          {{ current.readAt ? "Mark unread" : "Mark read" }}
+        </button>
         <button
           type="button"
           class="h-[24px] cursor-pointer rounded-md border border-border bg-base px-2 text-[11px] text-secondary enabled:hover:bg-hover enabled:hover:text-fg"

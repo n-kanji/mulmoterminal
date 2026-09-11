@@ -5,7 +5,10 @@
 //   POST /open {path}          register + ask the open reader tab to show it; 409 when no
 //                              tab is listening, so viewhtml opens a browser instead
 //   POST /read {path}          the operator opened it
+//   POST /unread {path}        put it back in the unread pile
+//   POST /read-many {paths}    mark a batch read (the "all shown" button, the backlog sweep)
 //   PUT  /annotations {path, json}   write the comment block back (the bridge's save)
+//   POST /applied {path}       mark every open comment applied (the operator's override)
 //   POST /rescan               walk the roots for briefs (slow, deliberate)
 //   GET  /panes                live sessions the reader can type into
 //   POST /send {sessionId, text}     type a comment digest into one pane
@@ -33,7 +36,7 @@ import { statFileOr404 } from "../backends/statFileOr404.js";
 import { streamFileToResponse } from "../backends/streamFile.js";
 import { isWithin } from "../infra/path-within.js";
 import { messageOf } from "../errors.js";
-import { assetContentType, injectReaderBridge, isBrief, replaceAnnotationsJson, validAnnotationsJson } from "./reader-doc.js";
+import { assetContentType, injectReaderBridge, isBrief, markCommentsApplied, replaceAnnotationsJson, validAnnotationsJson } from "./reader-doc.js";
 import type { ReaderRegistry } from "./reader-registry.js";
 import { READER_OPEN_CHANNEL, type ReaderIndex, type ReaderOpenEvent, type ReaderPane } from "../../common/readerApi.js";
 
@@ -114,6 +117,20 @@ function mountIndexRoutes(app: Express, deps: ReaderRouteDeps): void {
     res.json({ ok: true, doc: result.doc });
   });
 
+  app.post("/api/reader/unread", (req, res) => {
+    const p = pathOf(req.body);
+    if (!p) return void res.status(400).json({ error: "path is required" });
+    const result = deps.registry.markUnread(p);
+    if (!result.ok) return void res.status(result.status).json({ error: result.error });
+    res.json({ ok: true, doc: result.doc });
+  });
+
+  app.post("/api/reader/read-many", (req, res) => {
+    const paths = req.body && typeof req.body === "object" ? (req.body as { paths?: unknown }).paths : undefined;
+    if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) return void res.status(400).json({ error: "paths must be an array of strings" });
+    res.json({ ok: true, changed: deps.registry.markReadMany(paths as string[]) });
+  });
+
   app.post("/api/reader/rescan", async (_req, res) => {
     try {
       res.json(await deps.registry.rescan());
@@ -144,15 +161,48 @@ function mountSaveRoute(app: Express, deps: ReaderRouteDeps): void {
     try {
       // Atomic: the page is never on disk half-written, since the operator's other panes
       // may read it (Claude applying comments) at any moment.
-      const tmp = `${abs}.${process.pid}.reader-tmp`;
-      fs.writeFileSync(tmp, updated);
-      fs.renameSync(tmp, abs);
+      writeBrief(abs, updated);
     } catch (err) {
       return void res.status(500).json({ error: messageOf(err) });
     }
     deps.registry.invalidate(abs);
     const after = deps.registry.register(abs);
     res.json({ ok: true, doc: after.ok ? after.doc : known.doc });
+  });
+}
+
+/** Write `updated` over the brief at `abs`, atomically. */
+function writeBrief(abs: string, updated: string): void {
+  const tmp = `${abs}.${process.pid}.reader-tmp`;
+  fs.writeFileSync(tmp, updated);
+  fs.renameSync(tmp, abs);
+}
+
+function mountAppliedRoute(app: Express, deps: ReaderRouteDeps): void {
+  // The operator says every comment here is handled: each open comment gets the skill's
+  // applied marker (dated, marked as the operator's), so the brief leaves "awaiting".
+  app.post("/api/reader/applied", (req, res) => {
+    const p = pathOf(req.body);
+    if (!p) return void res.status(400).json({ error: "path is required" });
+    const known = deps.registry.register(p);
+    if (!known.ok) return void res.status(known.status).json({ error: known.error });
+    const abs = known.doc.path;
+    let html: string;
+    try {
+      html = fs.readFileSync(abs, "utf8");
+    } catch (err) {
+      return void res.status(500).json({ error: messageOf(err) });
+    }
+    const updated = markCommentsApplied(html, `${new Date().toISOString().slice(0, 10)} 手動`);
+    if (updated === null) return void res.json({ ok: true, doc: known.doc, changed: false });
+    try {
+      writeBrief(abs, updated);
+    } catch (err) {
+      return void res.status(500).json({ error: messageOf(err) });
+    }
+    deps.registry.invalidate(abs);
+    const after = deps.registry.markRead(abs);
+    res.json({ ok: true, doc: after.ok ? after.doc : known.doc, changed: true });
   });
 }
 
@@ -235,6 +285,7 @@ function mountDocRoute(app: Express, deps: ReaderRouteDeps): void {
 export function mountReaderRoutes(app: Express, deps: ReaderRouteDeps): void {
   mountIndexRoutes(app, deps);
   mountSaveRoute(app, deps);
+  mountAppliedRoute(app, deps);
   mountPaneRoutes(app, deps);
   mountDocRoute(app, deps);
 }

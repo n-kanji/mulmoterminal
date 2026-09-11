@@ -8,11 +8,12 @@
 import { isRecord } from "./isRecord.js";
 
 /** Where a brief stands, derived from the file and the read log — never set by hand.
- *  - unread: never opened in the reader
- *  - read: opened, no comments
- *  - commented: has comments Claude has not marked as applied
- *  - done: every comment carries the skill's "反映済み" marker */
-export type ReaderDocState = "unread" | "read" | "commented" | "done";
+ *  - unread: never opened in the reader, no comments (nothing says the operator saw it)
+ *  - awaiting: the operator wrote comments Claude has not marked applied — waiting on Claude
+ *  - done: opened, or every comment carries the skill's "反映済み" marker
+ *  Three states, not four (operator, 2026-09-11): "read with nothing to say" and "all
+ *  comments applied" are the same thing to the operator — finished. */
+export type ReaderDocState = "unread" | "awaiting" | "done";
 
 export interface ReaderDoc {
   /** Absolute path on disk — the identity of the doc. */
@@ -79,6 +80,6 @@ export const readerBridgeMessageOf = (data: unknown): ReaderBridgeMessage | null
 
 /** Derive the state from the counts and the read log. */
 export function readerDocState(comments: number, open: number, readAt: number | null): ReaderDocState {
-  if (comments > 0) return open > 0 ? "commented" : "done";
-  return readAt ? "read" : "unread";
+  if (open > 0) return "awaiting";
+  return readAt || comments > 0 ? "done" : "unread";
 }

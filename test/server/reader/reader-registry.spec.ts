@@ -74,7 +74,7 @@ describe("ReaderRegistry.register", () => {
       comments: 1,
       open: 1,
       readAt: null,
-      state: "commented",
+      state: "awaiting",
     });
     expect(docs[0].createdAt).toBeGreaterThan(0);
     expect(docs[0].createdAt).toBeLessThanOrEqual(docs[0].mtime + 1);
@@ -109,9 +109,22 @@ describe("ReaderRegistry.markRead", () => {
     const abs = write("p/a.html", briefHtml("A"));
     expect(registry.list()).toEqual([]);
     const result = registry.markRead(abs);
-    expect(result.ok && result.doc.state).toBe("read");
+    expect(result.ok && result.doc.state).toBe("done");
     expect(result.ok && result.doc.readAt).toBeTypeOf("number");
-    expect(registry.list()[0].state).toBe("read");
+    expect(registry.list()[0].state).toBe("done");
+    const back = registry.markUnread(abs);
+    expect(back.ok && back.doc.state).toBe("unread");
+    expect(registry.list()[0].readAt).toBeNull();
+  });
+  it("marks a batch read, skipping unknown and already-read paths", () => {
+    const a = write("p/a.html", briefHtml("A"));
+    const b = write("p/b.html", briefHtml("B"));
+    registry.register(a);
+    registry.register(b);
+    registry.markRead(b);
+    expect(registry.markReadMany([a, b, path.join(root, "p", "nope.html")])).toBe(1);
+    expect(registry.list().every((d) => d.state === "done")).toBe(true);
+    expect(registry.markReadMany([a, b])).toBe(0);
   });
 });
 

@@ -67,7 +67,14 @@ describe("index routes", () => {
     expect(list.body.roots).toEqual([root]);
     expect(list.body.docs[0]).toMatchObject({ path: abs, title: "A", state: "unread" });
     const read = await request(app).post("/api/reader/read").send({ path: abs });
-    expect(read.body.doc.state).toBe("read");
+    expect(read.body.doc.state).toBe("done");
+    const unread = await request(app).post("/api/reader/unread").send({ path: abs });
+    expect(unread.body.doc.state).toBe("unread");
+    const many = await request(app)
+      .post("/api/reader/read-many")
+      .send({ paths: [abs] });
+    expect(many.body).toEqual({ ok: true, changed: 1 });
+    expect((await request(app).post("/api/reader/read-many").send({ paths: "x" })).status).toBe(400);
   });
 
   it("/open hands the doc to the one open tab, or 409s so viewhtml opens a browser", async () => {
@@ -91,7 +98,7 @@ describe("PUT /api/reader/annotations", () => {
     const json = JSON.stringify({ items: [{ id: 1, comment: "please $1 fix" }] });
     const res = await request(app).put("/api/reader/annotations").send({ path: abs, json });
     expect(res.status).toBe(200);
-    expect(res.body.doc).toMatchObject({ comments: 1, open: 1, state: "commented" });
+    expect(res.body.doc).toMatchObject({ comments: 1, open: 1, state: "awaiting" });
     const after = fs.readFileSync(abs, "utf8");
     expect(after).toContain(`id="annotations-data">${json}</script>`);
     expect(after).toContain("<title>A</title>");
@@ -104,6 +111,18 @@ describe("PUT /api/reader/annotations", () => {
       expect((await request(app).put("/api/reader/annotations").send({ path: abs, json })).status).toBe(400);
     }
     expect(fs.readFileSync(abs, "utf8")).toContain("keep");
+  });
+});
+
+describe("POST /api/reader/applied", () => {
+  it("marks open comments applied on disk and moves the brief to done", async () => {
+    const app = appWith();
+    const abs = write("p/a.html", briefHtml("A", [{ id: 1, comment: "fix" }]));
+    const res = await request(app).post("/api/reader/applied").send({ path: abs });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ changed: true, doc: { comments: 1, open: 0, state: "done" } });
+    expect(fs.readFileSync(abs, "utf8")).toContain("反映済み");
+    expect((await request(app).post("/api/reader/applied").send({ path: abs })).body.changed).toBe(false);
   });
 });
 

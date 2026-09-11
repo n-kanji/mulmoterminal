@@ -16,6 +16,9 @@ export const fetchReaderIndex = (): Promise<ReaderIndex> => json<ReaderIndex>("/
 export const markReaderRead = (path: string): Promise<{ ok: true; doc: ReaderDoc }> => post("/api/reader/read", { path });
 export const saveReaderAnnotations = (path: string, annotations: string): Promise<{ ok: true; doc: ReaderDoc }> =>
   post("/api/reader/annotations", { path, json: annotations }, "PUT");
+export const markReaderUnread = (path: string): Promise<{ ok: true; doc: ReaderDoc }> => post("/api/reader/unread", { path });
+export const markReaderReadMany = (paths: string[]): Promise<{ ok: true; changed: number }> => post("/api/reader/read-many", { paths });
+export const markReaderApplied = (path: string): Promise<{ ok: true; doc: ReaderDoc; changed: boolean }> => post("/api/reader/applied", { path });
 export const rescanReader = (): Promise<{ found: number; added: number }> => post("/api/reader/rescan", {});
 export const fetchReaderPanes = (): Promise<{ panes: ReaderPane[] }> => json("/api/reader/panes");
 export const sendToReaderPane = (sessionId: string, text: string): Promise<{ sent: boolean }> => post("/api/reader/send", { sessionId, text });
