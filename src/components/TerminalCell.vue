@@ -1487,8 +1487,12 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">call_split</span>
           </button>
           <!-- Park (2026-08-26): shelve this column into the dock with a "resume when" note,
-               session intact. Only once there is a session to come back to. -->
-          <CellParkMenu v-if="sessionId" :initial="parkNote" @park="(note) => emit('park', note)" />
+               session intact. Only once there is a session to come back to.
+               The box opens on the last note this pane was parked with, and failing that on the
+               pane's own name (operator request 2026-09-12): most panes are named by hand, so
+               the operator was retyping what the header already said just to get a card that
+               reads as something. A note, once written, still wins over the name. -->
+          <CellParkMenu v-if="sessionId" :initial="parkNote ?? name" @park="(note) => emit('park', note)" />
           <CellChromeButtons :expanded="expanded" hide-expand @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
