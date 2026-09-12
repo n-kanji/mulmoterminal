@@ -343,6 +343,10 @@ export function addCell(state: GridState): GridState {
 // keeps a header drag distinguishable from a FILE drag (file-onto-terminal inserts the
 // path — an upstream feature that must keep working untouched).
 export const CELL_DRAG_MIME = "text/x-mulmo-cell-uid";
+// The same, for the parked dock's cards (operator request 2026-09-13). Its own MIME, not the
+// column one: a card and a column carry the same uid namespace, so sharing a type would let a
+// column dropped on the dock reorder an unrelated card (and vice versa).
+export const PARK_DRAG_MIME = "text/x-mulmo-parked-uid";
 
 // Fork-local (iTerm2 mode): drag & drop reorder — move `uid` to `targetUid`'s position,
 // shifting the cells between them (a splice, not a swap: dragging a column three slots

@@ -86,7 +86,12 @@ export function canPark(cell: Cell | undefined): boolean {
 
 /** Shelve `uid` with the operator's note. Leaves the grid exactly as closing would (reflow,
  *  hole on a sealed page, zoom handed to a neighbour, entry cell kept) — minus the session,
- *  which lives on in the dock entry. `order` is the on-screen uid order, as for closeCell. */
+ *  which lives on in the dock entry. `order` is the on-screen uid order, as for closeCell.
+ *
+ *  Newly parked goes to the FRONT: the dock renders the array as-is (operator request
+ *  2026-09-13, drag-to-reorder), so the array is the operator's order and cannot also be
+ *  re-sorted by time. Front-insertion keeps the default the dock always had — the thing
+ *  shelved a minute ago sits on top — while a hand-dragged order below it survives. */
 export function parkCell(state: GridState, uid: number, note: string, now: number, order?: number[]): GridState {
   const cell = state.cells.find((c) => c.uid === uid);
   if (!canPark(cell) || !cell) return state;
@@ -94,7 +99,7 @@ export function parkCell(state: GridState, uid: number, note: string, now: numbe
   const trimmed = parkNote(note);
   const kept: Cell = { uid: cell.uid, session: cell.session, cwd: cell.cwd, launcher: cell.launcher ?? undefined, agent: cell.agent, name: cell.name };
   if (trimmed) kept.parkNote = trimmed;
-  return { ...next, parked: [...parkedOf(next), { cell: kept, note: trimmed, at: now }] };
+  return { ...next, parked: [{ cell: kept, note: trimmed, at: now }, ...parkedOf(next)] };
 }
 
 /** Bring a parked pane back, onto the page being looked at (its first free slot, else the end
@@ -123,6 +128,21 @@ export function removeParked(state: GridState, uid: number): GridState {
   if (!parkedOf(state).some((p) => p.cell.uid === uid)) return state;
   const parked = parkedOf(state).filter((p) => p.cell.uid !== uid);
   return { ...state, parked: parked.length ? parked : undefined };
+}
+
+/** Move a parked pane to another card's place in the dock (operator request 2026-09-13):
+ *  drag-and-drop, and the same splice the grid's column drag does — the dragged card lands AT
+ *  the target's index and the rest close up, rather than the two swapping. The dock renders the
+ *  array in order, so this IS the persisted order. */
+export function moveParkedTo(state: GridState, uid: number, targetUid: number): GridState {
+  const parked = parkedOf(state);
+  const from = parked.findIndex((p) => p.cell.uid === uid);
+  const to = parked.findIndex((p) => p.cell.uid === targetUid);
+  if (from < 0 || to < 0 || from === to) return state;
+  const next = [...parked];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return { ...state, parked: next };
 }
 
 export function setParkNote(state: GridState, uid: number, note: string): GridState {

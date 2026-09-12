@@ -4,7 +4,13 @@
 // the operator's own "resume when X" note — the one line that says why the pane is still here —
 // and lights up when the pane needs attention (a reply came back, a question is blocking).
 // Click a card to put the pane back into the grid.
+//
+// The cards stand in the order the state holds them — newest park on top, and the operator can
+// drag one anywhere in the list (operator request 2026-09-13). Before this the dock sorted
+// itself by when each pane was parked, so "the three I am actually waiting on" could not be
+// kept together at the top.
 import { computed, ref } from "vue";
+import { PARK_DRAG_MIME } from "./gridTabs";
 import { DOCK_WIDTH_KEY, MIN_DOCK, MAX_DOCK, readDockWidth, clampDockWidth, dockKeyWidth } from "./columnWidth";
 import DirBadge from "./DirBadge.vue";
 import { paneStateWord, type PaneState } from "../../common/paneState";
@@ -30,10 +36,55 @@ const props = defineProps<{ items: ParkedCard[]; home: string | null }>();
 const emit = defineEmits<{
   (e: "restore" | "close", uid: number): void;
   (e: "note", uid: number, note: string): void;
+  (e: "reorder", uid: number, targetUid: number): void;
 }>();
 
-// Newest parked first: the thing shelved a minute ago is the one most likely to come back.
-const cards = computed(() => [...props.items].sort((a, b) => b.at - a.at));
+// The state's own order (parkCell puts a fresh one on top); dragging rewrites it.
+const cards = computed(() => props.items);
+
+// Drag to reorder. Gated on PARK_DRAG_MIME at every step so a file dragged over the dock — or
+// a column dragged off the grid — falls through instead of shuffling the cards. `dropUid` is
+// the card the pointer is over, drawn as the landing line.
+const dragUid = ref<number | null>(null);
+const dropUid = ref<number | null>(null);
+function onDragStart(e: DragEvent, uid: number) {
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData(PARK_DRAG_MIME, String(uid));
+  e.dataTransfer.effectAllowed = "move";
+  dragUid.value = uid;
+}
+function onDragOver(e: DragEvent, uid: number) {
+  if (!e.dataTransfer?.types.includes(PARK_DRAG_MIME)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  dropUid.value = uid;
+}
+function onDrop(e: DragEvent, uid: number) {
+  const raw = e.dataTransfer?.getData(PARK_DRAG_MIME);
+  endDrag();
+  if (!raw) return;
+  e.preventDefault();
+  const src = Number(raw);
+  if (!Number.isFinite(src) || src === uid) return;
+  emit("reorder", src, uid);
+}
+function endDrag() {
+  dragUid.value = null;
+  dropUid.value = null;
+}
+// The keyboard has to be able to do it too — the cards are focusable buttons, and a dock ten
+// cards deep is exactly where a pointer-only reorder strands someone. Alt+Up/Down, which no
+// browser claims inside a list.
+function onCardKey(e: KeyboardEvent, uid: number) {
+  if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+  const i = cards.value.findIndex((c) => c.uid === uid);
+  const target = cards.value[i + (e.key === "ArrowUp" ? -1 : 1)];
+  if (!target) return;
+  e.preventDefault();
+  emit("reorder", uid, target.uid);
+  // The moved card keeps the focus: the element is reused by key, so re-focusing after the
+  // list re-renders would fight Vue. Nothing to do — noted so it is not "fixed" later.
+}
 const attention = (s: PaneState) => s === "approval" || s === "question" || s === "unread";
 const since = (ms: number) => {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60_000));
@@ -116,11 +167,21 @@ function editNote(uid: number, current: string) {
         data-testid="parked-card"
         role="button"
         tabindex="0"
+        draggable="true"
         class="flex cursor-pointer flex-col gap-1 rounded-lg border border-l-[3px] bg-panel px-2 py-1.5 text-left text-fg hover:brightness-[1.15] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-        :class="attention(c.status) ? 'border-accent border-l-accent' : 'border-border border-l-transparent'"
-        :title="`クリックでグリッドに戻す · ${c.cwd ?? ''}`"
+        :class="[
+          attention(c.status) ? 'border-accent border-l-accent' : 'border-border border-l-transparent',
+          dragUid === c.uid ? 'opacity-40' : '',
+          dropUid === c.uid && dragUid !== c.uid ? 'outline outline-2 outline-accent' : '',
+        ]"
+        :title="`クリックでグリッドに戻す · ドラッグで並べ替え（Alt+↑↓） · ${c.cwd ?? ''}`"
         @click="emit('restore', c.uid)"
         @keydown.enter.prevent="emit('restore', c.uid)"
+        @keydown="onCardKey($event, c.uid)"
+        @dragstart="onDragStart($event, c.uid)"
+        @dragover="onDragOver($event, c.uid)"
+        @dragend="endDrag"
+        @drop="onDrop($event, c.uid)"
       >
         <div class="flex min-w-0 items-center gap-1">
           <DirBadge :name="c.name ?? dirLabel(c.cwd, home)" :color="c.headerColor" />

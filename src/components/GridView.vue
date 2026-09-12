@@ -65,6 +65,7 @@ import {
 } from "./gridTabs";
 import {
   addSeparator,
+  moveParkedTo,
   moveSeparator,
   parkCell,
   parkedOf,
@@ -523,6 +524,9 @@ const onUnpark = (uid: number) => {
   void nextTick(() => conn.focus(`cell-${uid}`));
 };
 const onParkNote = (uid: number, note: string) => (state.value = setParkNote(state.value, uid, note));
+// Dock drag (operator request 2026-09-13): the dock's order is the operator's, so unlike the
+// grid's reorder there is no auto-sort to switch off first.
+const onParkReorder = (uid: number, targetUid: number) => (state.value = moveParkedTo(state.value, uid, targetUid));
 const onParkedClose = (uid: number) => {
   const entry = parkedOf(state.value).find((p) => p.cell.uid === uid);
   if (!entry) return;
@@ -913,7 +917,15 @@ function configureAppearance() {
     </AppToolbar>
     <!-- The dock (left, operator's call) and the grid (2026-08-26). -->
     <div class="flex min-h-0 min-w-0 flex-1">
-      <ParkedDock v-if="expandedUid === null" :items="parkedCards" :home="home" @restore="onUnpark" @close="onParkedClose" @note="onParkNote" />
+      <ParkedDock
+        v-if="expandedUid === null"
+        :items="parkedCards"
+        :home="home"
+        @restore="onUnpark"
+        @close="onParkedClose"
+        @note="onParkNote"
+        @reorder="onParkReorder"
+      />
       <TerminalGrid
         class="flex-1 min-h-0 min-w-0"
         :cells="renderCells"

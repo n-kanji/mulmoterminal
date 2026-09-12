@@ -3,6 +3,7 @@ import { closeCell, parseGridState, PAGE_SIZE, MAX_PARK_NOTE, MAX_SEPARATOR_LABE
 import {
   addSeparator,
   canPark,
+  moveParkedTo,
   moveSeparator,
   parkCell,
   removeParked,
@@ -166,6 +167,42 @@ describe("parking", () => {
     let s = parkCell(make(running(3), { expanded: 0 }), 1, "wait", NOW);
     s = unparkCell(s, 1);
     expect(s.expanded).toBeNull();
+  });
+
+  // Operator request 2026-09-13: the dock is drag-ordered, so the array is the order — a fresh
+  // park goes on top (what the old newest-first sort showed) and a hand-placed card stays put.
+  it("puts a newly parked pane at the front of the dock", () => {
+    let s = parkCell(make(running(3)), 0, "a", NOW);
+    s = parkCell(s, 1, "b", NOW + 1);
+    s = parkCell(s, 2, "c", NOW + 2);
+    expect(s.parked?.map((p) => p.cell.uid)).toEqual([2, 1, 0]);
+  });
+
+  it("moves a card to another's place, splicing rather than swapping", () => {
+    let s = parkCell(make(running(3)), 0, "a", NOW);
+    s = parkCell(s, 1, "b", NOW + 1);
+    s = parkCell(s, 2, "c", NOW + 2);
+    // [2, 1, 0] — drag the bottom card to the top.
+    s = moveParkedTo(s, 0, 2);
+    expect(s.parked?.map((p) => p.cell.uid)).toEqual([0, 2, 1]);
+    // And back down one place.
+    s = moveParkedTo(s, 0, 2);
+    expect(s.parked?.map((p) => p.cell.uid)).toEqual([2, 0, 1]);
+    // A card onto itself, an unknown uid, or a grid cell's uid: no move, same object.
+    expect(moveParkedTo(s, 0, 0)).toBe(s);
+    expect(moveParkedTo(s, 0, 9)).toBe(s);
+    expect(moveParkedTo(make(running(2)), 0, 1)).toEqual(make(running(2)));
+  });
+
+  it("keeps the hand-placed order when a pane comes back or is dropped", () => {
+    let s = parkCell(make(running(3)), 0, "a", NOW);
+    s = parkCell(s, 1, "b", NOW + 1);
+    s = parkCell(s, 2, "c", NOW + 2);
+    s = moveParkedTo(s, 0, 2); // [0, 2, 1]
+    s = unparkCell(s, 2);
+    expect(s.parked?.map((p) => p.cell.uid)).toEqual([0, 1]);
+    s = removeParked(s, 0);
+    expect(s.parked?.map((p) => p.cell.uid)).toEqual([1]);
   });
 
   it("edits and drops a dock entry", () => {
