@@ -58,10 +58,15 @@ auto では並びがページ境界を跨ぐ（`orderGrid` はグリッド全体
 
 1. 子が `pagesPayload(state)` を作り、`<親キー>::home:<ws>` に書く
 2. 子は**自分のキーを消さない**（親が取り込んでから消す。取り込み失敗でページが消えるのを防ぐ）
-3. `suppressNextUnloadGuard()` → `window.close()`。閉じられなかった場合に備えて
-   「戻しました」表示に切り替え、以降 persist を止める
-4. 親は `storage` イベント（同一オリジンの他ウィンドウにだけ飛ぶ＝自分の書き込みは届かない仕様）で
-   帰宅便に気づき、`reattachPages` で取り込む → 帰宅便・子のキー・台帳エントリを消す
+3. 子は**閉じずに待つ**（persist は止める）。親は取り込んだときに**子のキーを消す**ので、それが応答になる。
+   子は自分のキーが消えた `storage` イベントで初めて `suppressNextUnloadGuard()` → `window.close()`
+   - 🔴 「頼んだ時点で閉じる」は不可。親が閉じている／別画面／満杯だと誰も受け取らず、
+     ソケットだけ落ちてサーバーの回収タイマー（idle 30秒）が走り出す
+   - 4秒応答が無ければ諦めて元の状態に戻す（ページもセッションもそのまま・書き置きは残す）。
+     親は次にグリッドを開いたときに起動時スキャンで拾う
+4. 親は `storage` イベント（同一オリジンの他ウィンドウにだけ飛ぶ＝自分の書き込みは届かない仕様）で気づき、
+   **子の保存済みグリッド**（書き置きはフォールバック）を `reattachPages` で取り込む
+   → 帰宅便・子のキー・台帳エントリを消す
 5. 親が閉じていた場合は次回起動時のスキャンで同じ経路を通る（孤児の回収と同じ口）
 
 ### 3. 呼び戻し（親のゴーストタブをクリック）
@@ -77,7 +82,8 @@ auto では並びがページ境界を跨ぐ（`orderGrid` はグリッド全体
 `gridTabs.ts` 側の変更は `GridState.origin` の型と parse だけ。
 
 - `canDetachPage(state, page)` — 2ページ以上 / 範囲内 / 走っているセルが1つ以上 / 自分が子でない /
-  そのページに実行中の command セルがない（command は永続化されない＝運べない）
+  そのページに**占有しているのに session id が無い列**がない（実行中の command、起動直後の launcher、
+  fork 待ちの列。運べないうえ、黙って捨てると両方の窓から消える）
 - `detachPage(state, page)` → `{ parent, payload, uids } | null`
 - `pagesPayload(state)` → `PagePayload[]`（中身のあるページだけ）
 - `reattachPage(state, payload)` → `GridState | null`、`reattachPages(state, payloads)` → `{ state, rejected }`
@@ -118,7 +124,7 @@ auto では並びがページ境界を跨ぐ（`orderGrid` はグリッド全体
 
 ## テスト（`test/src/components/gridDetach.spec.ts`）
 
-- `canDetachPage`: 1ページだけ / 空ページ / 子ウィンドウ / command セル在中 → 拒否
+- `canDetachPage`: 1ページだけ / 空ページ / 子ウィンドウ / command セル在中 / 起動中（session 未発行）の列在中 → 拒否
 - `detachPage`: 荷物の中身、親からの消滅、**後続ページのラベル・アカウントがずれない**（meta を splice する）、
   ズーム解除、跨いだ親子リンクの切断
 - 荷物 → JSON → `parseGridState` の往復（子が実際に通る経路）で account / name / width が生き残る
@@ -127,6 +133,13 @@ auto では並びがページ境界を跨ぐ（`orderGrid` はグリッド全体
 - ws 名: 日本語ラベル → `page2`、衝突 → `-2`、32文字上限
 - 台帳・帰宅便の parse: 壊れた JSON・知らない ws → 落とす（グリッドは壊さない）
 - 往復: detach → reattach で session の集合が同じ
+
+## レビューで変わった点（2026-09-14 実装後）
+
+- 「戻す」を**受け取り確認待ち**に変更（上の 2-3）。頼んだ時点で閉じるとセッションが回収されうる
+- 取り込む中身は**子の保存済みグリッド優先**（書き置きはフォールバック）
+- 占有しているが session id が無い列があるページは切り離し拒否
+- 再結合前に元の窓の開きっぱなしの起動フォームを捨てる（`gridTabs.dropTrailingLaunch` に集約）
 
 ## 関連して見つかった既存のバグ
 
