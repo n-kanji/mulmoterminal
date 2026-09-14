@@ -965,7 +965,7 @@ function configureAppearance() {
            26px of pane reading area. Same gestures as before — click switch, double-click
            rename, right-click pin. Hidden while zoomed (`page` is unused there). -->
       <template #tabs>
-        <nav v-if="expandedUid === null" class="flex flex-none items-center gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Grid tabs">
+        <nav v-if="expandedUid === null && !wentHome" class="flex flex-none items-center gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Grid tabs">
           <template v-for="p in pages" :key="p">
             <input
               v-if="renamingPage === p - 1"

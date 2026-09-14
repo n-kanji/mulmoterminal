@@ -98,7 +98,9 @@ interface Ctx {
   detached: Ref<DetachedPage[]>;
   wentHome: Ref<boolean>;
   say: (text: string) => void;
-  setRegister: (list: DetachedPage[]) => void;
+  /** Returns false when storage refused the write — the register is the ONLY record that a
+   *  `grid_v2:<ws>` belongs to this window, so a detach that cannot write it must not happen. */
+  setRegister: (list: DetachedPage[]) => boolean;
   onVacate: (uids: number[]) => void;
 }
 
@@ -114,7 +116,13 @@ function detachInto(ctx: Ctx, page: number): void {
   const label = pageLabel(ctx.state.value, page);
   if (!write(childKey, JSON.stringify(moved.child))) return ctx.say("ブラウザの保存領域に書けませんでした");
   const register = addDetached(ctx.detached.value, { ws, label, at: Date.now() });
-  ctx.setRegister(register);
+  if (!ctx.setRegister(register)) {
+    // Without the register entry the page would have no ghost tab AND no way to be recognised
+    // when it asks to come home. Better not to move it at all.
+    drop(childKey);
+    ctx.setRegister(removeDetached(register, ws));
+    return ctx.say("ブラウザの保存領域に書けませんでした");
+  }
   const before = ctx.state.value;
   // The page must LEAVE this grid before the other window attaches: one socket per session.
   ctx.state.value = moved.parent;
@@ -234,8 +242,11 @@ export function useDetachedPages(state: Ref<GridState>, stateKey: string, worksp
     },
     setRegister: (list: DetachedPage[]) => {
       detached.value = list;
-      if (list.length) write(detachedKeyFor(stateKey), JSON.stringify(list));
-      else drop(detachedKeyFor(stateKey));
+      if (!list.length) {
+        drop(detachedKeyFor(stateKey));
+        return true;
+      }
+      return write(detachedKeyFor(stateKey), JSON.stringify(list));
     },
   };
 

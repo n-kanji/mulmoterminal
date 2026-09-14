@@ -12,6 +12,14 @@ export interface Publisher {
   publish(channel: string, data: unknown): void;
 }
 
+// Which ONE subscriber an action goes to: a tab the operator is looking at, if any; otherwise
+// the first one, which is all there was before tabs reported themselves. Pure, so the rule can
+// be tested without a socket server — it decides where an agent's column appears.
+export function pickOneSubscriber(room: readonly string[], hidden: ReadonlySet<string>): string | null {
+  if (room.length === 0) return null;
+  return room.find((id) => !hidden.has(id)) ?? room[0];
+}
+
 export function createPubSub(server: HttpServer, isAllowedOrigin: (origin: string | undefined, remoteAddress: string | undefined) => boolean = () => true) {
   const io = new IOServer(server, {
     path: "/ws/pubsub",
@@ -29,6 +37,12 @@ export function createPubSub(server: HttpServer, isAllowedOrigin: (origin: strin
     },
   });
 
+  // Which tabs are actually in front of someone (operator report 2026-09-14). A tab reports
+  // its own document.visibilityState on connect and whenever it changes; publishToOne uses it
+  // to pick a window the operator can SEE. Sockets default to visible: a client that never
+  // reports is a client that behaves the way every client behaved before this existed.
+  const hidden = new Set<string>();
+
   io.on("connection", (socket) => {
     socket.on("subscribe", (channel) => {
       if (typeof channel === "string") socket.join(channel);
@@ -36,6 +50,11 @@ export function createPubSub(server: HttpServer, isAllowedOrigin: (origin: strin
     socket.on("unsubscribe", (channel) => {
       if (typeof channel === "string") socket.leave(channel);
     });
+    socket.on("presence", (state) => {
+      if (state === "hidden") hidden.add(socket.id);
+      else if (state === "visible") hidden.delete(socket.id);
+    });
+    socket.on("disconnect", () => hidden.delete(socket.id));
   });
 
   return {
@@ -56,10 +75,19 @@ export function createPubSub(server: HttpServer, isAllowedOrigin: (origin: strin
     // reacting twice costs nothing. A message that asks for an ACTION is the opposite: with
     // two MulmoTerminal tabs open, a broadcast would have each of them open a terminal, so
     // one tap on the phone spawns as many PTYs as there are tabs.
+    // Which ONE gets it: a tab the operator is looking at, if any.
+    //
+    // It used to be whichever socket the room happened to list first, which is insertion
+    // order — so a MulmoTerminal left open in a background window (or a browser some other
+    // tool drove) collected every column an agent asked for, and the operator watched nothing
+    // appear in the window in front of them. "It opened SOMEWHERE" is the worst outcome here:
+    // the session starts, the work happens, and there is no sign of it.
     publishToOne(channel: string, data: unknown): boolean {
-      const [first] = io.sockets.adapter.rooms.get(channel) ?? [];
-      if (!first) return false;
-      io.to(first).emit("data", { channel, data });
+      const room = [...(io.sockets.adapter.rooms.get(channel) ?? [])];
+      const target = pickOneSubscriber(room, hidden);
+      if (target === null) return false;
+      if (room.length > 1) console.log(`[pubsub] ${channel} -> 1 of ${room.length} subscribers (${hidden.has(target) ? "none visible" : "visible"})`);
+      io.to(target).emit("data", { channel, data });
       return true;
     },
   };

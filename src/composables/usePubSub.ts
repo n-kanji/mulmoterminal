@@ -18,6 +18,15 @@ const listeners = new Map<string, Set<Callback>>();
 const reconnectListeners = new Set<() => void>();
 let hasConnected = false;
 
+// Tell the server whether this tab is in front of anyone (operator report 2026-09-14). A
+// message that asks for an ACTION — open a column, open a terminal — goes to exactly one tab,
+// and without this it went to whichever one the room listed first: a window left open behind
+// everything else would quietly collect every column an agent opened, and the operator saw
+// nothing appear in front of them.
+function reportPresence(sock: Socket): void {
+  if (sock.connected) sock.emit("presence", document.visibilityState === "hidden" ? "hidden" : "visible");
+}
+
 function connect(): Socket {
   if (socket) return socket;
 
@@ -26,6 +35,7 @@ function connect(): Socket {
   // Re-emit every live subscription so rooms survive a reconnect.
   sock.on("connect", () => {
     for (const channel of listeners.keys()) sock.emit("subscribe", channel);
+    reportPresence(sock);
     if (hasConnected) for (const cb of reconnectListeners) cb();
     hasConnected = true;
   });
@@ -35,6 +45,7 @@ function connect(): Socket {
     if (cbs) for (const handler of cbs) handler(msg.data);
   });
 
+  document.addEventListener("visibilitychange", () => reportPresence(sock));
   socket = sock;
   return sock;
 }
