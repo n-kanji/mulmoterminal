@@ -138,6 +138,16 @@ describe("parking", () => {
     expect(parkCell(s0, 5, "x", NOW)).toBe(s0);
   });
 
+  // A pane holds the claude.ai login it launched on for life and re-states it on every
+  // reconnect, so a park that dropped it would bring the pane back on the DEFAULT login
+  // (2026-09-14). Its width and its parent link are the operator's own arrangement.
+  it("keeps the pane's account, width and parent link on the shelf", () => {
+    const s0 = make([cell(0, U(0)), { ...cell(1, U(1), "/p"), account: "b@orosy.co.jp", width: 2, parent: 0 }]);
+    const parked = parkCell(s0, 1, "wait", NOW).parked?.[0].cell;
+    expect(parked).toMatchObject({ account: "b@orosy.co.jp", width: 2, parent: 0 });
+    expect(unparkCell(parkCell(s0, 1, "wait", NOW), 1).cells.find((c) => c.uid === 1)).toMatchObject({ account: "b@orosy.co.jp", width: 2 });
+  });
+
   it("parking the last pane leaves the entry cell, like closing does", () => {
     const s = parkCell(make(running(1)), 0, "later", NOW);
     expect(s.cells).toHaveLength(1);

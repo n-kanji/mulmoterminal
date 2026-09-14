@@ -97,7 +97,22 @@ export function parkCell(state: GridState, uid: number, note: string, now: numbe
   if (!canPark(cell) || !cell) return state;
   const next = closeCell(state, uid, order);
   const trimmed = parkNote(note);
-  const kept: Cell = { uid: cell.uid, session: cell.session, cwd: cell.cwd, launcher: cell.launcher ?? undefined, agent: cell.agent, name: cell.name };
+  // Everything the cell IS travels with it. `account` especially (2026-09-14): a pane holds the
+  // claude.ai login it launched on for life and re-states it on every reconnect, so a park that
+  // dropped it would bring the pane back on the default login. `width` and `parent` are the
+  // operator's own arrangement, and asParked already reads all three back off disk — this was
+  // the only place they were being thrown away.
+  const kept: Cell = {
+    uid: cell.uid,
+    session: cell.session,
+    cwd: cell.cwd,
+    launcher: cell.launcher ?? undefined,
+    agent: cell.agent,
+    name: cell.name,
+    width: cell.width,
+    account: cell.account,
+    parent: cell.parent,
+  };
   if (trimmed) kept.parkNote = trimmed;
   return { ...next, parked: [{ cell: kept, note: trimmed, at: now }, ...parkedOf(next)] };
 }
