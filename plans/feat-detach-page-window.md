@@ -1,40 +1,135 @@
-# ページを別ウィンドウに切り離す（CEO 要望 2026-09-14・未着手）
+# ページを別ウィンドウに切り離す（CEO 要望 2026-09-14）— v2 実装設計
 
 > Chrome のタブのように、2枚目を独立ウィンドウとして取り出して**1枚目と同時に見たい**。
-> 不要になったら1枚目にくっつけて元に戻す。
+> 不要になったら1枚目にくっつけて元に戻す。セッション（claude プロセス）は切り離し・再結合を通じて生き続ける。
 
-## できる。土台はもうある
+v1（着手前のスケッチ）はこのファイルの git 履歴。以下が着手用に詰めた版。
 
-`?ws=<name>`（gridTabs.ts の `workspaceFromSearch` / `stateKeyFor`）が既に
-「同じサーバー・同じ生きたセッション、保存されるグリッドだけ別」という第2ワークスペースを提供している。
-足りないのは**ページ単位の引っ越し**（切り離しと再結合）だけ。
+## 土台
 
-## 仕組みの案
+`?ws=<name>`（`gridTabs.ts` の `workspaceFromSearch` / `stateKeyFor`）が既に
+「同じサーバー・同じ生きたセッション、保存されるグリッドだけ別」を提供している。
+足りないのは**ページ単位の引っ越し**（切り離し・再結合・孤児の回収）だけ。
 
-**切り離し**（タブのメニューに「別ウィンドウで開く」）
-1. そのページのセル（session / cwd / name / width / account の stamp）とページ meta（ラベル・ピン・アカウント）を抜き出す
-2. 元のワークスペースの state から**取り除く**（必須。両方に残すと同じセッションに2クライアントが張り付き、
-   サーバーは後勝ちで前のソケットを `superseded` で切る＝ペインが片方から消える）
-3. `grid_v2:<新ワークスペース名>` に書いてから `window.open("/terminals?ws=<名前>")`
-4. 新ウィンドウはその state を読み、**同じ session id に再アタッチ**する（サーバー側の PTY は生きているので会話は無傷）
+セッションが生き残る理由: PTY はサーバー側の tmux で、WebSocket が閉じても 30 秒の猶予
+（`server/session/lifecycle.ts` の `REAP_GRACE_MS`）がある。別ウィンドウが同じ session id に
+つなぐと**後勝ち**で前のソケットが `superseded` で切られる（`messageEffect`）。
+だから切り離しは「元のグリッドから取り除く」が必須で、取り除く側が先・つなぐ側が後という順序は
+守らなくてよい（後勝ちが常に新しいウィンドウを勝たせる）。
 
-**再結合**（切り離した側の「1枚目に戻す」）
-1. 親ワークスペースの state を localStorage から読み、こちらのセルを新しいページとして足して書き戻す
-2. 自分のキーを消して `window.close()`
-3. 親ウィンドウは `storage` イベント（同一オリジンの他タブに飛ぶ）で気づいて state を採用する
+## 用語
 
-## 詰めるべき点
+- **親** = 切り離し元のウィンドウ（`grid_v2` または `grid_v2:<ws>`）
+- **子** = 切り離し先のウィンドウ（`grid_v2:<新ws>`、`origin` に親のキーを持つ）
+- **ページ荷物 (PagePayload)** = `{ meta: { label?, account? }, cells: Cell[], separators?: [...] }`
 
-- **`storage` イベントの採用ロジック**: GridView は state を ref で持って書き戻すので、外部書き込みを
-  「採用する／自分の書き込みは無視する」判定が要る（バージョン番号か、書き込み元 ID を state に載せる）
-- **付随物の扱い**: separators / parent-child グループ / parked dock / 列幅。ページに紐づくものは一緒に運び、
-  ページを跨ぐもの（親が別ページにいる子）はリンクを落とす
-- **beforeunload**: 切り離しウィンドウを閉じるとき、中のセッションは生きたまま。閉じる＝破棄ではないことを UI で示す
-- **命名**: ワークスペース名は `WS_NAME_RE`（英数 + `_-`、32 文字）。ページ名が日本語なら `page-2` 等に落とす
-- **孤児**: 切り離したウィンドウを閉じただけだと `grid_v2:<名前>` が残る。次回起動時に「取り残されたページ」を
-  親側に出して戻せるようにする（ParkedDock の隣が自然）
+## データの持ち方（localStorage）
 
-## 規模感
+| キー | 持ち主 | 中身 |
+|---|---|---|
+| `grid_v2` / `grid_v2:<ws>` | 各ウィンドウ | 既存の GridState。**`origin?: string` を1つ追加**（子だけが持つ、親のキー） |
+| `<親キー>::detached` | 親 | 切り離し中ページの台帳 `[{ ws, label, at }]` |
+| `<親キー>::home:<ws>` | 子が書く → 親が読んで消す | 帰宅便 `{ ws, pages: PagePayload[], at }` |
 
-純粋関数（切り離し / 結合）+ localStorage 横断 + storage リスナー + UI（タブメニュー・戻すボタン・孤児の回収）。
-テストは gridTabs の純粋関数に寄せれば厚く書ける。**先に `plans/` をこの粒度で詰めてから着手**すること。
+- `::` 区切りは `grid_v2:<ws>`（ワークスペース名は `WS_NAME_RE` = 英数 + `_-`、32文字）と衝突しない。
+- `origin` は parse 時に `^grid_v2(:<WS_NAME_RE>)?$` で再検証する（blob は手編集可能という既存の前提）。
+- 台帳は親が持つ。`grid_v2:*` を舐めて拾うと、CEO が手で作った `?ws=foo` まで飲み込んでしまう。
+
+## 3つの操作
+
+### 1. 切り離し（親の「別ウィンドウで開く」ボタン）
+
+1. `detachPage(state, page)` が純粋に `{ parent, payload, uids }` を返す
+2. 子の state を組み、`grid_v2:<新ws>` に書く（`origin` = 親のキー）
+3. 台帳 `<親キー>::detached` に `{ ws, label, at }` を追加
+4. 親の state をページを抜いたものに差し替える
+5. `window.open("/terminals?ws=<新ws>", "<新ws>")`（名前付きターゲット = 同じページを二重に開かない）
+6. **null が返ったら（ポップアップブロック）全部ロールバック**して「ブラウザにブロックされました」と出す
+7. 開けたら 5 秒後に親側の `conn.release("cell-<uid>")`（xterm 破棄）。`terminate` は絶対に呼ばない
+   （PTY を殺す）。5 秒待つのは、子がつなぐ前にソケットを閉じると 30 秒の回収猶予が走り出すため
+
+**ws 名**: ページ名が ASCII なら sanitize して使い、日本語等なら `page<N>`。既存キーと衝突したら `-2`, `-3`。
+
+**auto ソート中は切り離せない**（ボタンを disabled、理由をツールチップに出す）。
+auto では並びがページ境界を跨ぐ（`orderGrid` はグリッド全体を並べ替える）ので、
+「画面に見えている2枚目」と `pageSlice(state.cells, 1)` が一致しない。黙って別のセルを運ぶより拒否する。
+
+### 2. 再結合（子の「元のウィンドウに戻す」ボタン）
+
+1. 子が `pagesPayload(state)` を作り、`<親キー>::home:<ws>` に書く
+2. 子は**自分のキーを消さない**（親が取り込んでから消す。取り込み失敗でページが消えるのを防ぐ）
+3. `suppressNextUnloadGuard()` → `window.close()`。閉じられなかった場合に備えて
+   「戻しました」表示に切り替え、以降 persist を止める
+4. 親は `storage` イベント（同一オリジンの他ウィンドウにだけ飛ぶ＝自分の書き込みは届かない仕様）で
+   帰宅便に気づき、`reattachPages` で取り込む → 帰宅便・子のキー・台帳エントリを消す
+5. 親が閉じていた場合は次回起動時のスキャンで同じ経路を通る（孤児の回収と同じ口）
+
+### 3. 呼び戻し（親のゴーストタブをクリック）
+
+親のタブ行に、切り離し中のページを**破線のゴーストタブ**として出す。クリックで:
+`grid_v2:<ws>` を直接読む → `reattachPages` → 子のキー・台帳・帰宅便を消す。
+子のウィンドウが開いていれば、自分のキーが消えた `storage` イベントで「戻しました」表示にして自分を閉じる。
+
+## 純粋関数（新ファイル `src/components/gridDetach.ts`）
+
+`gridBlocks.ts`（separators / parking）と同じ立ち位置。`gridTabs.ts` は既に 1229 行なので、
+同じハウスルール（`state => state`、no-op は同一オブジェクトを返す、セッションに触らない）で兄弟モジュールにする。
+`gridTabs.ts` 側の変更は `GridState.origin` の型と parse だけ。
+
+- `canDetachPage(state, page)` — 2ページ以上 / 範囲内 / 走っているセルが1つ以上 / 自分が子でない /
+  そのページに実行中の command セルがない（command は永続化されない＝運べない）
+- `detachPage(state, page)` → `{ parent, payload, uids } | null`
+- `pagesPayload(state)` → `PagePayload[]`（中身のあるページだけ）
+- `reattachPage(state, payload)` → `GridState | null`、`reattachPages(state, payloads)` → `{ state, rejected }`
+- `freeWorkspaceName(base, taken)` / `sanitizeWorkspaceName`
+- キー・台帳・帰宅便の組み立てと parse（`detachedKey`, `homeKey`, `isHomeKey`, `parseRegistry`, `parseHandoff`）
+
+### 付随物の扱い（運ぶ / 落とす）
+
+| もの | 扱い |
+|---|---|
+| `session` / `cwd` / `name` / `width` / `agent` / `launcher` / `parkNote` | 運ぶ（セルごと） |
+| **`account`（PageMeta と Cell の両方）** | 運ぶ。落とすと別ウィンドウのペインが既定アカウントで起動する |
+| `label` | 運ぶ |
+| `pinned` | 運ばない。1ページに境界は要らない。再結合時に必要なら merge 側が張る |
+| separators | そのセルに付いているものだけ運ぶ |
+| `parent`（親子リンク） | 両方が同じ荷物に乗るときだけ残す。跨いだリンクは落とす（`closeCell` と同じ規則） |
+| parked dock | 運ばない（ワークスペース単位のもの） |
+| `expanded`（ズーム） | 運ばない。親側は運ばれた uid がズーム中なら null に戻す |
+| 起動フォーム / command セル | 運ばない（session が無いものは元々永続化されない） |
+
+### 二重取り込みの防止
+
+親の「呼び戻し」と子の「戻す」が同時に起きると、同じページを2回 merge して
+**1つの session に2つのペイン**ができる。3段で防ぐ:
+1. 帰宅便の取り込みは台帳にその ws が残っているときだけ（消えていれば帰宅便を捨てるだけ）
+2. 取り込み側は先に子のキーを消してから merge する
+3. `reattachPage` は**すでにグリッド（と dock）にいる session id のセルを落とす**
+
+## UI
+
+タブ行（`GridView.vue` の `#tabs` スロット）に足す。右クリックはピン留めで埋まっているのでメニューは作らない。
+
+- 親: `open_in_new` のボタン（アクティブページを切り離す）。`canDetachPage` が false なら disabled + 理由をツールチップ
+- 親: ゴーストタブ（破線）= 切り離し中のページ。クリックで呼び戻し
+- 子: `call_merge` のボタン「元のウィンドウに戻す」。子では切り離しボタンを出さない（孫は作らない）
+
+アイコンは Material Symbols（このリポジトリは絵文字禁止）。
+
+## テスト（`test/src/components/gridDetach.spec.ts`）
+
+- `canDetachPage`: 1ページだけ / 空ページ / 子ウィンドウ / command セル在中 → 拒否
+- `detachPage`: 荷物の中身、親からの消滅、**後続ページのラベル・アカウントがずれない**（meta を splice する）、
+  ズーム解除、跨いだ親子リンクの切断
+- 荷物 → JSON → `parseGridState` の往復（子が実際に通る経路）で account / name / width が生き残る
+- `reattachPage`: 末尾に新ページとして付く / 直前ページを封じる / ラベルとアカウントが戻る /
+  MAX_PAGES・MAX_TERMINALS で拒否 / 既にいる session を落とす / separators の付け替え / uid 衝突なし
+- ws 名: 日本語ラベル → `page2`、衝突 → `-2`、32文字上限
+- 台帳・帰宅便の parse: 壊れた JSON・知らない ws → 落とす（グリッドは壊さない）
+- 往復: detach → reattach で session の集合が同じ
+
+## 関連して見つかった既存のバグ
+
+`gridBlocks.ts` の `parkCell` が、park するときセルの `account` / `width` / `parent` を落としている
+（`asParked` は parse 側でこれらを読むので、保存形式の想定とずれている）。
+park → 復帰したペインが既定アカウントに戻る経路。本件と同じ「付随物を運び忘れる」クラスなので一緒に直す。
