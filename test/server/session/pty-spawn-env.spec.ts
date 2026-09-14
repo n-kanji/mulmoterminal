@@ -8,7 +8,13 @@ vi.mock("node-pty", () => ({ default: { spawn: (...args: unknown[]) => spawn(...
 const scrub = vi.fn();
 vi.mock("../../../server/infra/tmux.js", () => ({
   tmuxAvailable: () => tmuxOn,
-  tmuxNewSessionArgs: (id: string, file: string, args: string[]) => ["new-session", id, file, ...args],
+  tmuxNewSessionArgs: (id: string, file: string, args: string[], _cwd: string, env: Record<string, string> = {}) => [
+    "new-session",
+    id,
+    ...Object.entries(env).map(([k, v]) => `${k}=${v}`),
+    file,
+    ...args,
+  ],
   tmuxScrubEnvNames: (names: readonly string[]) => scrub(names),
 }));
 
@@ -51,13 +57,13 @@ describe("spawnPty — the environment it hands the pty", () => {
 // there is what actually protects it — but the non-tmux path has only this.
 describe("ptySpawn — carries the removal down both paths", () => {
   it("applies it on the direct spawn", () => {
-    ptySpawn("s1", "claude", [], "/tmp", false, ["ANTHROPIC_API_KEY"]);
+    ptySpawn("s1", "claude", [], "/tmp", false, { unset: ["ANTHROPIC_API_KEY"] });
     expect(envOf()).not.toHaveProperty("ANTHROPIC_API_KEY");
   });
 
   it("applies it on the tmux spawn too", () => {
     tmuxOn = true;
-    const result = ptySpawn("s1", "claude", [], "/tmp", true, ["ANTHROPIC_API_KEY"]);
+    const result = ptySpawn("s1", "claude", [], "/tmp", true, { unset: ["ANTHROPIC_API_KEY"] });
     expect(result.tmux).toBe(true);
     expect(envOf()).not.toHaveProperty("ANTHROPIC_API_KEY");
   });
@@ -69,7 +75,7 @@ describe("ptySpawn — carries the removal down both paths", () => {
 describe("ptySpawn — the tmux server's own environment", () => {
   it("scrubs the names from the running server before a provider spawn", () => {
     tmuxOn = true;
-    ptySpawn("s1", "claude", [], "/tmp", true, ["ANTHROPIC_API_KEY"]);
+    ptySpawn("s1", "claude", [], "/tmp", true, { unset: ["ANTHROPIC_API_KEY"] });
     expect(scrub).toHaveBeenCalledWith(["ANTHROPIC_API_KEY"]);
   });
 
@@ -77,5 +83,26 @@ describe("ptySpawn — the tmux server's own environment", () => {
     tmuxOn = true;
     ptySpawn("s1", "claude", [], "/tmp", true);
     expect(scrub).not.toHaveBeenCalled();
+  });
+});
+
+// The account store variable is set for ONE pane. A pane without an account must not pick it
+// up from our own environment (or the tmux server's, which is what the scrub covers).
+describe("ptySpawn — a pane's own environment", () => {
+  it("sets it on the direct spawn", () => {
+    ptySpawn("s1", "claude", [], "/tmp", false, { env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: "/store/b" } });
+    expect(envOf().CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe("/store/b");
+  });
+
+  it("puts it in front of the tmux command as well", () => {
+    tmuxOn = true;
+    ptySpawn("s1", "claude", [], "/tmp", true, { env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: "/store/b" } });
+    const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1];
+    expect(args).toContain("CLAUDE_SECURESTORAGE_CONFIG_DIR=/store/b");
+  });
+
+  it("leaves a pane without one alone", () => {
+    ptySpawn("s1", "claude", [], "/tmp", false);
+    expect(envOf()).not.toHaveProperty("CLAUDE_SECURESTORAGE_CONFIG_DIR");
   });
 });

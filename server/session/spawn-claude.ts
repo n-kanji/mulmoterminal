@@ -21,6 +21,7 @@ import { getProviders } from "../config/config-routes.js";
 import { requireResolution, resolveProvider, type DirModelChoice } from "./provider-env.js";
 import { settingsArgument, mcpConfigArgument, withSettingsCleanup } from "./session-settings.js";
 import { effectiveChoice } from "./launch-choice.js";
+import { STORE_ENV_VAR } from "../backends/claude-account-store.js";
 
 export interface SpawnClaudeOptions {
   // Passed to claude as the first turn, so the session starts working before anyone
@@ -38,6 +39,11 @@ export interface SpawnClaudeOptions {
   // this pane runs as `sessionId` with a copy of that conversation, and the source keeps
   // running untouched wherever it is.
   fork?: boolean;
+  // The per-pane Claude account store (2026-09-14), already resolved by the caller
+  // (backends/claude-account-store.ts) because resolving it touches the Keychain. Empty —
+  // the usual case — runs on whatever login the default slot holds. PROCESS env, never the
+  // settings `env` block: the CLI reads its store before any settings file.
+  accountEnv?: Record<string, string>;
 }
 
 // The provider/model a spawn continues on, when it continues one at all (#584). A fork is the
@@ -75,7 +81,7 @@ export function createClaudeSpawner(deps: SpawnDeps) {
   // a viewer yet (e.g. spawnBackgroundChat) — output just buffers until a client
   // reattaches.
   function spawnClaudePty(sessionId: string, resume: string | null, ws: WebSocket | null, options: SpawnClaudeOptions = {}): PtyEntry {
-    const { initialPrompt, cwd = CLAUDE_CWD, attachGuiMcp = true, draft, launch, fork = false } = options;
+    const { initialPrompt, cwd = CLAUDE_CWD, attachGuiMcp = true, draft, launch, fork = false, accountEnv = {} } = options;
     // attachGuiMcp picks the MCP mode (see buildClaudeArgs): the single view (default)
     // attaches the GUI MCP + --strict-mcp-config (main's classic behavior); the grid's
     // dev terminals attach neither, so the user's + project's MCP servers load normally.
@@ -100,6 +106,11 @@ export function createClaudeSpawner(deps: SpawnDeps) {
       resuming: canResume,
     });
     const resolved = requireResolution(resolveProvider(choice, getProviders(), process.env, sandbox));
+    // A pane with no account of its own must run on the DEFAULT login. It inherits our env
+    // and the tmux server's, so a store name either of them happens to carry is dropped the
+    // same way a provider session drops ANTHROPIC_API_KEY — a set variable cannot be unset
+    // from a settings block, only here.
+    const unset = accountEnv[STORE_ENV_VAR] || !process.env[STORE_ENV_VAR] ? resolved.unset : [...resolved.unset, STORE_ENV_VAR];
     // Remembered so a later resume continues on the backend this session began on, instead
     // of silently moving to the directory's default mid-conversation.
     if (launch) launchChoices.set(sessionId, choice);
@@ -138,8 +149,14 @@ export function createClaudeSpawner(deps: SpawnDeps) {
     const entry = withSettingsCleanup(sessionId, spawnEntry);
 
     function spawnEntry(): PtyEntry {
-      if (sandbox) return spawnSandboxEntry(sessionId, args, cwd, ws, dir.addDirs);
-      const { term, tmux } = ptySpawn(sessionId, deps.claudeBin, args, cwd, true, resolved.unset);
+      if (sandbox) {
+        // The container mounts a credential exported from the DEFAULT Keychain slot, so a
+        // sandbox pane cannot carry a per-page account. Say so rather than run it as the
+        // wrong account silently. (Grid cells pass gui=0, which never sandboxes.)
+        if (Object.keys(accountEnv).length > 0) console.warn(`[sandbox] ${sessionId} runs on the default Claude login — the sandbox has no per-account store.`);
+        return spawnSandboxEntry(sessionId, args, cwd, ws, dir.addDirs);
+      }
+      const { term, tmux } = ptySpawn(sessionId, deps.claudeBin, args, cwd, true, { unset, env: accountEnv });
       console.log(`[pty] spawned claude (pid=${term.pid}${tmux ? " via tmux" : ""}) in ${cwd}`);
       return { term, ws, buffer: EMPTY_REPLAY_TAIL, cwd, tmux, active: false, agent: "claude" };
     }

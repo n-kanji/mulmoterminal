@@ -77,6 +77,10 @@ const props = defineProps<{
   // Parent / child sets (2026-09-08): the family colour and parent name per uid, for the
   // cells that are in one. Decided by GridView against the full list.
   groups?: Record<number, CellGroup>;
+  // The account THIS page starts new panes as (2026-09-14). Only used to decide whether a
+  // pane's own account is worth showing — the stamping happens in GridView, which owns the
+  // pages. Null = the page follows the default login.
+  pageAccount?: string | null;
 }>();
 const emit = defineEmits<{
   // `park` / `separator-*` (2026-08-26): the block line's own controls (id, not uid) and the
@@ -493,6 +497,8 @@ watch(
             :auto-launch="cell.uid === autoLaunchUid"
             :name="cell.name ?? null"
             :park-note="cell.parkNote ?? null"
+            :account="cell.account ?? null"
+            :page-account="pageAccount ?? null"
             :group="groups?.[cell.uid] ?? null"
             :page-targets="pageTargets?.[cell.uid]"
             @rename="(value) => emit('rename', cell.uid, value)"

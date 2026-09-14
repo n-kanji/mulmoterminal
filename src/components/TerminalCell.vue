@@ -119,6 +119,13 @@ const props = defineProps<
     // Parent / child set (2026-09-08): this pane's family colour (a band along the top edge)
     // and, on a child, what to call its parent in the header. Null = not in a set.
     group?: CellGroup | null;
+    // Fork-local (iTerm2 mode, 2026-09-14): the claude.ai account this pane runs as (stamped
+    // from its page when it launched), and what its CURRENT page runs new panes as. They differ
+    // when the page default changed after this pane started, or the pane was dragged in from
+    // another page — and then the pane says which account it is really on, so the toolbar chip
+    // can never quietly describe a pane it does not own. Null = the default login.
+    account?: string | null;
+    pageAccount?: string | null;
   }
 >();
 const emit = defineEmits<
@@ -1044,6 +1051,10 @@ const stripLabel = computed(() => paneStateWord(status.value));
 // pane's first meaningful prompt) answers "what did I ask this pane to do" — the recall the
 // operator actually loses across twenty columns. The AI summary is row 1's last resort.
 const named = computed(() => !!props.name);
+// Shown only when this pane is NOT on what its page would start now — otherwise the chip in
+// the toolbar already says it, and repeating it on every pane is noise.
+const accountOdd = computed(() => (props.account ?? null) !== (props.pageAccount ?? null));
+const accountLabel = computed(() => (props.account ? props.account.split("@")[0] : "default"));
 const stripMain = computed(() => cellMsg.value || props.name || mission.value || aiTitle.value || "—");
 const stripMainTitle = computed(() => [props.name, mission.value && `mission: ${mission.value}`, aiTitle.value].filter(Boolean).join(" — "));
 // Row 2 — what is happening NOW: the LIVE task first (the TodoWrite mirror updates
@@ -1375,6 +1386,16 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
             >
               {{ named ? name : "名前" }}
             </button>
+            <!-- The account this pane actually runs as, when that is not what its page would
+                 start now (2026-09-14). A running pane holds its credentials in-process for
+                 life, so this is a fact about the process, not a control. -->
+            <span
+              v-if="accountOdd"
+              data-testid="cell-account"
+              class="max-w-[12ch] flex-none truncate rounded-[10px] border border-border bg-elevated px-1.5 font-mono text-[10px] leading-[1.6] text-secondary"
+              :title="`このペインのアカウント: ${account ?? '既定のログイン'}（起動時に確定。ページの既定とは別です）`"
+              >{{ accountLabel }}</span
+            >
             <template v-for="chip in cellChips" :key="chip.key">
               <GitBranchChip v-if="chip.builtin === 'git'" :status="gitStatus" :hide-dirty="isWorktreeCell" />
               <button
@@ -1558,6 +1579,7 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
         :codex="agent === 'codex'"
         :launch="launchChoice"
         :fork="forkFrom"
+        :account="account"
         :dir-header-color="dirConfig.headerColor"
         :dir-header-text-color="dirConfig.headerTextColor"
         :dir-button-color="dirConfig.buttonColor"

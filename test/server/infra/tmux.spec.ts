@@ -36,6 +36,31 @@ describe("tmuxNewSessionArgs", () => {
   });
 });
 
+// The per-pane Claude account store (2026-09-14). It has to reach the child as PROCESS env —
+// the CLI resolves its credential store before it reads any settings file — and through
+// /usr/bin/env rather than tmux's own `-e`, which needs tmux 3.2+.
+describe("tmuxNewSessionArgs with a per-pane environment", () => {
+  const args = tmuxNewSessionArgs("id1", "/bin/claude", ["--resume", "x"], "/proj", {
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: "/home/.mulmoterminal/accounts/b@orosy.co.jp",
+  });
+
+  it("runs the program through /usr/bin/env with the assignment before it", () => {
+    const dashdash = args.indexOf("--");
+    expect(args.slice(dashdash + 1)).toEqual([
+      "/usr/bin/env",
+      "CLAUDE_SECURESTORAGE_CONFIG_DIR=/home/.mulmoterminal/accounts/b@orosy.co.jp",
+      "/bin/claude",
+      "--resume",
+      "x",
+    ]);
+  });
+
+  it("leaves an ordinary pane's command exactly as it was", () => {
+    const plain = tmuxNewSessionArgs("id1", "/bin/claude", ["--resume", "x"], "/proj", {});
+    expect(plain.slice(plain.indexOf("--") + 1)).toEqual(["/bin/claude", "--resume", "x"]);
+  });
+});
+
 describe("TMUX_CONF_LINES", () => {
   // Regression: without `mouse on`, tmux's default alternate-scroll turns the wheel into
   // ↑/↓ arrows inside claude — cycling input history instead of scrolling the terminal.

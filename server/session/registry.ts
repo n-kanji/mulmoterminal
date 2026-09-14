@@ -39,6 +39,12 @@ export const knownSessions = new Map<string, KnownSession>(); // id -> { created
 // back to the directory's default, same as one this server never started.
 export const launchChoices = new Map<string, DirModelChoice>(); // id -> { provider, model }
 
+// Which claude.ai account each session was started as, when its page named one (the
+// per-page account, 2026-09-14). Read back when a reconnect arrives without the param —
+// the pane keeps the account it launched on, because that is the account its credentials
+// (and its conversation) belong to. Process-lifetime only, like the launch choice.
+export const launchAccounts = new Map<string, string>(); // id -> email
+
 // Sessions spawned as hidden background workers (spawnBackgroundChat hidden:true).
 // They list normally but never render bold/unread. Process-lifetime only (not
 // persisted) — and tied to `activity`'s lifecycle in reap() so a finished hidden

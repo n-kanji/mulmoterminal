@@ -251,3 +251,26 @@ describe("connWsUrl — endpoint precedence", () => {
     expect([codex.pathname, codex.searchParams.get("fork")]).toEqual(["/ws/codex", null]);
   });
 });
+
+// The per-page Claude account (2026-09-14). Unlike the provider/model pick it rides along on
+// a RESUME too: the pane's page named it, and a conversation continues on the credentials it
+// began on.
+describe("the account query", () => {
+  it("is sent on a fresh session", () => {
+    expect(buildTerminalWsUrl({ host: "h", secure: false, sessionId: null, account: "b@orosy.co.jp" })).toBe("ws://h/ws?account=b%40orosy.co.jp");
+  });
+
+  it("is sent on a resume as well", () => {
+    const url = buildTerminalWsUrl({ host: "h", secure: false, sessionId: "s1", account: "b@orosy.co.jp" });
+    expect(url).toBe("ws://h/ws?session=s1&account=b%40orosy.co.jp");
+  });
+
+  it("is absent for a pane on the default login", () => {
+    expect(buildTerminalWsUrl({ host: "h", secure: false, sessionId: "s1", account: null })).toBe("ws://h/ws?session=s1");
+  });
+
+  it("travels through connWsUrl for a claude cell", () => {
+    const target = { cwd: null, devTerminal: true, command: null, launcher: null, account: "b@orosy.co.jp" };
+    expect(connWsUrl(target, "s1", "h", false)).toBe("ws://h/ws?session=s1&gui=0&account=b%40orosy.co.jp");
+  });
+});

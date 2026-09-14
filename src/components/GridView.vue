@@ -11,6 +11,10 @@ import {
   addCell,
   addCellWithCwd,
   setSession,
+  setPageAccount,
+  stampAccount,
+  pageAccount,
+  pageAccountOfCell,
   setCwd,
   setCellAgent,
   setCellName,
@@ -89,6 +93,7 @@ import type { RunCommand } from "./runCommand";
 import { EMPTY_SESSION_META, isPrPhase, mergeSessionMeta, type PrPhase, type WorkPhase } from "./rosterPhase";
 import { useGridActivity } from "../composables/useGridActivity";
 import { registerNewTerminalHandler, type NewTerminalRequest } from "../composables/useNewTerminal";
+import { registerPageAccountHandler, reportPageAccount } from "../composables/usePageAccount";
 import { registerAgentColumnHandler } from "../composables/useAgentColumn";
 import { registerRevealSessionHandler } from "../composables/useRevealSession";
 import { usePendingScript } from "../composables/usePendingScript";
@@ -402,7 +407,10 @@ function onAddTerminal() {
 const onSession = (uid: number, id: string) => {
   // Fork-local (iTerm2 mode): the quick-launched cell has its session — the one-shot is spent.
   if (uid === quickLaunchUid.value) quickLaunchUid.value = null;
-  state.value = setSession(state.value, uid, id);
+  // 2026-09-14: freeze the account this pane launched on, from ITS page. Done here because
+  // this is the one point every live cell passes through, and because a stamp written any
+  // earlier would describe a cell that had not started a process yet.
+  state.value = stampAccount(setSession(state.value, uid, id), uid, pageAccountOfCell(state.value, uid));
 };
 
 // Fork-local (iTerm2 mode): a preset chip in the permanent strip — one click opens a new
@@ -661,6 +669,33 @@ const detachNewTerminal = () => {
   offNewTerminal?.();
   offNewTerminal = null;
 };
+
+// The account the ACTIVE page starts new panes as (2026-09-14). The toolbar chip is the
+// control, but the pages live here, so the two talk through usePageAccount: this reports what
+// the chip should say, and the applier below is what a pick in that menu does. Only NEW panes
+// move — a running claude holds its credentials in-process for life, which is why the chip
+// says so and a pane on another account labels itself.
+const activePageAccount = computed(() => pageAccount(state.value, state.value.page));
+const activePageName = computed(() => {
+  const label = state.value.pages?.[state.value.page]?.label?.trim();
+  const page = `${state.value.page + 1}枚目`;
+  return label ? `${page}（${label}）` : page;
+});
+let offPageAccount: (() => void) | null = null;
+const detachPageAccount = () => {
+  offPageAccount?.();
+  offPageAccount = null;
+};
+const publishPageAccount = () => reportPageAccount({ account: activePageAccount.value, pageName: activePageName.value });
+watch([activePageAccount, activePageName], publishPageAccount);
+onActivated(() => {
+  offPageAccount = registerPageAccountHandler((email) => {
+    state.value = setPageAccount(state.value, state.value.page, email);
+  });
+  publishPageAccount();
+});
+onDeactivated(detachPageAccount);
+onBeforeUnmount(detachPageAccount);
 onActivated(() => (offNewTerminal = registerNewTerminalHandler(openNewTerminal)));
 onDeactivated(detachNewTerminal);
 onBeforeUnmount(detachNewTerminal);
@@ -944,6 +979,7 @@ function configureAppearance() {
         :open-cwds="openCwds"
         :list-mode="listModeOn"
         :page-targets="pageTargetsByUid"
+        :page-account="activePageAccount"
         @session="onSession"
         @fork="onFork"
         @agent="onAgent"

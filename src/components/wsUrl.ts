@@ -18,6 +18,10 @@ export interface TerminalWsUrlInput {
   cwd?: string | null; // launch in this directory
   devTerminal?: boolean; // grid dev terminal: no GUI MCP (?gui=0)
   launch?: LaunchChoice | null; // picked at launch; absent => the directory's default
+  // The claude.ai account this pane runs as (its page's, stamped at launch). Absent => the
+  // default login. Sent on EVERY connect, resumes included: unlike the provider/model pick
+  // this belongs to the pane, and a conversation continues on the credentials it began on.
+  account?: string | null;
   // Fork-local (iTerm2 mode, R12): open this as a BRANCH of that session id
   // (`--resume <id> --fork-session`) rather than a fresh conversation. Claude only — codex
   // has no equivalent, and CodexWsUrlInput has no such field to set.
@@ -26,7 +30,7 @@ export interface TerminalWsUrlInput {
 
 // The two session-terminal endpoints (/ws for claude, /ws/codex for codex) send the
 // identical session/cwd/gui query, so they share this assembly — only the path differs.
-function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devTerminal, launch, fork }: TerminalWsUrlInput): string {
+function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devTerminal, launch, fork, account }: TerminalWsUrlInput): string {
   const params = new URLSearchParams();
   if (sessionId) params.set("session", sessionId);
   if (cwd) params.set("cwd", cwd);
@@ -38,6 +42,7 @@ function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devT
   // the directory's own provider/model.
   if (launch?.provider) params.set("provider", launch.provider);
   if (launch?.model) params.set("model", launch.model);
+  if (account) params.set("account", account);
   const qs = params.toString();
   const suffix = qs ? `?${qs}` : "";
   const proto = secure ? "wss:" : "ws:";
@@ -123,6 +128,8 @@ export interface ConnTargetUrlInput {
   launch?: LaunchChoice | null;
   // The session this cell branches from, until it has one of its own (see TerminalWsUrlInput).
   fork?: string | null;
+  // The pane's claude.ai account (see TerminalWsUrlInput). Claude cells only.
+  account?: string | null;
 }
 
 // A command cell's endpoint: a script.json entry by index, or a header shell button by id
@@ -149,5 +156,14 @@ export function connWsUrl(target: ConnTargetUrlInput, resumeId: string | null, h
       : buildLaunchWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, launcher: target.launcher.index });
   }
   if (target.codex) return buildCodexWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, devTerminal: target.devTerminal });
-  return buildTerminalWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, devTerminal: target.devTerminal, launch: target.launch, fork: target.fork });
+  return buildTerminalWsUrl({
+    host,
+    secure,
+    sessionId: resumeId,
+    cwd: target.cwd,
+    devTerminal: target.devTerminal,
+    launch: target.launch,
+    fork: target.fork,
+    account: target.account,
+  });
 }

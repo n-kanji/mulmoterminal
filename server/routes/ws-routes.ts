@@ -19,9 +19,11 @@ import { resolveScript } from "../files/scripts.js";
 import { refreshHostKeychainIfExpired, writeSandboxCredentials } from "../infra/sandbox.js";
 import { tmuxHasSession } from "../infra/tmux.js";
 import { launchChoiceFromParams } from "../session/launch-choice.js";
+import { accountFromParams, effectiveAccount } from "../session/launch-account.js";
+import { accountSpawnEnv } from "../backends/claude-account-store.js";
 import { codexSessionsRoot } from "../agents/codex-session.js";
 import { codexRolloutExists } from "../agents/codex-sessions.js";
-import { codexRolloutIds, markDevTerminalSession, ptys } from "../session/registry.js";
+import { codexRolloutIds, launchAccounts, markDevTerminalSession, ptys } from "../session/registry.js";
 import { ForkNotResumableError } from "../agents/claude-args.js";
 import { sandboxWouldRun } from "../session/pty-spawn.js";
 import { handleCommandFrame } from "../session/pty-connection.js";
@@ -344,6 +346,11 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
   // a reattach, where no spawn happens and the running session keeps what it started with.
   const launch = launchChoiceFromParams(url.searchParams);
 
+  // ?account=<email> — which claude.ai account this pane runs as (the per-page account,
+  // 2026-09-14). Unlike the launch choice it survives a resume: the pane's page named the
+  // account, and a conversation has to continue on the credentials it began on.
+  const requestedAccount = accountFromParams(url.searchParams);
+
   // Decide the effective session id BEFORE telling the browser. A requested id
   // is honored only if it can actually be served: a live pty (reattach) or an
   // on-disk transcript (`--resume`). A requested id that's neither — e.g. a cell
@@ -382,18 +389,25 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     ws.send(JSON.stringify({ type: "output", data: `\r\n\x1b[31m[${lost}]\x1b[0m\r\n` }));
   }
 
+  // The account's credential store, resolved (and seeded on first use) before the spawn —
+  // it reads the Keychain, which the synchronous spawn path cannot. A reattach keeps the
+  // account the live process already started on, so it is not resolved again there.
+  const account = effectiveAccount(sessionId, requestedAccount);
+  const accountEnv = live ? {} : await accountSpawnEnv(account);
+  if (account) launchAccounts.set(sessionId, account);
+
   // Before touching the Keychain for a sandbox session, refresh it if the token expired
   // (macOS refreshes into the Keychain, not the file — so an untouched export can be a
   // stale token the container 401s on). No-op unless a sandbox spawn/reattach applies.
   if (live?.sandbox || sandboxWouldRun(attachGuiMcp)) {
     await refreshHostKeychainIfExpired(deps.claudeBin);
-    // Renewal can block for seconds (it drives the host CLI). If the client vanished
-    // during that window the close handlers aren't wired yet, so spawning now would
-    // leak a PTY nobody reaps — bail instead.
-    if (ws.readyState !== ws.OPEN) {
-      console.log(`[ws] client left during credential refresh — abandoning ${sessionId}`);
-      return;
-    }
+  }
+  // Both of the awaits above drive the `security` CLI and can block for seconds. If the
+  // client vanished in that window the close handlers aren't wired yet, so spawning now
+  // would leak a PTY nobody reaps — bail instead.
+  if (ws.readyState !== ws.OPEN) {
+    console.log(`[ws] client left during credential setup — abandoning ${sessionId}`);
+    return;
   }
 
   let entry: PtyEntry;
@@ -403,7 +417,9 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     // rotated since spawn doesn't leave the reattached session stuck at "Not logged in".
     if (live?.sandbox) writeSandboxCredentials(sessionId);
     const initialPrompt = firstTurnFor(sessionId, !!live, fork, resume, attachGuiMcp, cwd, requested);
-    entry = live ? deps.reattachPty(live, ws, sessionId) : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork });
+    entry = live
+      ? deps.reattachPty(live, ws, sessionId)
+      : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork, accountEnv });
   } catch (err) {
     // A failed spawn (claude missing, or node-pty's spawn-helper not executable)
     // must close just this connection — never crash the whole server.

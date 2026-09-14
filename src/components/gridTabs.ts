@@ -1,5 +1,6 @@
 import type { RunCommand } from "./runCommand";
 import { isRecord } from "../../common/isRecord";
+import { claudeAccountEmail } from "../../common/claudeAccountEmail";
 import { paneStateOf, type PaneState, type WaitKind } from "../../common/paneState";
 import { MAX_CELLS } from "./gridLayout";
 import { cellWidth } from "./columnWidth";
@@ -60,6 +61,12 @@ export interface Cell {
   // by setSession the moment the branch has an id of its own, so it can never fork twice.
   // Never persisted — a cell with no session isn't saved at all (parseGridState).
   fork?: string | null;
+  // Fork-local (iTerm2 mode, operator request 2026-09-14): the claude.ai account this pane was
+  // LAUNCHED as, stamped from its page when it started. Kept for the life of the cell and sent
+  // on every reconnect: the account is fixed at process start, so a page whose default changes
+  // never rewrites a running pane, and dragging a pane to another page does not re-login it.
+  // Absent = the default login, which is what every pane was before this existed.
+  account?: string;
   // Fork-local (iTerm2 mode, R1): a RESERVED SLOT, not a terminal. Holes exist only to hold a
   // pinned page's width open — see the "workspaces" section below. They are never rendered,
   // never occupied, and never somewhere to send anyone.
@@ -94,6 +101,10 @@ export function activityStatus(
 export interface PageMeta {
   label?: string;
   pinned?: boolean;
+  // Fork-local (iTerm2 mode, operator request 2026-09-14): the claude.ai account panes started
+  // on THIS page run as — one page on one subscription, another page on the other, at the same
+  // time (server/backends/claude-account-store.ts). Absent = the default login.
+  account?: string;
 }
 
 // Fork-local (iTerm2 mode, operator request 2026-08-26): a named vertical line BETWEEN two
@@ -219,6 +230,15 @@ const withPageMeta = (state: GridState, page: number, patch: PageMeta): GridStat
 export function setPageLabel(state: GridState, page: number, label: string): GridState {
   const trimmed = label.trim().slice(0, MAX_PAGE_LABEL);
   return withPageMeta(state, page, { label: trimmed || undefined });
+}
+
+// What account a page starts its panes as; null when it follows the default login.
+export const pageAccount = (state: GridState, page: number): string | null => state.pages?.[page]?.account ?? null;
+
+// Point a page at an account, or back at the default login (null/empty). Only NEW panes are
+// affected — a running pane holds the credentials it started with, in-process, for life.
+export function setPageAccount(state: GridState, page: number, email: string | null): GridState {
+  return withPageMeta(state, page, { account: accountEmail(email) });
 }
 
 // Seal or unseal a page. Pinning pads every page up to it; unpinning drops the padding it no
@@ -479,6 +499,21 @@ export function setSession(state: GridState, uid: number, id: string | null): Gr
   const cells = state.cells.map((c) => (c.uid === uid ? { ...c, session: id, fork: id === null ? c.fork : null } : c));
   const expanded = id === null && state.expanded === uid ? null : state.expanded;
   return { ...state, cells, expanded };
+}
+
+// Freeze the account a pane launched on (2026-09-14), the moment it reports a session. Only
+// the FIRST stamp counts: the process holds its credentials for life, so a later page-default
+// change — or a drag to another page — must never rewrite what this pane is actually running as.
+export function stampAccount(state: GridState, uid: number, email: string | null): GridState {
+  const account = accountEmail(email);
+  if (!account) return state;
+  return { ...state, cells: state.cells.map((c) => (c.uid === uid && !c.account ? { ...c, account } : c)) };
+}
+
+// The account a cell's OWN page would start a pane as — the one stamped when it launches.
+export function pageAccountOfCell(state: GridState, uid: number): string | null {
+  const at = state.cells.findIndex((c) => c.uid === uid);
+  return at < 0 ? null : pageAccount(state, pageOfIndex(at));
 }
 
 export function setCwd(state: GridState, uid: number, cwd: string): GridState {
@@ -958,10 +993,16 @@ const asPages = (v: unknown): PageMeta[] | undefined => {
   const pages = v.slice(0, MAX_TERMINALS / PAGE_SIZE).map((entry): PageMeta => {
     if (!isRecord(entry)) return {};
     const label = typeof entry.label === "string" ? entry.label.trim().slice(0, MAX_PAGE_LABEL) : "";
-    return { label: label || undefined, pinned: entry.pinned === true || undefined };
+    return { label: label || undefined, pinned: entry.pinned === true || undefined, account: accountEmail(entry.account) };
   });
-  return pages.some((p) => p.label || p.pinned) ? pages : undefined;
+  return pages.some((p) => p.label || p.pinned || p.account) ? pages : undefined;
 };
+
+// A persisted account is re-validated on the way in like every other persisted string: it
+// reaches a Keychain lookup and a directory name on the server, and the blob is hand-editable.
+// Anything that is not an email shape is no account at all — the pane runs on the default
+// login. Shared with the server (common/), which reads the same value off the /ws query.
+export const accountEmail = claudeAccountEmail;
 
 export const separatorLabel = (label: string): string | undefined => label.trim().slice(0, MAX_SEPARATOR_LABEL) || undefined;
 export const parkNote = (note: string): string => note.replace(/\s+/gu, " ").trim().slice(0, MAX_PARK_NOTE);
@@ -1004,6 +1045,7 @@ const asParked = (v: unknown, firstUid: number): ParkedCell[] | undefined => {
         name: typeof c.name === "string" ? cellName(c.name) : undefined,
         parkNote: asParkNote(c.parkNote),
         width: cellWidth(c.width),
+        account: accountEmail(c.account),
       },
       note: typeof entry.note === "string" ? parkNote(entry.note) : "",
       at: typeof entry.at === "number" ? entry.at : 0,
@@ -1051,6 +1093,7 @@ export function parseGridState(raw: string | null): GridState | null {
             name: typeof c.name === "string" ? cellName(c.name) : undefined,
             parkNote: asParkNote(c.parkNote),
             width: cellWidth(c.width),
+            account: accountEmail(c.account),
           },
     );
     // Parent links (2026-09-08) point at persisted uids; re-point them at the renumbered ones

@@ -97,6 +97,9 @@ export interface ConnTarget {
   // Fork-local (iTerm2 mode, R12): the session this cell branches from, until the server
   // names the branch. Claude only, and dropped from the URL once `sessionId` is known.
   fork?: string | null;
+  // Fork-local (iTerm2 mode, 2026-09-14): the claude.ai account this pane runs as — its
+  // page's, stamped when the cell launched. Claude only; absent = the default login.
+  account?: string | null;
 }
 
 // The `terminalSubmit` mapping describes the user's CLAUDE binding, so it only applies to

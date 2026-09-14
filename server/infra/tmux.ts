@@ -200,8 +200,14 @@ export const tmuxSessionName = (id: string): string => `${SESSION_PREFIX}${id}`;
 // it doesn't exist, else ATTACH to the running one (the command is ignored). This one
 // primitive covers both first launch and reattach-after-restart. Returned as the args
 // for pty.spawn("tmux", ...).
-export function tmuxNewSessionArgs(id: string, file: string, args: string[], cwd: string): string[] {
-  return ["-L", SERVER_SOCKET, "-f", CONF_FILE, "new-session", "-A", "-s", tmuxSessionName(id), "-c", cwd, "--", file, ...args];
+// `env` (the per-pane Claude account store, 2026-09-14) is applied by running the command
+// through /usr/bin/env rather than tmux's own `-e`: `-e` needs tmux 3.2+, and this has to
+// hold on whatever tmux the operator's machine came with. Note a session that ALREADY exists
+// is attached, command and all, so the env only ever applies to the spawn that creates it.
+export function tmuxNewSessionArgs(id: string, file: string, args: string[], cwd: string, env: Record<string, string> = {}): string[] {
+  const assignments = Object.entries(env).map(([name, value]) => `${name}=${value}`);
+  const command = assignments.length > 0 ? ["/usr/bin/env", ...assignments, file, ...args] : [file, ...args];
+  return ["-L", SERVER_SOCKET, "-f", CONF_FILE, "new-session", "-A", "-s", tmuxSessionName(id), "-c", cwd, "--", ...command];
 }
 
 // Is a persistent session for this id currently alive in our tmux server?

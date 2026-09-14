@@ -56,7 +56,12 @@ const ToolbarStub = {
   template: '<div class="toolbar-stub" />',
 };
 // The grid, reduced to the cells it is asked to render (their order is what this suite reads).
-const GridStub = { name: "TerminalGrid", props: ["cells", "listRows", "expandedUid", "groups"], emits: ["status", "session"], template: '<div class="grid-stub" />' };
+const GridStub = {
+  name: "TerminalGrid",
+  props: ["cells", "listRows", "expandedUid", "groups"],
+  emits: ["status", "session"],
+  template: '<div class="grid-stub" />',
+};
 
 // Wrapped in <KeepAlive>, as the router mounts it: the grid registers the agent-column opener
 // in `onActivated`, which never fires for a component mounted bare — and an unregistered opener
