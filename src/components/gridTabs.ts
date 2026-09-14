@@ -194,7 +194,7 @@ export const pageSlice = <T>(cells: T[], page: number) => cells.slice(page * PAG
 // (addCellWithCwd) or "+ Terminal" cancel it — including in the case where its fork was
 // refused and the pane is holding the error message meant to be read.
 // A launch cell is what is left: nothing running and nothing asked for.
-const isOccupied = (c: Cell) => !isHole(c) && (c.session !== null || c.command != null || c.launcher != null || c.fork != null);
+export const isOccupied = (c: Cell): boolean => !isHole(c) && (c.session !== null || c.command != null || c.launcher != null || c.fork != null);
 const isLaunchCell = (c: Cell | undefined) => !!c && !isHole(c) && !isOccupied(c);
 export const runningCount = (cells: Cell[]) => cells.filter(isOccupied).length;
 
@@ -332,6 +332,15 @@ function trailingLaunchIndex(state: GridState): number {
   return -1;
 }
 
+// The abandoned trailing launch form, dropped — or the state untouched when there is none, or
+// when the form is the grid's sole entry cell (which is never removed). Every transform that
+// re-pages the list does this first: padding or an append would otherwise strand the form
+// mid-list, where "+ Terminal" can no longer see it to cancel it.
+export function dropTrailingLaunch(state: GridState): GridState {
+  const open = trailingLaunchIndex(state);
+  return open >= 0 && realCells(state.cells).length > 1 ? clampPage({ ...state, ...removeAt(state, open) }) : state;
+}
+
 export const clampPage = (s: GridState): GridState => ({ ...s, page: Math.min(Math.max(0, Math.floor(s.page)), pageCount(s.cells.length) - 1) });
 
 // Always keep at least one cell — the entry launch cell on an otherwise empty grid. On a
@@ -436,8 +445,7 @@ export function addPage(state: GridState): GridState {
   if (pageCount(state.cells.length) >= MAX_PAGES || runningCount(state.cells) >= MAX_TERMINALS) return state;
   // An abandoned trailing launch form belongs to the page being left, and would be stranded
   // mid-list by the padding below — dropped, exactly as switchPage and moveCellToPage drop it.
-  const open = trailingLaunchIndex(state);
-  const trimmed = open >= 0 && realCells(state.cells).length > 1 ? clampPage({ ...state, ...removeAt(state, open) }) : state;
+  const trimmed = dropTrailingLaunch(state);
   const target = pageCount(trimmed.cells.length);
   if (target >= MAX_PAGES) return state;
   const sealed = reserveSlots(withPageMeta(trimmed, target, { pinned: true }));
@@ -456,8 +464,7 @@ export function moveCellToPage(state: GridState, uid: number, targetPage: number
     // re-derived (dropping it can shrink the page count). Then the boundary is sealed (see
     // above), padding every page before it, so the append lands PAST the last page instead
     // of reflowing back onto it.
-    const open = trailingLaunchIndex(state);
-    if (open >= 0 && realCells(state.cells).length > 1) base = clampPage({ ...state, ...removeAt(state, open) });
+    base = dropTrailingLaunch(state);
     targetPage = pageCount(base.cells.length);
     base = reserveSlots(withPageMeta(base, targetPage - 1, { pinned: true }));
   }
@@ -996,9 +1003,7 @@ export function countByStatus(cells: Cell[], statusByUid: Record<number, CellSta
 // doesn't discard the open launch cell or zoom.
 export function switchPage(state: GridState, page: number): GridState {
   if (page === state.page) return state;
-  const open = trailingLaunchIndex(state);
-  const dropped = open >= 0 && realCells(state.cells).length > 1 ? removeAt(state, open) : { cells: state.cells, nextUid: state.nextUid };
-  return clampPage({ ...state, ...dropped, expanded: null, page });
+  return clampPage({ ...dropTrailingLaunch(state), expanded: null, page });
 }
 
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID_RE.test(s);

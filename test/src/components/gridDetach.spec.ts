@@ -5,6 +5,7 @@ import {
   MAX_PAGES,
   PAGE_SIZE,
   STATE_KEY,
+  isHole,
   pageAccount,
   pageCount,
   pageLabel,
@@ -89,6 +90,17 @@ describe("whether a page can be torn off", () => {
   it("refuses a page holding a Run command, whose process cannot be handed over", () => {
     const state = twoPages([live(20), { uid: 21, session: null, cwd: "/tmp", command: { label: "build", index: 0 } as Cell["command"] }]);
     expect(detachBlockedReason(state, 1)).toMatch(/コマンド/);
+  });
+
+  it("refuses a page holding a column that has started but has no session yet", () => {
+    // A fork in flight — or one the server refused, whose pane is holding the message saying so.
+    // It cannot travel (nothing to reattach to) and must not be destroyed either.
+    const forking: Cell = { uid: 21, session: null, cwd: "/tmp", fork: uuid(20) };
+    expect(detachBlockedReason(twoPages([live(20), forking]), 1)).toMatch(/起動中/);
+    // Same for a launcher between its launch and the server's session frame.
+    const starting: Cell = { uid: 21, session: null, cwd: "/tmp", launcher: { shell: true, label: "shell" } };
+    expect(detachBlockedReason(twoPages([live(20), starting]), 1)).toMatch(/起動中/);
+    expect(detachPage(twoPages([live(20), forking]), 1, STATE_KEY)).toBeNull();
   });
 
   it("refuses from a window that is itself a detached page — no grandchildren", () => {
@@ -297,6 +309,18 @@ describe("putting a page back", () => {
     const back = must(reattachPage(home(), { ...luggage(), separators: [{ beforeUid: 21, label: "待ち" }] }));
     const arrived = must(back.cells.find((c) => c.session === uuid(21)));
     expect(back.separators?.map((s) => ({ beforeUid: s.beforeUid, label: s.label }))).toEqual([{ beforeUid: arrived.uid, label: "待ち" }]);
+  });
+});
+
+describe("the page in front of the returning one", () => {
+  it("does not keep an abandoned launch form that '+ Terminal' could no longer cancel", () => {
+    const home: GridState = { cells: [live(0), launch(1)], expanded: null, page: 0, nextUid: 2, sortMode: "manual" };
+    const back = must(reattachPage(home, { meta: {}, cells: [live(20)] }));
+    // The form is gone, exactly as addPage / moveCellToPage / switchPage drop it: left in place
+    // it would sit behind the padding with the arriving column after it, where the trailing-only
+    // rule can no longer see it.
+    expect(back.cells.filter((c) => !isHole(c) && c.session === null)).toHaveLength(0);
+    expect(back.cells.filter((c) => c.session !== null).map((c) => c.session)).toEqual([uuid(0), uuid(20)]);
   });
 });
 

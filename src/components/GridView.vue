@@ -136,6 +136,7 @@ const {
   detached: detachedPages,
   isDetached,
   wentHome,
+  handingOver,
   notice: detachNotice,
   dismissNotice,
   detach: detachActivePage,
@@ -147,9 +148,11 @@ const detachReason = computed(() => blockedReason(state.value.page));
 const detachTitle = computed(() => detachReason.value ?? "このページを別ウィンドウに切り離す（セッションは生きたまま）");
 
 // A window that has handed its page back writes nothing more: the grid it just gave away
-// belongs to the other window now, and one more write would resurrect it here.
+// belongs to the other window now, and one more write would resurrect it here. The same holds
+// from the moment it ASKS to go home — the answer deletes this window's key, and a write
+// landing after that would put an orphan workspace back.
 const persist = () => {
-  if (wentHome.value) return;
+  if (wentHome.value || handingOver.value) return;
   localStorage.setItem(stateKey, JSON.stringify(state.value));
 };
 // Write the migrated state before dropping the legacy key, so a reload between
@@ -1040,12 +1043,15 @@ function configureAppearance() {
             v-if="isDetached"
             type="button"
             data-testid="grid-go-home"
-            class="border border-border bg-base text-muted font-mono text-xs py-[3px] px-2 rounded-md cursor-pointer inline-flex items-center gap-1 hover:bg-hover hover:text-fg"
-            title="このページを元のウィンドウに戻して、このウィンドウを閉じます（セッションは生きたまま）"
+            class="border border-border bg-base text-muted font-mono text-xs py-[3px] px-2 rounded-md inline-flex items-center gap-1 hover:bg-hover hover:text-fg disabled:opacity-40 disabled:cursor-default"
+            :disabled="handingOver"
+            :title="
+              handingOver ? '元のウィンドウの応答を待っています' : 'このページを元のウィンドウに戻して、このウィンドウを閉じます（セッションは生きたまま）'
+            "
             @click="goHome"
           >
             <span class="material-symbols-outlined text-[14px] leading-none">call_merge</span>
-            元に戻す
+            {{ handingOver ? "戻しています…" : "元に戻す" }}
           </button>
           <button
             v-if="detachNotice"

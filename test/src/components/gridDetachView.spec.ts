@@ -217,6 +217,46 @@ describe("bringing a page back", () => {
     w.unmount();
   });
 
+  it("takes the page exactly once when both doors are used at the same time", async () => {
+    outOnLoan();
+    const w = await mountGrid();
+    // The other window asked to come home; before the note is seen, the operator clicks the
+    // ghost tab here. Both doors lead to one merge.
+    const note = JSON.stringify({ ws: "page2", pages: [{ meta: {}, cells: [{ uid: 0, session: id(50), cwd: "/w" }] }], at: 3 });
+    localStorage.setItem("grid_v2::home:page2", note);
+    await ghostTabs(w)[0].trigger("click");
+    await flushPromises();
+    window.dispatchEvent(new StorageEvent("storage", { key: "grid_v2::home:page2", newValue: note }));
+    await flushPromises();
+
+    const sessions = saved("grid_v2")
+      .cells.filter((c: { session: string | null }) => c.session)
+      .map((c: { session: string }) => c.session);
+    expect(sessions.filter((s: string) => s === id(50))).toHaveLength(1);
+    expect(localStorage.getItem("grid_v2::home:page2")).toBeNull();
+    w.unmount();
+  });
+
+  it("refuses to take a page it has no room for, and leaves it where it is", async () => {
+    // Every page full and sealed: there is nowhere for a returning page to land.
+    const full = Array.from({ length: 8 }, (_, p) => ({ page: p })).flatMap(({ page }) =>
+      Array.from({ length: PAGE_SIZE }, (_, i) => ({ uid: page * PAGE_SIZE + i, session: id(100 + page * PAGE_SIZE + i), cwd: "/w" })),
+    );
+    localStorage.setItem("grid_v2", JSON.stringify({ cells: full, page: 0, sortMode: "manual", pages: Array.from({ length: 8 }, () => ({ pinned: true })) }));
+    localStorage.setItem("grid_v2::detached", JSON.stringify([{ ws: "page2", label: "work", at: 1 }]));
+    localStorage.setItem("grid_v2:page2", JSON.stringify({ cells: [{ uid: 0, session: id(50), cwd: "/w" }], page: 0, sortMode: "manual", origin: "grid_v2" }));
+    const w = await mountGrid();
+    await ghostTabs(w)[0].trigger("click");
+    await flushPromises();
+
+    expect(w.text()).toContain("空きがない");
+    // Nothing was thrown away: the page, its window and its ghost tab are all still there.
+    expect(localStorage.getItem("grid_v2:page2")).not.toBeNull();
+    expect(saved("grid_v2::detached")).toHaveLength(1);
+    expect(ghostTabs(w)).toHaveLength(1);
+    w.unmount();
+  });
+
   it("forgets a page whose window was cleared by hand", async () => {
     outOnLoan();
     localStorage.removeItem("grid_v2:page2");
@@ -244,7 +284,7 @@ describe("the window that holds a torn-off page", () => {
     w.unmount();
   });
 
-  it("leaves the page for the other window, closes, and writes nothing more", async () => {
+  it("asks to be taken back, and waits — it does not close on the strength of having asked", async () => {
     asDetachedWindow();
     const w = await mountGrid();
     await w.find("[data-testid='grid-go-home']").trigger("click");
@@ -254,38 +294,67 @@ describe("the window that holds a torn-off page", () => {
     expect(note.ws).toBe("page2");
     expect(note.pages[0].cells[0].session).toBe(id(50));
     expect(note.pages[0].meta.label).toBe("work");
-    expect(closed).toBe(1);
-    // Its own grid is left in place: a note the other window never takes must still be findable.
+    // Still here, still on its sessions: closing now would drop the sockets of a page nobody
+    // has picked up, and the server would start reaping them.
+    expect(closed).toBe(0);
+    expect(w.findComponent(GridStub).exists()).toBe(true);
+    expect(w.find("[data-testid='grid-go-home']").attributes("disabled")).toBeDefined();
+    expect(w.find("[data-testid='grid-go-home']").text()).toContain("戻しています");
+    // Its own grid is left in place: a request the other window never takes must still be findable.
     expect(localStorage.getItem("grid_v2:page2")).not.toBeNull();
-    // The terminals are gone from this window — it is not on those sessions any more.
+    w.unmount();
+  });
+
+  it("closes once the other window has actually taken the page", async () => {
+    asDetachedWindow();
+    const w = await mountGrid();
+    await w.find("[data-testid='grid-go-home']").trigger("click");
+    await flushPromises();
+    // The answer: the other window merged the page and dropped this window's grid.
+    localStorage.removeItem("grid_v2:page2");
+    window.dispatchEvent(new StorageEvent("storage", { key: "grid_v2:page2", newValue: null }));
+    await flushPromises();
+
+    expect(closed).toBe(1);
     expect(w.findComponent(GridStub).exists()).toBe(false);
     expect(w.text()).toContain("元のウィンドウに戻しました");
-
+    // Nothing to click twice: a second hand-over, or a page opened in a window that is done.
+    expect(w.find("nav[aria-label='Grid tabs']").exists()).toBe(false);
     // …and nothing this window does now can write that grid back.
     localStorage.setItem("grid_v2:page2", "{}");
-    w.findComponent(ToolbarStub); // a render pass
     await flushPromises();
     expect(localStorage.getItem("grid_v2:page2")).toBe("{}");
     w.unmount();
   });
 
-  it("stands down when the other window calls the page back", async () => {
+  it("keeps the page when nobody answers, and says so", async () => {
+    vi.useFakeTimers();
+    try {
+      asDetachedWindow();
+      const w = await mountGrid();
+      await w.find("[data-testid='grid-go-home']").trigger("click");
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(closed).toBe(0);
+      expect(w.findComponent(GridStub).exists()).toBe(true); // still on its sessions
+      expect(w.find("[data-testid='grid-go-home']").attributes("disabled")).toBeUndefined();
+      expect(w.text()).toContain("受け取りませんでした");
+      // The request stays behind, so the other window finds it when it next opens its grid.
+      expect(localStorage.getItem("grid_v2::home:page2")).not.toBeNull();
+      w.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stands down when the other window calls the page back without being asked", async () => {
     asDetachedWindow();
     const w = await mountGrid();
     window.dispatchEvent(new StorageEvent("storage", { key: "grid_v2:page2", newValue: null }));
     await flushPromises();
     expect(closed).toBe(1);
     expect(w.findComponent(GridStub).exists()).toBe(false);
-    w.unmount();
-  });
-
-  it("leaves no page controls behind once it has gone home", async () => {
-    asDetachedWindow();
-    const w = await mountGrid();
-    await w.find("[data-testid='grid-go-home']").trigger("click");
-    await flushPromises();
-    // Nothing to click twice: a second hand-over, or a page opened in a window that is done.
-    expect(w.find("nav[aria-label='Grid tabs']").exists()).toBe(false);
     w.unmount();
   });
 });

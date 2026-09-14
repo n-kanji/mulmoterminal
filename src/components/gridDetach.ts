@@ -21,8 +21,10 @@ import {
   PAGE_SIZE,
   STATE_KEY,
   clampPage,
+  dropTrailingLaunch,
   ensureEntry,
   isHole,
+  isOccupied,
   isPagePinned,
   isStateKey,
   isWorkspaceName,
@@ -151,11 +153,16 @@ export function detachBlockedReason(state: GridState, page: number): string | nu
   if (page < 0 || page >= pageCount(state.cells.length)) return "このページはありません";
   if (pageCount(state.cells.length) < 2) return "ページが1枚しかありません（先に新しいページを作ってください）";
   if (state.sortMode === "auto") return "自動整列中は切り離せません（表示順とページの対応がずれるため）";
-  const slice = pageSlice(state.cells, page);
-  // A Run command's process dies with its cell, so a page holding one cannot be handed over
-  // whole — and quietly leaving it behind would be a page that is not the page the operator saw.
-  if (slice.some((c) => !isHole(c) && c.command != null)) return "実行中のコマンドがあるページは切り離せません";
-  if (realCells(slice).filter(travels).length === 0) return "このページには動いているペインがありません";
+  const slice = realCells(pageSlice(state.cells, page));
+  // A column that is OCCUPIED but has no session id cannot travel, and must not be quietly
+  // destroyed either: a Run command's process dies with its cell, and a pane between its launch
+  // and the server's `session` frame — a fork especially, which may be holding the error message
+  // explaining why it was refused — is a column the operator opened and is waiting on. Wait for
+  // it rather than hand over a page that is not the page they were looking at.
+  const stuck = slice.find((c) => isOccupied(c) && !travels(c));
+  if (stuck?.command != null) return "実行中のコマンドがあるページは切り離せません";
+  if (stuck) return "起動中のペインがあるページは切り離せません（セッションが始まるまで待ってください）";
+  if (slice.filter(travels).length === 0) return "このページには動いているペインがありません";
   return null;
 }
 
@@ -226,7 +233,9 @@ function detachedState(payload: PagePayload, origin: string): GridState {
 export function reattachBlockedReason(state: GridState, payload: PagePayload): string | null {
   const incoming = arrivingCells(state, payload);
   if (incoming.length === 0) return "戻すペインがありません（すでにこのウィンドウにあります）";
-  if (pageCount(state.cells.length) >= MAX_PAGES) return `ページがもう ${MAX_PAGES} 枚あります`;
+  // Counted on the same trimmed grid reattachPage lands on, or a grid whose last page holds
+  // nothing but an abandoned launch form would refuse a page it has room for.
+  if (pageCount(dropTrailingLaunch(state).cells.length) >= MAX_PAGES) return `ページがもう ${MAX_PAGES} 枚あります`;
   if (runningCount(state.cells) + incoming.length > MAX_TERMINALS) return "ペインの上限に達しています";
   return null;
 }
@@ -248,8 +257,11 @@ function arrivingCells(state: GridState, payload: PagePayload): Cell[] {
 export function reattachPage(state: GridState, payload: PagePayload): GridState | null {
   if (reattachBlockedReason(state, payload) !== null) return null;
   const incoming = arrivingCells(state, payload);
-  const target = pageCount(state.cells.length);
-  const sealed = isPagePinned(state, target - 1) ? reserveSlots(state) : togglePagePin(state, target - 1);
+  // Same first step as addPage and moveCellToPage: the padding below would strand an abandoned
+  // launch form mid-list, where "+ Terminal" can no longer see it to cancel.
+  const trimmed = dropTrailingLaunch(state);
+  const target = pageCount(trimmed.cells.length);
+  const sealed = isPagePinned(trimmed, target - 1) ? reserveSlots(trimmed) : togglePagePin(trimmed, target - 1);
   const start = sealed.nextUid;
   const renumber = new Map(incoming.map((c, i) => [c.uid, start + i] as const));
   const cells = incoming.map((c, i) => {
