@@ -1,7 +1,16 @@
 // Per-page Claude accounts in the grid state (operator request 2026-09-14): a page names an
 // account, a pane freezes the one it launched on, and both survive a reload.
 import { describe, it, expect } from "vitest";
-import { pageAccount, pageAccountOfCell, parseGridState, setPageAccount, setSession, stampAccount, PAGE_SIZE, type GridState } from "../../../src/components/gridTabs";
+import {
+  pageAccount,
+  pageAccountOfCell,
+  parseGridState,
+  setPageAccount,
+  setSession,
+  stampAccount,
+  PAGE_SIZE,
+  type GridState,
+} from "../../../src/components/gridTabs";
 
 const cell = (uid: number, session: string | null = null) => ({ uid, session, cwd: "/tmp" });
 const base = (cells = [cell(0)]): GridState => ({ cells, expanded: null, page: 0, nextUid: cells.length, sortMode: "manual" });

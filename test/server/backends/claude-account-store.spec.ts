@@ -4,13 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
 
-import {
-  STORE_ENV_VAR,
-  accountSpawnEnv,
-  accountStoreDir,
-  keychainServiceForDir,
-  type AccountStoreIo,
-} from "../../../server/backends/claude-account-store.js";
+import { STORE_ENV_VAR, accountSpawnEnv, accountStoreDir, keychainServiceForDir, type AccountStoreIo } from "../../../server/backends/claude-account-store.js";
 import { CLAUDE_KEYCHAIN_SERVICE, serviceForEmail } from "../../../server/backends/claude-account.js";
 
 const CLAUDE_JSON = "/home/.claude.json";
@@ -36,7 +30,8 @@ function fakeIo(seed: { keychain?: Record<string, string>; files?: Record<string
 }
 
 const claudeJson = (email: string) => JSON.stringify({ oauthAccount: { emailAddress: email } });
-const snapshotFor = (email: string) => JSON.stringify({ credentials: `creds-${email}`, oauthAccount: { emailAddress: email }, savedAt: "2026-09-01T00:00:00Z" });
+const snapshotFor = (email: string) =>
+  JSON.stringify({ credentials: `creds-${email}`, oauthAccount: { emailAddress: email }, savedAt: "2026-09-01T00:00:00Z" });
 
 describe("the store directory", () => {
   it("is absolute, per account, and stable", () => {
@@ -53,10 +48,14 @@ describe("the store directory", () => {
 // same directory). Pinned as a literal so a refactor of the formula cannot drift silently.
 describe("the Keychain service name", () => {
   it("is the CLI's own derivation: the default entry plus 8 hex of sha256(dir)", () => {
-    const dir = "/tmp/mt-acct-probe";
+    const dir = `${ROOT}/b@orosy.co.jp`;
     const hash = createHash("sha256").update(dir).digest("hex").slice(0, 8);
     expect(keychainServiceForDir(dir)).toBe(`${CLAUDE_KEYCHAIN_SERVICE}-${hash}`);
-    expect(keychainServiceForDir(dir)).toBe("Claude Code-credentials-eb852876");
+    // Pinned, so a refactor of the formula cannot drift silently. Checked against the real
+    // CLI on 2026-09-14: with CLAUDE_SECURESTORAGE_CONFIG_DIR set, claude read the entry at
+    // exactly this name — an empty one answered "Not logged in", and one seeded by hand
+    // answered "OAuth session expired", which only the entry it actually reads can do.
+    expect(keychainServiceForDir(dir)).toBe("Claude Code-credentials-d93a60a1");
   });
 });
 

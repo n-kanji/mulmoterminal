@@ -15,6 +15,7 @@ import type { RunCommand } from "./runCommand";
 import type { PrPhase, WorkPhase } from "./rosterPhase";
 import type { CwdPreset } from "./presets";
 import type { Launcher, LaunchPick } from "./launchers";
+import { cellConnectAccount } from "./cellAccount";
 import { shouldFlipZoom } from "./cellChromeRules";
 import { weightOf, dragWeights, columnKeyDelta } from "./columnWidth";
 import type { CellGroup } from "./cellGroups";
@@ -77,9 +78,12 @@ const props = defineProps<{
   // Parent / child sets (2026-09-08): the family colour and parent name per uid, for the
   // cells that are in one. Decided by GridView against the full list.
   groups?: Record<number, CellGroup>;
-  // The account THIS page starts new panes as (2026-09-14). Only used to decide whether a
-  // pane's own account is worth showing — the stamping happens in GridView, which owns the
-  // pages. Null = the page follows the default login.
+  // The account THIS page starts new panes as (2026-09-14). Two uses, and the difference is
+  // the whole behaviour: a cell that has NOT launched yet connects with it (that is how a page
+  // default reaches a new pane at all), while a cell that already has a session sends only its
+  // own stamp — so a page default set later never moves a conversation that is already running
+  // on other credentials. It also decides whether a pane's own account is worth showing.
+  // Null = the page follows the default login.
   pageAccount?: string | null;
 }>();
 const emit = defineEmits<{
@@ -497,7 +501,7 @@ watch(
             :auto-launch="cell.uid === autoLaunchUid"
             :name="cell.name ?? null"
             :park-note="cell.parkNote ?? null"
-            :account="cell.account ?? null"
+            :account="cellConnectAccount(cell, pageAccount)"
             :page-account="pageAccount ?? null"
             :group="groups?.[cell.uid] ?? null"
             :page-targets="pageTargets?.[cell.uid]"

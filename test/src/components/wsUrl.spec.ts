@@ -257,20 +257,22 @@ describe("connWsUrl — endpoint precedence", () => {
 // began on.
 describe("the account query", () => {
   it("is sent on a fresh session", () => {
-    expect(buildTerminalWsUrl({ host: "h", secure: false, sessionId: null, account: "b@orosy.co.jp" })).toBe("ws://h/ws?account=b%40orosy.co.jp");
+    expect(buildTerminalWsUrl({ host: "localhost:3456", secure: false, sessionId: null, account: "b@orosy.co.jp" })).toBe(
+      "ws://localhost:3456/ws?account=b%40orosy.co.jp",
+    );
   });
 
   it("is sent on a resume as well", () => {
-    const url = buildTerminalWsUrl({ host: "h", secure: false, sessionId: "s1", account: "b@orosy.co.jp" });
-    expect(url).toBe("ws://h/ws?session=s1&account=b%40orosy.co.jp");
+    const url = buildTerminalWsUrl({ host: "localhost:3456", secure: false, sessionId: "s1", account: "b@orosy.co.jp" });
+    expect(url).toBe("ws://localhost:3456/ws?session=s1&account=b%40orosy.co.jp");
   });
 
   it("is absent for a pane on the default login", () => {
-    expect(buildTerminalWsUrl({ host: "h", secure: false, sessionId: "s1", account: null })).toBe("ws://h/ws?session=s1");
+    expect(buildTerminalWsUrl({ host: "localhost:3456", secure: false, sessionId: "s1", account: null })).toBe("ws://localhost:3456/ws?session=s1");
   });
 
   it("travels through connWsUrl for a claude cell", () => {
     const target = { cwd: null, devTerminal: true, command: null, launcher: null, account: "b@orosy.co.jp" };
-    expect(connWsUrl(target, "s1", "h", false)).toBe("ws://h/ws?session=s1&gui=0&account=b%40orosy.co.jp");
+    expect(connWsUrl(target, "s1", "localhost:3456", false)).toBe("ws://localhost:3456/ws?session=s1&gui=0&account=b%40orosy.co.jp");
   });
 });
