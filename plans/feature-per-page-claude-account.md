@@ -78,3 +78,20 @@ The first cut bound the cell's account to its STAMP only, and a launching cell h
 the stamp is written from the server's answer, one round trip too late. Every pane launched on
 the default login while its page said otherwise, invisibly, because the stamp written a moment
 later said the right thing. `cellConnectAccount` is that rule, with a test.
+
+## What the review changed (2026-09-14)
+
+A fresh-context review found three ways a pane could end up on the wrong login, none of them
+visible from the UI. All three are fixed and tested; the shapes are worth keeping in mind for
+anything else that sets a per-pane variable:
+
+1. **The tmux server remembers.** A server created by one spawn keeps that spawn's environment
+   (the repo already had this written down for ANTHROPIC_API_KEY, #579), so the store variable
+   must reach the pane through the new-session command only — never the tmux client's own env —
+   and an account-less spawn has to scrub the name unconditionally.
+2. **~/.claude.json is shared.** `CLAUDE_SECURESTORAGE_CONFIG_DIR` splits the Keychain entry and
+   nothing else: a pane on its own store still writes ITS account into that one shared file on
+   login. So MT records the default account itself, follows the file only when the account it
+   names has no store, and a store that exists always wins.
+3. **Validators feed execFile.** A control character passed `\s`-based checks and was refused
+   deep inside the spawn, which reads as a pane that hangs rather than an error.
