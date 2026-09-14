@@ -101,6 +101,26 @@ describe("tearing a page off into its own window", () => {
     w.unmount();
   });
 
+  it("does not move the page when the register cannot be written", async () => {
+    twoPages();
+    // The register is the only record that a `grid_v2:<ws>` belongs to this window: without it
+    // the page would have no ghost tab and would not be recognised when it asked to come home.
+    const realSet = Storage.prototype.setItem;
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.endsWith("::detached")) throw new Error("quota exceeded");
+      realSet.call(this, key, value);
+    });
+    const w = await mountGrid();
+    await detachButton(w).trigger("click");
+    await flushPromises();
+
+    expect(saved("grid_v2").cells).toHaveLength(PAGE_SIZE + 1); // still here
+    expect(localStorage.getItem("grid_v2:page2")).toBeNull(); // and nothing left behind
+    expect(opened).toEqual([]);
+    spy.mockRestore();
+    w.unmount();
+  });
+
   it("cannot be asked for when there is only one page", async () => {
     localStorage.setItem("grid_v2", JSON.stringify({ cells: sessions(2), page: 0, sortMode: "manual" }));
     const w = await mountGrid();
@@ -256,6 +276,16 @@ describe("the window that holds a torn-off page", () => {
     await flushPromises();
     expect(closed).toBe(1);
     expect(w.findComponent(GridStub).exists()).toBe(false);
+    w.unmount();
+  });
+
+  it("leaves no page controls behind once it has gone home", async () => {
+    asDetachedWindow();
+    const w = await mountGrid();
+    await w.find("[data-testid='grid-go-home']").trigger("click");
+    await flushPromises();
+    // Nothing to click twice: a second hand-over, or a page opened in a window that is done.
+    expect(w.find("nav[aria-label='Grid tabs']").exists()).toBe(false);
     w.unmount();
   });
 });
