@@ -22,6 +22,11 @@ describe("cellConnectAccount", () => {
     expect(cellConnectAccount({ session: SESSION }, "b@orosy.co.jp")).toBeNull();
   });
 
+  // /ws/codex has no claude.ai login to take; the query would read as an identity it has not got.
+  it("never hands a codex cell an account", () => {
+    expect(cellConnectAccount({ session: null, agent: "codex" }, "b@orosy.co.jp")).toBeNull();
+  });
+
   it("is null when nothing names an account", () => {
     expect(cellConnectAccount({ session: null }, null)).toBeNull();
     expect(cellConnectAccount({ session: null }, undefined)).toBeNull();

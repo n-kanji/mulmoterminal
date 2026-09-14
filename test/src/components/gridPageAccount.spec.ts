@@ -58,6 +58,11 @@ describe("the account a pane launched on", () => {
     expect(stampAccount(first, 0, "c@orosy.co.jp").cells[0].account).toBe("b@orosy.co.jp");
   });
 
+  it("is never written onto a codex pane", () => {
+    const cells = [{ uid: 0, session: UUID, cwd: "/tmp", agent: "codex" as const }];
+    expect(stampAccount(base(cells), 0, "b@orosy.co.jp").cells[0].account).toBeUndefined();
+  });
+
   it("is left off when the page follows the default login", () => {
     expect(stampAccount(base(), 0, null).cells[0].account).toBeUndefined();
   });

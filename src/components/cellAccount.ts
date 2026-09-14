@@ -11,7 +11,11 @@
 // Shipped first without the second clause, and every pane launched on the default login
 // while its page said otherwise — invisibly, because the stamp written a moment later said
 // the right thing.
-export function cellConnectAccount(cell: { session: string | null; account?: string }, pageAccount: string | null | undefined): string | null {
+// A codex cell is never in this: the account is a claude.ai login, and /ws/codex has no use
+// for one — sending it would put another vendor's session on a query that reads as an
+// identity it does not have.
+export function cellConnectAccount(cell: { session: string | null; account?: string; agent?: "codex" }, pageAccount: string | null | undefined): string | null {
+  if (cell.agent === "codex") return null;
   if (cell.account) return cell.account;
   return cell.session ? null : (pageAccount ?? null);
 }

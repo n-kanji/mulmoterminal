@@ -325,6 +325,20 @@ function startCodexEntry(
   return deps.spawnCodexPty(sessionId, ws, resumeRolloutId, cwd, attachGuiMcp, null); // interactive: no seed
 }
 
+// The account's credential store for a spawn, resolved (and seeded on first use) before it —
+// it reads the Keychain, which the synchronous spawn path cannot.
+//
+// A REATTACH gets nothing: the running process already holds its token, and the socket asking
+// may be a different cell (another page, another workspace) — letting that rewrite the record
+// would move the session's next cold resume onto an account it has never run on.
+async function accountEnvForSpawn(sessionId: string, requested: string | null, live: boolean): Promise<Record<string, string>> {
+  if (live) return {};
+  const account = effectiveAccount(sessionId, requested);
+  const env = await accountSpawnEnv(account);
+  if (account) launchAccounts.set(sessionId, account);
+  return env;
+}
+
 async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { url?: string; headers?: unknown }) {
   // ?session=<id> resumes an existing conversation; absent => fresh session. For
   // new sessions we generate the id ourselves (--session-id) so the server always
@@ -392,9 +406,7 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
   // The account's credential store, resolved (and seeded on first use) before the spawn —
   // it reads the Keychain, which the synchronous spawn path cannot. A reattach keeps the
   // account the live process already started on, so it is not resolved again there.
-  const account = effectiveAccount(sessionId, requestedAccount);
-  const accountEnv = live ? {} : await accountSpawnEnv(account);
-  if (account) launchAccounts.set(sessionId, account);
+  const accountEnv = await accountEnvForSpawn(sessionId, requestedAccount, !!live);
 
   // Before touching the Keychain for a sandbox session, refresh it if the token expired
   // (macOS refreshes into the Keychain, not the file — so an untouched export can be a

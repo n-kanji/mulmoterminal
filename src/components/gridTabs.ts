@@ -507,7 +507,9 @@ export function setSession(state: GridState, uid: number, id: string | null): Gr
 export function stampAccount(state: GridState, uid: number, email: string | null): GridState {
   const account = accountEmail(email);
   if (!account) return state;
-  return { ...state, cells: state.cells.map((c) => (c.uid === uid && !c.account ? { ...c, account } : c)) };
+  // A codex pane runs on nothing this names, so stamping one would have it claim a claude.ai
+  // login in the status strip the day its page's account changes.
+  return { ...state, cells: state.cells.map((c) => (c.uid === uid && !c.account && c.agent !== "codex" ? { ...c, account } : c)) };
 }
 
 // The account a cell's OWN page would start a pane as — the one stamped when it launches.

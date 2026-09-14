@@ -41,6 +41,9 @@ describe("the store directory", () => {
 
   it("cannot escape its root, whatever the address says", () => {
     expect(accountStoreDir("../../etc/passwd@x.co", ROOT)).toBe(`${ROOT}/.._.._etc_passwd@x.co`);
+    // "." and ".." pass the character filter and would name the root and its PARENT.
+    expect(accountStoreDir("..", ROOT)).toBe(`${ROOT}/_`);
+    expect(accountStoreDir(".", ROOT)).toBe(`${ROOT}/_`);
   });
 });
 

@@ -49,7 +49,11 @@ export const accountStoreRoot = (): string => path.join(os.homedir(), ".mulmoter
 // entry, i.e. a pane that is silently logged out.
 export function accountStoreDir(email: string, root: string = accountStoreRoot()): string {
   const slug = normalizeEmail(email).replace(/[^a-z0-9._@+-]+/g, "_");
-  return path.resolve(root, slug).normalize("NFC");
+  // "." and ".." survive the character filter (both are legal in the local part) and would
+  // resolve to the root itself or its PARENT. Callers only ever pass a validated address, in
+  // which neither can stand alone — this is the belt for the day one does.
+  const safe = slug === "." || slug === ".." || slug === "" ? "_" : slug;
+  return path.resolve(root, safe).normalize("NFC");
 }
 
 // The Keychain service Claude Code will read and write for a session pointed at `dir`.
