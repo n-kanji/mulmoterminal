@@ -12,6 +12,8 @@ import {
   addCellWithCwd,
   setSession,
   setPageAccount,
+  addPage,
+  MAX_PAGES,
   stampAccount,
   pageAccount,
   pageOfIndex,
@@ -618,6 +620,10 @@ const pageTargetsByUid = computed(() => {
   return map;
 });
 const toggleSortMode = () => (state.value = setSortMode(state.value, state.value.sortMode === "auto" ? "manual" : "auto"));
+// A page of one's own (operator request 2026-09-14): per-page accounts gave pages a reason to be
+// opened deliberately, and the only way to make one was a column's "N枚目（新規）" menu.
+const onAddPage = () => (state.value = addPage(state.value));
+const canAddPage = computed(() => pages.value < MAX_PAGES);
 const switchTo = (page: number) => (state.value = switchPage(state.value, page));
 
 // Fork-local (iTerm2 mode, R1): the tab row is the WHOLE workspace UI. Naming and pinning are
@@ -934,7 +940,7 @@ function configureAppearance() {
            26px of pane reading area. Same gestures as before — click switch, double-click
            rename, right-click pin. Hidden while zoomed (`page` is unused there). -->
       <template #tabs>
-        <nav v-if="pages > 1 && expandedUid === null" class="flex flex-none items-center gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Grid tabs">
+        <nav v-if="expandedUid === null" class="flex flex-none items-center gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Grid tabs">
           <template v-for="p in pages" :key="p">
             <input
               v-if="renamingPage === p - 1"
@@ -960,6 +966,20 @@ function configureAppearance() {
               {{ pageLabel(state, p - 1) }}
             </button>
           </template>
+          <!-- Open a page on purpose. It arrives sealed and with a launch form on it, ready to
+               be given its own Claude account from the chip — the reason pages became something
+               to reach for rather than a thing that happened at twelve columns. -->
+          <button
+            v-if="canAddPage"
+            type="button"
+            data-testid="grid-add-page"
+            class="border border-border bg-base text-muted font-mono text-xs py-[3px] px-2 rounded-md cursor-pointer inline-flex items-center hover:bg-hover hover:text-fg"
+            title="新しいページを開く（アカウントをページごとに分けられます）"
+            aria-label="Open a new page"
+            @click="onAddPage"
+          >
+            <span class="material-symbols-outlined text-[14px] leading-none">add</span>
+          </button>
         </nav>
       </template>
     </AppToolbar>

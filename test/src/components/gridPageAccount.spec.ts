@@ -1,7 +1,21 @@
 // Per-page Claude accounts in the grid state (operator request 2026-09-14): a page names an
 // account, a pane freezes the one it launched on, and both survive a reload.
 import { describe, it, expect } from "vitest";
-import { pageAccount, parseGridState, setPageAccount, setSession, stampAccount, type GridState } from "../../../src/components/gridTabs";
+import {
+  addPage,
+  isPagePinned,
+  pageAccount,
+  pageCount,
+  pageSlice,
+  parseGridState,
+  realCells,
+  setPageAccount,
+  setSession,
+  stampAccount,
+  MAX_PAGES,
+  PAGE_SIZE,
+  type GridState,
+} from "../../../src/components/gridTabs";
 
 const cell = (uid: number, session: string | null = null) => ({ uid, session, cwd: "/tmp" });
 const base = (cells = [cell(0)]): GridState => ({ cells, expanded: null, page: 0, nextUid: cells.length, sortMode: "manual" });
@@ -71,5 +85,55 @@ describe("persistence", () => {
     const back = parseGridState(raw);
     expect(back?.cells[0].account).toBeUndefined();
     expect(pageAccount(back as GridState, 0)).toBeNull();
+  });
+});
+
+// A page you open on purpose (operator request 2026-09-14). Before per-page accounts there was
+// nothing to want one FOR, and the only way to make one was to send a column to "N枚目（新規）".
+describe("opening a page", () => {
+  const busy = (n: number) => Array.from({ length: n }, (_, i) => ({ uid: i, session: `${i}`.repeat(8), cwd: "/tmp" }));
+
+  it("adds a page, moves to it, and puts a launch form there to start from", () => {
+    const next = addPage(base(busy(2)));
+    expect(pageCount(next.cells.length)).toBe(2);
+    expect(next.page).toBe(1);
+    expect(realCells(pageSlice(next.cells, 1))).toHaveLength(1);
+    expect(realCells(pageSlice(next.cells, 1))[0].session).toBeNull();
+  });
+
+  // Unpinned, an elastic list packs the columns forward and the new page evaporates the moment
+  // it is left — which is exactly when the operator goes off to give it an account.
+  it("seals the boundary so the page survives being left", () => {
+    const next = addPage(base(busy(2)));
+    expect(isPagePinned(next, 1)).toBe(true);
+    // The page before it keeps its full width in reserved slots, which is what stops the two
+    // columns from packing forward and swallowing the new page again.
+    expect(pageSlice(next.cells, 0)).toHaveLength(PAGE_SIZE);
+    expect(realCells(pageSlice(next.cells, 0))).toHaveLength(2);
+  });
+
+  it("keeps the columns that were already there", () => {
+    const next = addPage(base(busy(3)));
+    expect(realCells(next.cells).filter((c) => c.session !== null)).toHaveLength(3);
+  });
+
+  it("stops at the last page rather than losing the request quietly", () => {
+    let state = base(busy(2));
+    for (let i = 1; i < MAX_PAGES; i++) state = addPage(state);
+    expect(pageCount(state.cells.length)).toBe(MAX_PAGES);
+    expect(addPage(state)).toBe(state);
+  });
+
+  // The point of the button: the new page is where another subscription lives.
+  it("is somewhere an account can be named", () => {
+    const next = setPageAccount(addPage(base(busy(2))), 1, "b@orosy.co.jp");
+    expect(pageAccount(next, 1)).toBe("b@orosy.co.jp");
+    expect(pageAccount(next, 0)).toBeNull();
+    expect(pageAccount(parseGridState(JSON.stringify(next)) as GridState, 1)).toBe("b@orosy.co.jp");
+  });
+
+  it("leaves the grid alone when the terminals are all used up", () => {
+    const full = base(busy(PAGE_SIZE * MAX_PAGES));
+    expect(addPage(full)).toBe(full);
   });
 });

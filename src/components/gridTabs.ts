@@ -144,7 +144,8 @@ export interface GridState {
 // Fork-local (iTerm2 mode): a page holds MAX_CELLS full-height columns (see
 // gridLayout.ts) — 12, the operator's requested per-page headroom (2026-08-25).
 export const PAGE_SIZE = MAX_CELLS;
-export const MAX_TERMINALS = PAGE_SIZE * 8; // 8 pages, as before the 10 -> 12 resize
+export const MAX_PAGES = 8;
+export const MAX_TERMINALS = PAGE_SIZE * MAX_PAGES; // 8 pages, as before the 10 -> 12 resize
 // The array can hold more entries than terminals: a pinned page keeps its width with reserved
 // slots (see the workspaces section), so a fully reserved grid is MAX_TERMINALS slots on top of
 // the terminals. Only used to bound what a persisted blob may claim.
@@ -410,6 +411,30 @@ export function canMoveCellToPage(state: GridState, uid: number, targetPage: num
   if (targetPage < 0 || targetPage > total || pageOfIndex(from) === targetPage) return false;
   if (targetPage === total) return runningCount(state.cells) >= 2;
   return !(isReservedPage(state, targetPage) && freeSlot(state, targetPage) < 0);
+}
+
+// Open a page of one's own (operator request 2026-09-14). Until per-page accounts there was no
+// reason to WANT one — pages happened when columns overflowed, and the only way to make one on
+// purpose was to send a column to "N枚目（新規）" from its menu, which nobody finds. Now a page
+// is where a subscription lives, so it needs a button.
+//
+// The new page is PINNED, and so is the one before it: an elastic list packs columns forward, so
+// an unpinned page holding one launch form would evaporate the moment it was left. Pinning is
+// this grid's word for "there is a boundary here" (see moveCellToPage). The page opens with one
+// launch form on it, which is what makes it somewhere to be rather than an empty tab.
+export function addPage(state: GridState): GridState {
+  if (pageCount(state.cells.length) >= MAX_PAGES || runningCount(state.cells) >= MAX_TERMINALS) return state;
+  // An abandoned trailing launch form belongs to the page being left, and would be stranded
+  // mid-list by the padding below — dropped, exactly as switchPage and moveCellToPage drop it.
+  const open = trailingLaunchIndex(state);
+  const trimmed = open >= 0 && realCells(state.cells).length > 1 ? clampPage({ ...state, ...removeAt(state, open) }) : state;
+  const target = pageCount(trimmed.cells.length);
+  if (target >= MAX_PAGES) return state;
+  const sealed = reserveSlots(withPageMeta(trimmed, target, { pinned: true }));
+  const slot = freeSlot(sealed, target);
+  const filled = slot >= 0 ? insertAt(sealed, slot, { uid: sealed.nextUid, session: null, cwd: null }) : null;
+  if (!filled) return state;
+  return { ...sealed, cells: filled, nextUid: sealed.nextUid + 1, page: target, expanded: null };
 }
 
 export function moveCellToPage(state: GridState, uid: number, targetPage: number): GridState {
@@ -986,7 +1011,7 @@ const isCell = (c: unknown): c is Cell => {
 // failing the whole parse: a grid full of live sessions must never be lost over a tab name.
 const asPages = (v: unknown): PageMeta[] | undefined => {
   if (!Array.isArray(v)) return undefined;
-  const pages = v.slice(0, MAX_TERMINALS / PAGE_SIZE).map((entry): PageMeta => {
+  const pages = v.slice(0, MAX_PAGES).map((entry): PageMeta => {
     if (!isRecord(entry)) return {};
     const label = typeof entry.label === "string" ? entry.label.trim().slice(0, MAX_PAGE_LABEL) : "";
     return { label: label || undefined, pinned: entry.pinned === true || undefined, account: accountEmail(entry.account) };
