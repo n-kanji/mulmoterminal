@@ -14,7 +14,7 @@ import {
   setPageAccount,
   stampAccount,
   pageAccount,
-  pageAccountOfCell,
+  pageOfIndex,
   setCwd,
   setCellAgent,
   setCellName,
@@ -196,6 +196,19 @@ const displayCells = computed(() => (zoomedUid(state.value) !== null ? orderedCe
 // they are page structure, not terminals, so they stay in `orderedCells` — where every page
 // calculation reads their index — and are dropped here, letting the surviving columns widen.
 const renderCells = computed(() => realCells(displayCells.value));
+// Which page each cell belongs to for ACCOUNT purposes (2026-09-14), keyed by uid. Read off
+// `orderedCells` — the order the grid is actually laid out in — because that is the only place
+// the answer is true in every mode: the auto sort floats a waiting cell across page boundaries,
+// and a zoomed grid renders every page at once. Driving the connection from one notion of "the
+// page" and the stamp from another is how a pane ends up running as X and labelled Y.
+const pageAccountByUid = computed(() => {
+  const map: Record<number, string> = {};
+  orderedCells.value.forEach((cell, at) => {
+    const account = pageAccount(state.value, pageOfIndex(at));
+    if (account) map[cell.uid] = account;
+  });
+  return map;
+});
 const expandedUid = computed(() => zoomedUid(state.value));
 
 // The zoomed grid's cockpit roster: a text row per cell — status + dir + AI summary +
@@ -410,7 +423,7 @@ const onSession = (uid: number, id: string) => {
   // 2026-09-14: freeze the account this pane launched on, from ITS page. Done here because
   // this is the one point every live cell passes through, and because a stamp written any
   // earlier would describe a cell that had not started a process yet.
-  state.value = stampAccount(setSession(state.value, uid, id), uid, pageAccountOfCell(state.value, uid));
+  state.value = stampAccount(setSession(state.value, uid, id), uid, pageAccountByUid.value[uid] ?? null);
 };
 
 // Fork-local (iTerm2 mode): a preset chip in the permanent strip — one click opens a new
@@ -979,7 +992,7 @@ function configureAppearance() {
         :open-cwds="openCwds"
         :list-mode="listModeOn"
         :page-targets="pageTargetsByUid"
-        :page-account="activePageAccount"
+        :page-accounts="pageAccountByUid"
         @session="onSession"
         @fork="onFork"
         @agent="onAgent"

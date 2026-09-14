@@ -512,12 +512,6 @@ export function stampAccount(state: GridState, uid: number, email: string | null
   return { ...state, cells: state.cells.map((c) => (c.uid === uid && !c.account && c.agent !== "codex" ? { ...c, account } : c)) };
 }
 
-// The account a cell's OWN page would start a pane as — the one stamped when it launches.
-export function pageAccountOfCell(state: GridState, uid: number): string | null {
-  const at = state.cells.findIndex((c) => c.uid === uid);
-  return at < 0 ? null : pageAccount(state, pageOfIndex(at));
-}
-
 export function setCwd(state: GridState, uid: number, cwd: string): GridState {
   return { ...state, cells: state.cells.map((c) => (c.uid === uid ? { ...c, cwd } : c)) };
 }

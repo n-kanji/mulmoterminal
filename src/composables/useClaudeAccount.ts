@@ -35,8 +35,24 @@ function parsePostResult(resOk: boolean, status: number, data: unknown): PostRes
   };
 }
 
+// When MT's own record of the default login and ~/.claude.json disagree about an account that
+// has a store of its own, neither can be believed — see backends/claude-account.ts. The server
+// refuses to move credentials until this is settled, so the chip has to ask.
+export interface DefaultAmbiguity {
+  recorded: string | null;
+  onDisk: string | null;
+}
+
+const asAmbiguity = (v: unknown): DefaultAmbiguity | null => {
+  const record = v as DefaultAmbiguity | null;
+  if (!record || typeof record !== "object") return null;
+  const pick = (x: unknown) => (typeof x === "string" ? x : null);
+  return { recorded: pick(record.recorded), onDisk: pick(record.onDisk) };
+};
+
 export function useClaudeAccount() {
   const current = ref<string | null>(null);
+  const ambiguous = ref<DefaultAmbiguity | null>(null);
   const accounts = ref<ClaudeAccountEntry[]>([]);
   const busy = ref(false);
   const error = ref<string | null>(null);
@@ -51,8 +67,9 @@ export function useClaudeAccount() {
       if (!res.ok) return;
       const data: unknown = await res.json();
       if (typeof data !== "object" || data === null) return;
-      const record = data as { current?: unknown; accounts?: unknown };
+      const record = data as { current?: unknown; accounts?: unknown; ambiguous?: unknown };
       current.value = typeof record.current === "string" ? record.current : null;
+      ambiguous.value = asAmbiguity(record.ambiguous);
       accounts.value = Array.isArray(record.accounts) ? record.accounts.filter((a): a is ClaudeAccountEntry => typeof a?.email === "string") : [];
     } catch {
       // best-effort — a blank chip is fine
@@ -75,29 +92,34 @@ export function useClaudeAccount() {
     }
   }
 
-  async function switchTo(email: string, restartPanes: boolean): Promise<boolean> {
+  // Every action reads the same way: the confirmation on success, the reason on failure — one
+  // line in the menu either way, because what changed is invisible until the next pane starts.
+  function report(result: PostResult, ok: string, fallback: string): boolean {
+    if (result.ok) notice.value = ok;
+    else error.value = result.error ?? fallback;
+    return result.ok;
+  }
+
+  const switchTo = async (email: string, restartPanes: boolean): Promise<boolean> => {
     const result = await post("/api/claude-account/switch", { email, restartPanes });
-    const tail = "as " + email;
-    if (result.ok) notice.value = `Switched — ${restartNotice(result.restartedPanes, result.nudgedPanes, tail)}.`;
-    else error.value = result.error ?? "switch failed";
-    return result.ok;
-  }
+    const moved = restartNotice(result.restartedPanes, result.nudgedPanes, `as ${email}`);
+    return report(result, `Switched — ${moved}.`, "switch failed");
+  };
 
-  async function restartAllPanes(): Promise<boolean> {
+  const restartAllPanes = async (): Promise<boolean> => {
     const result = await post("/api/claude-account/restart-panes", {});
-    if (result.ok) notice.value = `Restarted ${result.restartedPanes ?? 0} pane(s) on the current account, auto-continued ${result.nudgedPanes ?? 0}.`;
-    else error.value = result.error ?? "restart failed";
-    return result.ok;
-  }
+    return report(result, `Restarted ${result.restartedPanes ?? 0} pane(s), auto-continued ${result.nudgedPanes ?? 0}.`, "restart failed");
+  };
 
-  async function logoutForNewLogin(): Promise<boolean> {
-    const result = await post("/api/claude-account/logout", {});
-    if (result.ok) notice.value = "Logged out — open a new pane and claude will ask you to log in.";
-    else error.value = result.error ?? "logout failed";
-    return result.ok;
-  }
+  // The operator settles which account the default slot holds. Nothing else can: the two
+  // sources disagree and only they know which login they last typed where.
+  const declareDefault = async (email: string): Promise<boolean> =>
+    report(await post("/api/claude-account/default", { email }), `既定のログインを ${email} として記録しました。`, "could not record the default account");
+
+  const logoutForNewLogin = async (): Promise<boolean> =>
+    report(await post("/api/claude-account/logout", {}), "Logged out — open a new pane and claude will ask you to log in.", "logout failed");
 
   onMounted(() => void refresh());
 
-  return { current, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin };
+  return { current, ambiguous, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin, declareDefault };
 }

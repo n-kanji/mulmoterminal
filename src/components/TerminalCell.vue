@@ -1053,7 +1053,9 @@ const stripLabel = computed(() => paneStateWord(status.value));
 const named = computed(() => !!props.name);
 // Shown only when this pane is NOT on what its page would start now — otherwise the chip in
 // the toolbar already says it, and repeating it on every pane is noise.
-const accountOdd = computed(() => (props.account ?? null) !== (props.pageAccount ?? null));
+// Claude cells only: a codex pane runs on no claude.ai login at all, so "default" next to it
+// would be answering a question nobody asked.
+const accountOdd = computed(() => agent.value !== "codex" && (props.account ?? null) !== (props.pageAccount ?? null));
 const accountLabel = computed(() => (props.account ? props.account.split("@")[0] : "default"));
 const stripMain = computed(() => cellMsg.value || props.name || mission.value || aiTitle.value || "—");
 const stripMainTitle = computed(() => [props.name, mission.value && `mission: ${mission.value}`, aiTitle.value].filter(Boolean).join(" — "));

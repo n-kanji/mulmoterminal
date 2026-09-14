@@ -25,6 +25,7 @@ import {
   liveTasks,
   claimActivityOwnership,
   lastTitledUserTurns,
+  launchAccounts,
   launchChoices,
   persistActivityState,
   ptys,
@@ -138,6 +139,7 @@ function reap(deps: SessionLifecycleDeps, id: string) {
   // visible via its on-disk record.
   knownSessions.delete(id);
   launchChoices.delete(id); // the picked backend dies with the session that used it
+  launchAccounts.delete(id); // ditto the account — the pane re-sends its own stamp on reconnect
   lastPrompts.delete(id); // don't leak prompt text for torn-down sessions
   lastResponses.delete(id); // ditto, and keep this map from growing across closed sessions
   liveTasks.delete(id); // the live task dies with the session

@@ -20,8 +20,11 @@ let applier: ((email: string | null) => void) | null = null;
 // GridView owns the pages: it registers the setter and keeps `view` current.
 export function registerPageAccountHandler(h: (email: string | null) => void): () => void {
   applier = h;
+  // Guarded like useNewTerminal's: a second mount registering before the first unmounts must
+  // keep ITS applier and ITS view, or the chip goes blank for the grid that is actually up.
   return () => {
-    if (applier === h) applier = null;
+    if (applier !== h) return;
+    applier = null;
     view.value = null;
   };
 }

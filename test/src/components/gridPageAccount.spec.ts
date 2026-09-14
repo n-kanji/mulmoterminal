@@ -1,16 +1,7 @@
 // Per-page Claude accounts in the grid state (operator request 2026-09-14): a page names an
 // account, a pane freezes the one it launched on, and both survive a reload.
 import { describe, it, expect } from "vitest";
-import {
-  pageAccount,
-  pageAccountOfCell,
-  parseGridState,
-  setPageAccount,
-  setSession,
-  stampAccount,
-  PAGE_SIZE,
-  type GridState,
-} from "../../../src/components/gridTabs";
+import { pageAccount, parseGridState, setPageAccount, setSession, stampAccount, type GridState } from "../../../src/components/gridTabs";
 
 const cell = (uid: number, session: string | null = null) => ({ uid, session, cwd: "/tmp" });
 const base = (cells = [cell(0)]): GridState => ({ cells, expanded: null, page: 0, nextUid: cells.length, sortMode: "manual" });
@@ -33,15 +24,6 @@ describe("a page's account", () => {
 
   it("refuses anything that is not an address", () => {
     expect(pageAccount(setPageAccount(base(), 0, "../../etc/passwd"), 0)).toBeNull();
-  });
-
-  // A cell is stamped from ITS page, which is not necessarily the one on screen.
-  it("is read for a cell from the page the cell sits on", () => {
-    const cells = Array.from({ length: PAGE_SIZE + 1 }, (_, i) => cell(i, UUID));
-    const state = setPageAccount({ ...base(cells), page: 0 }, 1, "b@orosy.co.jp");
-    expect(pageAccountOfCell(state, 0)).toBeNull();
-    expect(pageAccountOfCell(state, PAGE_SIZE)).toBe("b@orosy.co.jp");
-    expect(pageAccountOfCell(state, 999)).toBeNull();
   });
 });
 

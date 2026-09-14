@@ -64,6 +64,8 @@ export function keychainServiceForDir(dir: string): string {
 
 export interface AccountStoreIo extends ClaudeAccountIo {
   ensureDir(dir: string): Promise<void>;
+  dirExists(dir: string): Promise<boolean>;
+  removeDir(dir: string): Promise<void>;
 }
 
 export function realStoreIo(): AccountStoreIo {
@@ -72,6 +74,18 @@ export function realStoreIo(): AccountStoreIo {
     // 0700: the store holds a credentials file whenever the Keychain is unavailable.
     ensureDir: async (dir) => {
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    },
+    dirExists: async (dir) => {
+      try {
+        return (await fs.stat(dir)).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    // `rm -r` and not `rmdir`: a store the Keychain was unavailable for holds a credentials
+    // file. Only ever called for a directory this module made, under its own root.
+    removeDir: async (dir) => {
+      await fs.rm(dir, { recursive: true, force: true });
     },
   };
 }
@@ -90,24 +104,45 @@ export async function accountSpawnEnv(email: string | null | undefined, io: Acco
   if (!owned && (await resolveDefaultAccount(io, (e) => accountHasStore(e, io))) === target) return {};
   const dir = accountStoreDir(target);
   await io.ensureDir(dir);
-  if (!owned) await seedStore(io, target, dir);
+  await seedStore(io, target, dir);
   return { [STORE_ENV_VAR]: dir };
 }
 
-// Whether this account already has a login of its own, i.e. a pane pointed at its store would
-// start signed in. Also what tells the default-slot resolver that a claude.json rewritten by
-// some pane is describing that pane rather than the slot.
-export async function accountHasStore(email: string, io: ClaudeAccountIo = realStoreIo()): Promise<boolean> {
+// Whether this account has a store of its own. Read as the DIRECTORY, not the Keychain entry:
+// between "a pane was pointed at this account" and "somebody finished logging in there" the
+// entry is absent while the store very much exists, and a question that flips its answer
+// mid-way is one the default-slot resolver cannot be built on.
+export async function accountHasStore(email: string, io: AccountStoreIo = realStoreIo()): Promise<boolean> {
   const target = normalizeEmail(email);
   if (!target) return false;
-  return (await io.readKeychain(keychainServiceForDir(accountStoreDir(target)))) !== null;
+  return io.dirExists(accountStoreDir(target));
 }
 
-// Give a brand-new store the account's snapshotted login, so switching a page to an account
-// that MT already knows costs no re-login. Only ever called for a store that does not exist
-// (accountHasStore said so), because an existing one owns its own rotation — see the header.
+// This account's own login, for moving it back into the default slot. Reading does not give up
+// ownership — see dropAccountStore, which the caller runs only once the slot actually holds it.
+export async function readAccountStore(email: string, io: AccountStoreIo = realStoreIo()): Promise<string | null> {
+  const target = normalizeEmail(email);
+  if (!target) return null;
+  return io.readKeychain(keychainServiceForDir(accountStoreDir(target)));
+}
+
+// Give up this account's store: the default slot owns its login now, and leaving a second copy
+// of a rotating refresh token behind is how one of the two silently stops working.
+export async function dropAccountStore(email: string, io: AccountStoreIo = realStoreIo()): Promise<void> {
+  const target = normalizeEmail(email);
+  if (!target) return;
+  const dir = accountStoreDir(target);
+  await io.deleteKeychain(keychainServiceForDir(dir));
+  await io.removeDir(dir);
+  console.log(`[claude-account] ${target} now runs on the default login — its own store is gone`);
+}
+
+// Give a brand-new store the account's snapshotted login, so pointing a page at an account MT
+// already knows costs no re-login. An existing entry is left strictly alone: it owns its own
+// token rotation, and the snapshot beside it may be months out of date — see the header.
 async function seedStore(io: AccountStoreIo, email: string, dir: string): Promise<void> {
   const service = keychainServiceForDir(dir);
+  if (await io.readKeychain(service)) return;
   const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(email)));
   if (!snapshot) {
     console.warn(`[claude-account] no stored login for ${email} — its panes will ask you to run /login once.`);

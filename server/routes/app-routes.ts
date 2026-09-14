@@ -35,7 +35,7 @@ import { mountCostRoute } from "../session/cost.js";
 import { mountCollectionRoutes } from "../backends/collections.js";
 import { mountGoogleRoutes } from "../backends/google.js";
 import { mountClaudeAccountRoutes } from "../backends/claude-account.js";
-import { accountHasStore } from "../backends/claude-account-store.js";
+import { accountHasStore, dropAccountStore, readAccountStore } from "../backends/claude-account-store.js";
 import { restartClaudePanes } from "../session/restart-claude-panes.js";
 import { mountWikiRoutes } from "../backends/wiki.js";
 import { mountAccountingRoutes } from "../backends/accounting.js";
@@ -209,6 +209,8 @@ function mountAccountChip(app: Express, deps: AppRouteDeps): void {
     isAllowedOrigin: deps.isAllowedOrigin,
     restartPanes: () => restartClaudePanes(deps.reap),
     hasStore: (email) => accountHasStore(email),
+    readStore: (email) => readAccountStore(email),
+    dropStore: (email) => dropAccountStore(email),
   });
 }
 

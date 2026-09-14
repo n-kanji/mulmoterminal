@@ -123,20 +123,47 @@ export const serializeIndex = (entries: AccountIndexEntry[], defaultAccount: str
 export type HasStore = (email: string) => Promise<boolean>;
 const NO_STORES: HasStore = async () => false;
 
-// Who the default Keychain slot is logged in as.
+// Who the default Keychain slot is logged in as — and, when that cannot be answered, the fact
+// that it cannot.
 //
 // ~/.claude.json alone was the answer until panes could carry their own store. It is shared by
 // every pane, so a login done in a pane pointed at ANOTHER account's store rewrites it without
 // the default slot changing at all — and believing it then costs more than a wrong label: the
 // switcher would snapshot THIS slot's credentials under that other account's name.
-export async function resolveDefaultAccount(io: ClaudeAccountIo, hasStore: HasStore = NO_STORES): Promise<string | null> {
+//
+// AMBIGUOUS is the case neither source can settle: the record says A, the file says B, and B
+// has a store, so the file may be describing a pane — or B may really have been logged into
+// this slot from an unassigned pane. Nothing on disk distinguishes them, so nothing here
+// guesses: `current` keeps the record for display, and every credential-moving route refuses
+// until the operator says which it is.
+export interface DefaultAccountState {
+  current: string | null;
+  recorded: string | null; // MT's own record
+  onDisk: string | null; // ~/.claude.json's oauthAccount
+  ambiguous: boolean;
+}
+
+export async function readDefaultAccountState(io: ClaudeAccountIo, hasStore: HasStore = NO_STORES): Promise<DefaultAccountState> {
   const recorded = parseDefaultAccount(await io.readFile(io.indexPath));
   const onDisk = emailOf(readOauthAccount(await io.readFile(io.claudeJsonPath)));
-  if (!recorded) return onDisk;
-  if (!onDisk || onDisk === recorded) return recorded;
+  if (!recorded) return { current: onDisk, recorded, onDisk, ambiguous: false };
+  if (!onDisk || onDisk === recorded) return { current: recorded, recorded, onDisk, ambiguous: false };
   // They disagree. An account with a store of its own has a pane that could have written the
   // file; anything else is a real login done outside MT, which the record must follow.
-  return (await hasStore(onDisk)) ? recorded : onDisk;
+  const stored = await hasStore(onDisk);
+  return { current: stored ? recorded : onDisk, recorded, onDisk, ambiguous: stored };
+}
+
+export const resolveDefaultAccount = async (io: ClaudeAccountIo, hasStore: HasStore = NO_STORES): Promise<string | null> =>
+  (await readDefaultAccountState(io, hasStore)).current;
+
+// Write down who the default slot holds. Called whenever MT moves it AND whenever it observes
+// an answer it did not have — without that second half, a machine that has never used the
+// switcher has no record at all, and the first per-account login rewrites the shared file
+// before anything has written down what the slot actually holds.
+export async function rememberDefaultAccount(io: ClaudeAccountIo, email: string | null): Promise<void> {
+  const entries = parseIndex(await io.readFile(io.indexPath));
+  await io.writeFile(io.indexPath, serializeIndex(entries, email));
 }
 
 // ---- the snapshot payload (lives inside a Keychain entry) --------------------------------
@@ -232,28 +259,40 @@ interface ClaudeAccountRouteOptions {
   // module owns credentials, not the session registry. Absent (tests that don't care)
   // means "restart is unavailable" and restart requests report 0.
   restartPanes?: () => { restarted: number; nudged: number };
-  // Whether an account has a credential store of its own (backends/claude-account-store.ts).
-  // Injected at the composition root for the same reason as `restartPanes`: this module owns
-  // the default slot, not the per-account stores. Absent = "no stores", the world before them.
+  // The per-account credential stores (backends/claude-account-store.ts), injected at the
+  // composition root for the same reason as `restartPanes`: this module owns the default slot,
+  // not the stores. All absent = "no stores", the world before them.
+  //
+  // `readStore`/`dropStore` are what make a switch TO a store-holding account safe: its login
+  // moves into the slot and the store gives it up, instead of the same rotating refresh token
+  // living in two Keychain entries until one of them quietly stops working.
   hasStore?: HasStore;
+  readStore?: (email: string) => Promise<string | null>;
+  dropStore?: (email: string) => Promise<void>;
 }
 
 const NO_RESTART = { restarted: 0, nudged: 0 };
 
-export function mountClaudeAccountRoutes(
-  app: Express,
-  { isAllowedOrigin, restartPanes, hasStore }: ClaudeAccountRouteOptions,
-  io: ClaudeAccountIo = realIo(),
-): void {
+export function mountClaudeAccountRoutes(app: Express, options: ClaudeAccountRouteOptions, io: ClaudeAccountIo = realIo()): void {
+  mountReadAndSwitch(app, options, io);
+  mountLogout(app, options, io);
+  mountDeclareDefault(app, options, io);
+}
+
+// Reading the state, switching the default, and the fleet restart.
+function mountReadAndSwitch(app: Express, options: ClaudeAccountRouteOptions, io: ClaudeAccountIo): void {
+  const { isAllowedOrigin, restartPanes, hasStore } = options;
   // Who the default slot holds + the stored account list. Read every time (never cached), so
   // a login done outside MT — `claude /logout` in any pane — is reflected on the next open of
   // the dropdown; resolveDefaultAccount is what keeps a login done in a pane with its OWN
   // store from being mistaken for one.
   app.get("/api/claude-account", async (_req, res) => {
     try {
-      const current = await resolveDefaultAccount(io, hasStore);
+      const state = await readDefaultAccountState(io, hasStore);
       const accounts = parseIndex(await io.readFile(io.indexPath));
-      res.json({ current, accounts });
+      // Learn what we just read, while it is still unambiguous — see rememberDefaultAccount.
+      if (!state.ambiguous && state.current && state.current !== state.recorded) await rememberDefaultAccount(io, state.current);
+      res.json({ current: state.current, accounts, ambiguous: ambiguityOf(state) });
     } catch (e) {
       res.status(500).json({ error: message(e) });
     }
@@ -266,7 +305,7 @@ export function mountClaudeAccountRoutes(
     const target = isRecord(req.body) && typeof req.body.email === "string" ? normalizeEmail(req.body.email) : "";
     if (!target) return void res.status(400).json({ error: "email required" });
     try {
-      await handleSwitch(io, req, res, target, restartPanes, hasStore);
+      await handleSwitch(io, req, res, target, options);
     } catch (e) {
       res.status(500).json({ error: message(e) });
     }
@@ -284,7 +323,10 @@ export function mountClaudeAccountRoutes(
       res.status(500).json({ error: message(e) });
     }
   });
+}
 
+function mountLogout(app: Express, options: ClaudeAccountRouteOptions, io: ClaudeAccountIo): void {
+  const { isAllowedOrigin, hasStore } = options;
   // The add-a-new-account path (the ClaudeBar flow, minus the typing): snapshot the current
   // login, then clear the live slots so the next `claude` in a fresh pane starts the OAuth
   // login. Nothing is lost — the cleared account is one switch away.
@@ -292,7 +334,9 @@ export function mountClaudeAccountRoutes(
     if (!guard(req, res, isAllowedOrigin)) return;
     try {
       const claudeJsonRaw = await io.readFile(io.claudeJsonPath);
-      const currentEmail = await resolveDefaultAccount(io, hasStore);
+      const state = await readDefaultAccountState(io, hasStore);
+      if (state.ambiguous) return void res.status(409).json({ error: ambiguityMessage(state), ambiguous: ambiguityOf(state) });
+      const currentEmail = state.current;
       const liveCredentials = await io.readKeychain(CLAUDE_KEYCHAIN_SERVICE);
       if (!liveCredentials) return void res.json({ ok: true, current: null });
       if (!currentEmail) {
@@ -312,23 +356,54 @@ export function mountClaudeAccountRoutes(
   });
 }
 
+function mountDeclareDefault(app: Express, options: ClaudeAccountRouteOptions, io: ClaudeAccountIo): void {
+  const { isAllowedOrigin, hasStore } = options;
+  // The way out of an ambiguity: the operator says which account the default slot holds, and
+  // MT writes it down. Only the two candidates are accepted — this settles a disagreement
+  // between what MT recorded and what the shared file says, it is not a free hand to relabel
+  // credentials MT has never seen.
+  app.post("/api/claude-account/default", async (req, res) => {
+    if (!guard(req, res, isAllowedOrigin)) return;
+    const email = isRecord(req.body) && typeof req.body.email === "string" ? normalizeEmail(req.body.email) : "";
+    try {
+      const state = await readDefaultAccountState(io, hasStore);
+      if (!email || (email !== state.recorded && email !== state.onDisk)) {
+        return void res.status(400).json({ error: "email must be one of the two accounts in question" });
+      }
+      await rememberDefaultAccount(io, email);
+      res.json({ ok: true, current: email });
+    } catch (e) {
+      res.status(500).json({ error: message(e) });
+    }
+  });
+}
+
+// What the browser is told about an unsettled default, and what it is told when that blocks it.
+const ambiguityOf = (state: DefaultAccountState): { recorded: string | null; onDisk: string | null } | null =>
+  state.ambiguous ? { recorded: state.recorded, onDisk: state.onDisk } : null;
+
+const ambiguityMessage = (state: DefaultAccountState): string =>
+  `既定のログインが確定できません（MT の記録: ${state.recorded} / ~/.claude.json: ${state.onDisk}）。` +
+  `取り違えて別アカウントの資格情報を保存しないよう中止しました。どちらが既定か選んでください。`;
+
 // The switch itself, once the request has passed the guard and named a target.
-async function handleSwitch(
-  io: ClaudeAccountIo,
-  req: Request,
-  res: Response,
-  target: string,
-  restartPanes?: () => { restarted: number; nudged: number },
-  hasStore?: HasStore,
-): Promise<void> {
+async function handleSwitch(io: ClaudeAccountIo, req: Request, res: Response, target: string, options: ClaudeAccountRouteOptions): Promise<void> {
+  const { restartPanes, hasStore, readStore, dropStore } = options;
   const claudeJsonRaw = await io.readFile(io.claudeJsonPath);
   // NOT claude.json's own answer: snapshotting this slot's credentials under whatever name a
   // store-carrying pane last wrote there would file account A's login under account B.
-  const currentEmail = await resolveDefaultAccount(io, hasStore);
+  const state = await readDefaultAccountState(io, hasStore);
+  if (state.ambiguous) return void res.status(409).json({ error: ambiguityMessage(state), ambiguous: ambiguityOf(state) });
+  const currentEmail = state.current;
   if (target === currentEmail) return void res.json({ ok: true, current: currentEmail });
 
+  // An account with a store of its own keeps its LIVE login there — the snapshot beside it may
+  // be months old and already rotated away. So the store is the source, and it gives up
+  // ownership below rather than leaving the same refresh token in two entries.
+  const fromStore = readStore ? await readStore(target) : null;
   const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(target)));
-  if (!snapshot) {
+  const credentials = fromStore ?? snapshot?.credentials ?? null;
+  if (!credentials) {
     return void res.status(404).json({ error: `No stored login for ${target}. Log in once as that account first.` });
   }
 
@@ -337,14 +412,17 @@ async function handleSwitch(
   let index = parseIndex(await io.readFile(io.indexPath));
   index = await snapshotCurrent(io, index, claudeJsonRaw, currentEmail);
 
-  await io.writeKeychain(CLAUDE_KEYCHAIN_SERVICE, snapshot.credentials);
+  await io.writeKeychain(CLAUDE_KEYCHAIN_SERVICE, credentials);
+  // The slot holds it now, so the store may go. Ordered this way on purpose: a failure above
+  // leaves the store intact and the account still reachable from its pages.
+  if (fromStore && dropStore) await dropStore(target);
   // Claude Code renders its identity from `oauthAccount`, not from the token, so the
   // profile block must travel with the credentials (display-only: a race against a live
   // pane rewriting claude.json costs a stale label, never a broken login).
-  if (claudeJsonRaw && snapshot.oauthAccount) {
+  if (claudeJsonRaw && snapshot?.oauthAccount) {
     await io.writeFile(io.claudeJsonPath, withOauthAccount(claudeJsonRaw, snapshot.oauthAccount));
   }
-  await io.writeFile(io.indexPath, serializeIndex(upsertIndexEntry(index, target, snapshot.savedAt), target));
+  await io.writeFile(io.indexPath, serializeIndex(upsertIndexEntry(index, target, snapshot?.savedAt ?? io.now().toISOString()), target));
   // The credentials are swapped; now move the FLEET. A running claude keeps its token
   // in-process for life, so without this the twenty existing panes — the ones stuck on
   // the old account's usage limit — would stay stuck. Restart-and-resume puts each one

@@ -112,13 +112,13 @@ describe("GET /api/claude-account", () => {
     });
     const res = await request(appWith(io)).get("/api/claude-account");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ current: "board@orosy.co.jp", accounts: [{ email: "second@orosy.co.jp", savedAt: "t" }] });
+    expect(res.body).toEqual({ current: "board@orosy.co.jp", accounts: [{ email: "second@orosy.co.jp", savedAt: "t" }], ambiguous: null });
     expect(JSON.stringify(res.body)).not.toContain("live-secret");
   });
 
   it("answers null/[] when nothing is logged in or stored", async () => {
     const res = await request(appWith(fakeIo().io)).get("/api/claude-account");
-    expect(res.body).toEqual({ current: null, accounts: [] });
+    expect(res.body).toEqual({ current: null, accounts: [], ambiguous: null });
   });
 });
 
@@ -330,5 +330,86 @@ describe("the routes keep the record current", () => {
     });
     await request(appWith(io)).post("/api/claude-account/logout").send({}).expect(200);
     expect(parseDefaultAccount(files.get(INDEX) ?? null)).toBeNull();
+  });
+});
+
+// Per-page accounts put a second copy of some logins on this machine, and two of the routes
+// here MOVE credentials. These are the cases where that could go wrong quietly.
+describe("switching with per-account stores around", () => {
+  const storeSeams = (store: Map<string, string>) => ({
+    hasStore: async (email: string) => store.has(email),
+    readStore: async (email: string) => store.get(email) ?? null,
+    dropStore: async (email: string) => void store.delete(email),
+  });
+
+  const appWithStores = (io: ClaudeAccountIo, store: Map<string, string>) => {
+    const app = express();
+    app.use(express.json());
+    mountClaudeAccountRoutes(app, { isAllowedOrigin: () => true, ...storeSeams(store) }, io);
+    return app;
+  };
+
+  // The store holds the LIVE login; the snapshot beside it may be months old and already
+  // rotated away. Restoring the snapshot would put a dead token in the default slot.
+  it("takes the target's credentials from its store, and leaves no second copy behind", async () => {
+    const store = new Map([["b@x.co", "b-live-from-store"]]);
+    const { io, keychain } = fakeIo({
+      files: { [CLAUDE_JSON]: claudeJson("a@x.co") },
+      keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-a", [serviceForEmail("b@x.co")]: snapshotFor("b@x.co", "b-stale-snapshot") },
+    });
+    await request(appWithStores(io, store)).post("/api/claude-account/switch").send({ email: "b@x.co" }).expect(200);
+    expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("b-live-from-store");
+    expect(store.has("b@x.co")).toBe(false);
+  });
+
+  // Neither source can settle who the default slot holds, and guessing costs a credential
+  // filed under the wrong account. So nothing moves until the operator says.
+  describe("when MT's record and ~/.claude.json disagree about an account that has a store", () => {
+    const ambiguous = () => {
+      const store = new Map([["b@x.co", "b-live"]]);
+      const { io, keychain, files } = fakeIo({
+        files: { [CLAUDE_JSON]: claudeJson("b@x.co"), [INDEX]: JSON.stringify({ accounts: [], defaultAccount: "a@x.co" }) },
+        keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-whoever", [serviceForEmail("c@x.co")]: snapshotFor("c@x.co") },
+      });
+      return { app: appWithStores(io, store), io, keychain, files };
+    };
+
+    it("says so rather than picking a side", async () => {
+      const res = await request(ambiguous().app).get("/api/claude-account").expect(200);
+      expect(res.body.ambiguous).toEqual({ recorded: "a@x.co", onDisk: "b@x.co" });
+    });
+
+    it("refuses a switch", async () => {
+      const { app, keychain } = ambiguous();
+      const res = await request(app).post("/api/claude-account/switch").send({ email: "c@x.co" }).expect(409);
+      expect(res.body.ambiguous).toEqual({ recorded: "a@x.co", onDisk: "b@x.co" });
+      expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("live-whoever");
+    });
+
+    it("refuses a logout", async () => {
+      const { app, keychain } = ambiguous();
+      await request(app).post("/api/claude-account/logout").send({}).expect(409);
+      expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("live-whoever");
+    });
+
+    it("is settled by the operator naming one of the two", async () => {
+      const { app, files } = ambiguous();
+      await request(app).post("/api/claude-account/default").send({ email: "b@x.co" }).expect(200);
+      expect(parseDefaultAccount(files.get(INDEX) ?? null)).toBe("b@x.co");
+      expect((await request(app).get("/api/claude-account")).body.ambiguous).toBeNull();
+    });
+
+    it("will not relabel the slot as some third account", async () => {
+      const res = await request(ambiguous().app).post("/api/claude-account/default").send({ email: "c@x.co" });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  // Without this, a machine that has never used the switcher has no record at all — and the
+  // first per-account login rewrites the shared file before anything wrote down the truth.
+  it("writes down what it read, so a later per-account login cannot overwrite the answer", async () => {
+    const { io, files } = fakeIo({ files: { [CLAUDE_JSON]: claudeJson("a@x.co") } });
+    await request(appWith(io)).get("/api/claude-account").expect(200);
+    expect(parseDefaultAccount(files.get(INDEX) ?? null)).toBe("a@x.co");
   });
 });

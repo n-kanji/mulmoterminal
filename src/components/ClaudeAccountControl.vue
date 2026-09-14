@@ -17,7 +17,7 @@ import { useDropdownMenu } from "../composables/useDropdownMenu";
 import { useClaudeAccount } from "../composables/useClaudeAccount";
 import { applyPageAccount, usePageAccount } from "../composables/usePageAccount";
 
-const { current, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin } = useClaudeAccount();
+const { current, ambiguous, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin, declareDefault } = useClaudeAccount();
 // Null when no grid is mounted (a full-screen overlay): there is no page to assign, so the
 // menu shows the default login only.
 const { pageAccount } = usePageAccount();
@@ -94,6 +94,25 @@ async function pickDefault(email: string): Promise<void> {
       role="menu"
       aria-label="Claude accounts"
     >
+      <!-- Nothing can move credentials while this is up: MT's record and ~/.claude.json name
+           different accounts for the default slot and only the operator knows which is true.
+           Two buttons, because two candidates is the whole of the question. -->
+      <div v-if="ambiguous" class="mb-1 rounded border border-err px-2 py-1.5 text-[11px] text-fg">
+        <p class="mb-1">既定のログインが確定できません。どちらが既定ですか？</p>
+        <div class="flex flex-wrap gap-1">
+          <button
+            v-for="email in [ambiguous.recorded, ambiguous.onDisk].filter((e): e is string => !!e)"
+            :key="`claim-${email}`"
+            type="button"
+            class="cursor-pointer rounded border border-border bg-elevated px-2 py-1 font-mono text-[11px] text-fg hover:bg-hover"
+            :disabled="busy"
+            @click="declareDefault(email)"
+          >
+            {{ email }}
+          </button>
+        </div>
+        <p class="mt-1 text-muted">確定するまで、アカウントの切替とログアウトは実行されません。</p>
+      </div>
       <!-- The page's own account: the everyday control now. Absent `pageAccount` means no
            grid is mounted, and then there is no page to point anywhere. -->
       <template v-if="pageAccount">
@@ -134,11 +153,11 @@ async function pickDefault(email: string): Promise<void> {
         role="menuitem"
         class="flex w-full cursor-pointer items-center gap-2 rounded border-0 bg-transparent px-2 py-1.5 text-left text-[12px] text-muted hover:bg-hover hover:text-fg"
         :disabled="busy"
-        title="Restart every claude pane so it resumes its conversation on the current default account"
+        title="Restart every claude pane. A pane on a page with its own account comes back on that account; the rest resume on the default login."
         @click="restartAllPanes()"
       >
         <span class="material-symbols-outlined w-[16px] text-[15px]" aria-hidden="true">restart_alt</span>
-        Restart all panes on the default account
+        Restart panes（割り当ての無いペインが既定ログインに戻ります）
       </button>
       <!-- The register-another-account path: snapshot the current login, clear the live
            credentials, and the next pane's claude starts the OAuth login (ClaudeBar's
@@ -172,7 +191,7 @@ async function pickDefault(email: string): Promise<void> {
              talking in — each pane resumes its own conversation on the new account. -->
         <label class="mb-1 flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-[11px] text-muted hover:bg-hover">
           <input v-model="restartPanes" type="checkbox" class="accent-[var(--accent)]" :disabled="busy" />
-          Restart existing panes — auto-continue only the working / limit-stuck ones (off: new panes only)
+          Restart existing panes — 割り当ての無いページのペインだけが移ります。auto-continue only the working / limit-stuck ones (off: new panes only)
         </label>
         <button
           v-for="email in listed"

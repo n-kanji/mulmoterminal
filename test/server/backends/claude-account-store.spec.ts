@@ -11,17 +11,19 @@ const CLAUDE_JSON = "/home/.claude.json";
 const INDEX = "/home/.mulmoterminal/claude-accounts.json";
 const ROOT = "/home/.mulmoterminal/accounts";
 
-function fakeIo(seed: { keychain?: Record<string, string>; files?: Record<string, string> } = {}) {
+function fakeIo(seed: { keychain?: Record<string, string>; files?: Record<string, string>; dirs?: string[] } = {}) {
   const keychain = new Map(Object.entries(seed.keychain ?? {}));
   const files = new Map(Object.entries(seed.files ?? {}));
-  const dirs: string[] = [];
+  const dirs = new Set(seed.dirs ?? []);
   const io: AccountStoreIo = {
     readKeychain: async (s) => keychain.get(s) ?? null,
     writeKeychain: async (s, v) => void keychain.set(s, v),
     deleteKeychain: async (s) => void keychain.delete(s),
     readFile: async (p) => files.get(p) ?? null,
     writeFile: async (p, d) => void files.set(p, d),
-    ensureDir: async (d) => void dirs.push(d),
+    ensureDir: async (d) => void dirs.add(d),
+    dirExists: async (d) => dirs.has(d),
+    removeDir: async (d) => void dirs.delete(d),
     claudeJsonPath: CLAUDE_JSON,
     indexPath: INDEX,
     now: () => new Date("2026-09-14T00:00:00Z"),
@@ -85,7 +87,7 @@ describe("accountSpawnEnv", () => {
     const env = await accountSpawnEnv("c@d.co", io);
     const dir = env[STORE_ENV_VAR];
     expect(dir).toBe(accountStoreDir("c@d.co"));
-    expect(dirs).toEqual([dir]);
+    expect([...dirs]).toEqual([dir]);
     // Seeded with the RAW credential, exactly as Claude Code stores it — not the snapshot
     // envelope, which the CLI would fail to parse.
     expect(keychain.get(keychainServiceForDir(dir))).toBe("creds-c@d.co");
@@ -96,6 +98,7 @@ describe("accountSpawnEnv", () => {
     const { io, keychain } = fakeIo({
       files: { [CLAUDE_JSON]: claudeJson("a@b.co") },
       keychain: { [serviceForEmail("c@d.co")]: snapshotFor("c@d.co"), [keychainServiceForDir(dir)]: "live-and-rotated" },
+      dirs: [dir],
     });
     await accountSpawnEnv("c@d.co", io);
     expect(keychain.get(keychainServiceForDir(dir))).toBe("live-and-rotated");
@@ -116,6 +119,7 @@ describe("accountSpawnEnv", () => {
     const { io } = fakeIo({
       files: { [CLAUDE_JSON]: claudeJson("a@b.co") },
       keychain: { [keychainServiceForDir(dir)]: "a-own-login" },
+      dirs: [dir],
     });
     expect(await accountSpawnEnv("a@b.co", io)).toEqual({ [STORE_ENV_VAR]: dir });
   });
@@ -128,6 +132,7 @@ describe("accountSpawnEnv", () => {
     const { io } = fakeIo({
       files: { [CLAUDE_JSON]: claudeJson("c@d.co"), [INDEX]: JSON.stringify({ accounts: [], defaultAccount: "a@b.co" }) },
       keychain: { [keychainServiceForDir(dirC)]: "c-own-login" },
+      dirs: [dirC],
     });
     expect(await accountSpawnEnv("c@d.co", io)).toEqual({ [STORE_ENV_VAR]: dirC });
     // …and the account that really is in the slot still spawns without one.

@@ -78,13 +78,15 @@ const props = defineProps<{
   // Parent / child sets (2026-09-08): the family colour and parent name per uid, for the
   // cells that are in one. Decided by GridView against the full list.
   groups?: Record<number, CellGroup>;
-  // The account THIS page starts new panes as (2026-09-14). Two uses, and the difference is
-  // the whole behaviour: a cell that has NOT launched yet connects with it (that is how a page
-  // default reaches a new pane at all), while a cell that already has a session sends only its
-  // own stamp — so a page default set later never moves a conversation that is already running
-  // on other credentials. It also decides whether a pane's own account is worth showing.
-  // Null = the page follows the default login.
-  pageAccount?: string | null;
+  // The account each cell's OWN page starts new panes as (2026-09-14), keyed by uid and decided
+  // by GridView against the full laid-out order — a page here is a slice, and under the auto
+  // sort or a zoom the slice is not where the cell's page number comes from. Two uses, and the
+  // difference is the whole behaviour: a cell that has NOT launched yet connects with it (that
+  // is how a page default reaches a new pane at all), while a cell that already has a session
+  // sends only its own stamp — so a page default set later never moves a conversation already
+  // running on other credentials. It also decides whether a pane's own account is worth showing.
+  // A uid with no entry follows the default login.
+  pageAccounts?: Record<number, string>;
 }>();
 const emit = defineEmits<{
   // `park` / `separator-*` (2026-08-26): the block line's own controls (id, not uid) and the
@@ -501,8 +503,8 @@ watch(
             :auto-launch="cell.uid === autoLaunchUid"
             :name="cell.name ?? null"
             :park-note="cell.parkNote ?? null"
-            :account="cellConnectAccount(cell, pageAccount)"
-            :page-account="pageAccount ?? null"
+            :account="cellConnectAccount(cell, pageAccounts?.[cell.uid])"
+            :page-account="pageAccounts?.[cell.uid] ?? null"
             :group="groups?.[cell.uid] ?? null"
             :page-targets="pageTargets?.[cell.uid]"
             @rename="(value) => emit('rename', cell.uid, value)"
