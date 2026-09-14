@@ -139,6 +139,12 @@ export interface GridState {
   pages?: PageMeta[];
   separators?: Separator[];
   parked?: ParkedCell[];
+  // Fork-local (iTerm2 mode, operator request 2026-09-14): this workspace is a page that was
+  // TORN OFF another window, and this is that window's state key (`grid_v2`, or
+  // `grid_v2:<name>`). It is what the "return it" button aims at, and what marks the window as
+  // a detached page rather than a hand-made `?ws=` workspace. Absent = a workspace of its own.
+  // Transforms: gridDetach.ts.
+  origin?: string;
 }
 
 // Fork-local (iTerm2 mode): a page holds MAX_CELLS full-height columns (see
@@ -169,11 +175,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // two windows are two workspaces instead of two views fighting over one localStorage key.
 // No `ws` keeps the original key, so an existing window is untouched.
 const WS_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+export const isWorkspaceName = (name: string): boolean => WS_NAME_RE.test(name);
 export function workspaceFromSearch(search: string): string | null {
   const raw = new URLSearchParams(search).get("ws");
-  return raw && WS_NAME_RE.test(raw) ? raw : null;
+  return raw && isWorkspaceName(raw) ? raw : null;
 }
 export const stateKeyFor = (workspace: string | null): string => (workspace ? `${STATE_KEY}:${workspace}` : STATE_KEY);
+// A localStorage key this app would actually keep a grid under. Checked rather than assumed
+// because it arrives from a persisted (hand-editable) blob and is written back to.
+export const isStateKey = (key: string): boolean => key === STATE_KEY || (key.startsWith(`${STATE_KEY}:`) && isWorkspaceName(key.slice(STATE_KEY.length + 1)));
 
 export const pageCount = (cellCount: number) => Math.max(1, Math.ceil(cellCount / PAGE_SIZE));
 export const pageSlice = <T>(cells: T[], page: number) => cells.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
@@ -327,7 +337,7 @@ export const clampPage = (s: GridState): GridState => ({ ...s, page: Math.min(Ma
 // Always keep at least one cell — the entry launch cell on an otherwise empty grid. On a
 // grid that is nothing but reserved slots, the first of them becomes that entry cell rather
 // than a ninth column being appended past the pinned pages.
-const ensureEntry = (s: GridState): GridState => {
+export const ensureEntry = (s: GridState): GridState => {
   if (s.cells.some((c) => !isHole(c))) return s;
   const at = s.cells.findIndex(isHole);
   if (at < 0) return { ...s, cells: [{ uid: s.nextUid, session: null, cwd: null }], nextUid: s.nextUid + 1 };
@@ -1135,7 +1145,10 @@ export function parseGridState(raw: string | null): GridState | null {
     const separators = asSeparators(parsed.separators, running, () => nextUid++);
     // reserveSlots re-derives the padding from `pages`, so a hand-edited or half-written blob
     // (holes without pins, pins without holes) still comes back as a consistent grid.
-    return clampPage(ensureEntry(reserveSlots({ cells, expanded, page, nextUid, sortMode: asSortMode(parsed.sortMode), pages, separators, parked })));
+    // The window this workspace was torn off (2026-09-14), re-validated like every other
+    // persisted string: it names a localStorage key this app writes back to.
+    const origin = typeof parsed.origin === "string" && isStateKey(parsed.origin) ? parsed.origin : undefined;
+    return clampPage(ensureEntry(reserveSlots({ cells, expanded, page, nextUid, sortMode: asSortMode(parsed.sortMode), pages, separators, parked, origin })));
   } catch {
     return null;
   }

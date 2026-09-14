@@ -103,6 +103,7 @@ import { reportActiveTerminals } from "../composables/useUnloadGuard";
 import { useAppConfig } from "../composables/useAppConfig";
 import { fetchDirConfig, invalidateDirConfig } from "../composables/useDirConfig";
 import { usePubSub } from "../composables/usePubSub";
+import { useDetachedPages } from "../composables/useDetachedPages";
 import { holdOrder } from "./sortHold";
 import { useTypingHold } from "../composables/useTypingHold";
 import { PRESET_UNDO_MS, restorePreset, takePresetUndo, type PendingPresetUndo } from "./presetUndo";
@@ -126,7 +127,31 @@ const workspace = workspaceFromSearch(window.location.search);
 const stateKey = stateKeyFor(workspace);
 const init = initialState(localStorage.getItem(stateKey), workspace ? null : localStorage.getItem(LEGACY_KEY));
 const state = ref<GridState>(init.state);
-const persist = () => localStorage.setItem(stateKey, JSON.stringify(state.value));
+// Tearing a page off into a window of its own, and taking it back (operator request
+// 2026-09-14). The transforms are pure (gridDetach); this holds the other window, the storage
+// handshake, and the register of pages out on loan. `onVacate` retires the connection slots of
+// the columns that left — RELEASE, never terminate: the session is alive in the other window,
+// and terminate would reap the very PTY the move exists to preserve.
+const {
+  detached: detachedPages,
+  isDetached,
+  wentHome,
+  notice: detachNotice,
+  dismissNotice,
+  detach: detachActivePage,
+  recall: recallPage,
+  goHome,
+  blockedReason,
+} = useDetachedPages(state, stateKey, workspace, (uids) => uids.forEach((uid) => conn.release(`cell-${uid}`)));
+const detachReason = computed(() => blockedReason(state.value.page));
+const detachTitle = computed(() => detachReason.value ?? "このページを別ウィンドウに切り離す（セッションは生きたまま）");
+
+// A window that has handed its page back writes nothing more: the grid it just gave away
+// belongs to the other window now, and one more write would resurrect it here.
+const persist = () => {
+  if (wentHome.value) return;
+  localStorage.setItem(stateKey, JSON.stringify(state.value));
+};
 // Write the migrated state before dropping the legacy key, so a reload between
 // migration and the first change can't lose the sessions.
 if (init.migrated) {
@@ -980,11 +1005,72 @@ function configureAppearance() {
           >
             <span class="material-symbols-outlined text-[14px] leading-none">add</span>
           </button>
+          <!-- Tear this page off into a window of its own (operator request 2026-09-14), so two
+               pages can be looked at AT THE SAME TIME. The sessions are the server's, so nothing
+               restarts — the other window attaches to the same PTYs. Disabled rather than hidden
+               when the page cannot go: the tooltip is where the reason is read. -->
+          <button
+            v-if="!isDetached"
+            type="button"
+            data-testid="grid-detach-page"
+            class="border border-border bg-base text-muted font-mono text-xs py-[3px] px-2 rounded-md inline-flex items-center hover:bg-hover hover:text-fg disabled:opacity-40 disabled:cursor-default"
+            :disabled="detachReason !== null"
+            :title="detachTitle"
+            aria-label="Open this page in its own window"
+            @click="detachActivePage(state.page)"
+          >
+            <span class="material-symbols-outlined text-[14px] leading-none">open_in_new</span>
+          </button>
+          <!-- The pages this window has out on loan. A ghost tab is still a tab: the page has
+               not gone anywhere, it is just being shown elsewhere, and one click brings it back. -->
+          <button
+            v-for="page in detachedPages"
+            :key="page.ws"
+            type="button"
+            data-testid="grid-detached-tab"
+            class="border border-dashed border-border bg-base text-muted font-mono text-xs min-w-[28px] py-[3px] px-2 rounded-md cursor-pointer inline-flex items-center gap-1 hover:bg-hover hover:text-fg"
+            :title="`「${page.label}」は別ウィンドウで開いています — クリックでこのウィンドウに戻します`"
+            @click="recallPage(page.ws)"
+          >
+            <span class="material-symbols-outlined text-[13px] leading-none">open_in_new</span>
+            {{ page.label }}
+          </button>
+          <!-- This window IS a torn-off page: hand it back to the window it came from. -->
+          <button
+            v-if="isDetached"
+            type="button"
+            data-testid="grid-go-home"
+            class="border border-border bg-base text-muted font-mono text-xs py-[3px] px-2 rounded-md cursor-pointer inline-flex items-center gap-1 hover:bg-hover hover:text-fg"
+            title="このページを元のウィンドウに戻して、このウィンドウを閉じます（セッションは生きたまま）"
+            @click="goHome"
+          >
+            <span class="material-symbols-outlined text-[14px] leading-none">call_merge</span>
+            元に戻す
+          </button>
+          <button
+            v-if="detachNotice"
+            type="button"
+            class="border border-border bg-base text-fg font-sans text-xs py-[3px] px-2 rounded-md cursor-pointer whitespace-nowrap hover:bg-hover"
+            title="閉じる"
+            @click="dismissNotice"
+          >
+            {{ detachNotice }}
+          </button>
         </nav>
       </template>
     </AppToolbar>
+    <!-- The page has been handed back and this window is done. Rendered INSTEAD of the grid,
+         not beside it: leaving the terminals mounted would leave this window attached to
+         sessions the other one is taking over. Normally the window closes itself and nobody
+         sees this; a browser that refuses `window.close()` gets a door to read. -->
+    <div v-if="wentHome" class="flex flex-1 items-center justify-center p-8 text-center">
+      <div class="max-w-md">
+        <p class="font-sans text-sm text-fg">このページは元のウィンドウに戻しました。</p>
+        <p class="mt-2 font-sans text-xs text-muted">セッションはそのまま動いています。このウィンドウは閉じてかまいません。</p>
+      </div>
+    </div>
     <!-- The dock (left, operator's call) and the grid (2026-08-26). -->
-    <div class="flex min-h-0 min-w-0 flex-1">
+    <div v-else class="flex min-h-0 min-w-0 flex-1">
       <ParkedDock
         v-if="expandedUid === null"
         :items="parkedCards"
@@ -1037,7 +1123,7 @@ function configureAppearance() {
         @separator-remove="onSeparatorRemove"
       />
     </div>
-    <footer v-if="noRunningTerminals" class="flex-none border-t border-border bg-panel px-4 py-2 text-center">
+    <footer v-if="noRunningTerminals && !wentHome" class="flex-none border-t border-border bg-panel px-4 py-2 text-center">
       <GuideLinks />
     </footer>
     <AppSettingsModal v-if="showSettings" @configure-appearance="configureAppearance" @close="closeSettings" />
