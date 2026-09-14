@@ -47,3 +47,25 @@ Claude Code 2.1.270 は Keychain のサービス名を資格情報ストアの�
 
 - `plans/feature-per-page-claude-account.md` — 設計・検証記録・レビューで変わった点
 - memory `claude-credentials-per-config-dir` — CLI 側の導出ロジック（このリポジトリからは読めない知識）
+
+---
+
+## 同日の続き（このペインがその後やったこと・2026-09-14 夜）
+
+### AI が開いた列が「見ていない窓」に出ていた件を直した（`server/infra/pubsub.ts` / `src/composables/usePubSub.ts`）
+
+`POST /api/workspace/column` は購読タブのうち**1つ**にだけ配信する（全タブに配ると同じ列が二重に開くため）。
+その宛先が**部屋の先頭ソケット＝接続順**だったので、裏に隠れた MulmoTerminal のタブがあると
+そちらに列が開き、CEO の目の前には何も出ない。セッションは起動して作業も進むので**気づけない**のが最悪だった。
+
+- タブが `document.visibilityState` を connect 時と変化時に申告し、`publishToOne` は**見えているタブを優先**する
+- 申告が無いソケットは「見えている」扱い（この機能が無かった頃の挙動と同じ）
+- 判定は `pickOneSubscriber(room, hidden)` に切り出してテスト済み（`test/server/infra/pubsub-pick.spec.ts`）
+
+**既に起動しているセッションは引っ越せない**（列は各ブラウザのローカル状態）。行方不明になったら
+起動フォームの「再開」リストからタイトルで拾う。
+
+### ページ切り離し機能は別ペインが完走
+
+`plans/feat-detach-page-window.md`（v2）と、そのペインが書いた handover / TODO.md を参照。
+タブ行の ⧉ で別ウィンドウ化、破線タブで復帰。既知の制限として**孫ウィンドウ（切り離した窓からさらに切り離す）は禁止**。
