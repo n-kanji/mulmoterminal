@@ -35,6 +35,7 @@ import { mountCostRoute } from "../session/cost.js";
 import { mountCollectionRoutes } from "../backends/collections.js";
 import { mountGoogleRoutes } from "../backends/google.js";
 import { mountClaudeAccountRoutes } from "../backends/claude-account.js";
+import { accountHasStore } from "../backends/claude-account-store.js";
 import { restartClaudePanes } from "../session/restart-claude-panes.js";
 import { mountWikiRoutes } from "../backends/wiki.js";
 import { mountAccountingRoutes } from "../backends/accounting.js";
@@ -194,6 +195,23 @@ export function mountAppRoutes(app: Express, deps: AppRouteDeps): void {
 // The session-facing half: hooks, tool history, and everything the browser asks about a
 // directory or a repository. Split from the block above only to keep each readable — the
 // order across the two is still the order they are mounted in.
+// GET /api/claude-account + POST .../switch|logout|restart-panes — the toolbar's Claude
+// account chip. Swaps the Claude Code Keychain credentials between snapshotted accounts
+// (macOS local only, `security` CLI), and can restart the visible claude panes so they resume
+// their conversations on the new account. State-changing posts are origin-guarded like the
+// other local-action routes.
+//
+// Its two seams are injected here rather than imported by that module: `restartPanes` because
+// it owns credentials and not the session registry, and `hasStore` (per-page accounts,
+// 2026-09-14) because the per-account credential stores are a module of their own.
+function mountAccountChip(app: Express, deps: AppRouteDeps): void {
+  mountClaudeAccountRoutes(app, {
+    isAllowedOrigin: deps.isAllowedOrigin,
+    restartPanes: () => restartClaudePanes(deps.reap),
+    hasStore: (email) => accountHasStore(email),
+  });
+}
+
 function mountSessionFacingRoutes(app: Express, deps: AppRouteDeps): void {
   mountHookRoute(app, {
     setWorking: (id, working, event) => deps.setWorking(id, working, event),
@@ -296,15 +314,7 @@ function mountSessionFacingRoutes(app: Express, deps: AppRouteDeps): void {
   // fallback for remote setups. Same-origin guarded; tokens never reach a response.
   mountGoogleRoutes(app, { isAllowedOrigin: deps.isAllowedOrigin });
 
-  // GET /api/claude-account + POST .../switch|logout|restart-panes — the toolbar's Claude
-  // account chip. Swaps the Claude Code Keychain credentials between snapshotted accounts
-  // (macOS local only, `security` CLI), and can restart the visible claude panes so they
-  // resume their conversations on the new account. State-changing posts are origin-guarded
-  // like the other local-action routes.
-  mountClaudeAccountRoutes(app, {
-    isAllowedOrigin: deps.isAllowedOrigin,
-    restartPanes: () => restartClaudePanes(deps.reap),
-  });
+  mountAccountChip(app, deps);
 
   // Sidebar listing, one session's detail, the grid's attention poll, the tool timeline and
   // codex's own sessions (see routes/session-routes.ts).

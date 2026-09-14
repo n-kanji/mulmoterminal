@@ -29,11 +29,10 @@ import os from "node:os";
 import path from "node:path";
 import {
   CLAUDE_KEYCHAIN_SERVICE,
-  emailOf,
   normalizeEmail,
   parseSnapshot,
-  readOauthAccount,
   realIo,
+  resolveDefaultAccount,
   serviceForEmail,
   type ClaudeAccountIo,
 } from "./claude-account.js";
@@ -83,19 +82,32 @@ export async function accountSpawnEnv(email: string | null | undefined, io: Acco
   if (!email) return {};
   const target = normalizeEmail(email);
   if (!target) return {};
-  const live = emailOf(readOauthAccount(await io.readFile(io.claudeJsonPath)));
-  if (live === target) return {};
+  // A store that already exists WINS, even for the account the default slot holds. Once an
+  // account has its own store that store owns its token rotation, and flipping a pane back to
+  // the shared slot because the default happens to match would hand it the older of two
+  // logins. It also makes the answer stable: the default moves, stores do not.
+  const owned = await accountHasStore(target, io);
+  if (!owned && (await resolveDefaultAccount(io, (e) => accountHasStore(e, io))) === target) return {};
   const dir = accountStoreDir(target);
   await io.ensureDir(dir);
-  await seedStore(io, target, dir);
+  if (!owned) await seedStore(io, target, dir);
   return { [STORE_ENV_VAR]: dir };
 }
 
+// Whether this account already has a login of its own, i.e. a pane pointed at its store would
+// start signed in. Also what tells the default-slot resolver that a claude.json rewritten by
+// some pane is describing that pane rather than the slot.
+export async function accountHasStore(email: string, io: ClaudeAccountIo = realStoreIo()): Promise<boolean> {
+  const target = normalizeEmail(email);
+  if (!target) return false;
+  return (await io.readKeychain(keychainServiceForDir(accountStoreDir(target)))) !== null;
+}
+
 // Give a brand-new store the account's snapshotted login, so switching a page to an account
-// that MT already knows costs no re-login. An existing entry is left alone — see the header.
+// that MT already knows costs no re-login. Only ever called for a store that does not exist
+// (accountHasStore said so), because an existing one owns its own rotation — see the header.
 async function seedStore(io: AccountStoreIo, email: string, dir: string): Promise<void> {
   const service = keychainServiceForDir(dir);
-  if (await io.readKeychain(service)) return;
   const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(email)));
   if (!snapshot) {
     console.warn(`[claude-account] no stored login for ${email} — its panes will ask you to run /login once.`);

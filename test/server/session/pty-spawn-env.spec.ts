@@ -101,6 +101,15 @@ describe("ptySpawn — a pane's own environment", () => {
     expect(args).toContain("CLAUDE_SECURESTORAGE_CONFIG_DIR=/store/b");
   });
 
+  // The tmux CLIENT must not carry it: a tmux SERVER that a spawn creates keeps that spawn's
+  // environment (measured, see infra/tmux.ts), and every session after it would inherit this
+  // pane's account store — an unassigned pane silently on somebody else's login.
+  it("keeps it out of the tmux client's own environment", () => {
+    tmuxOn = true;
+    ptySpawn("s1", "claude", [], "/tmp", true, { env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: "/store/b" } });
+    expect(envOf()).not.toHaveProperty("CLAUDE_SECURESTORAGE_CONFIG_DIR");
+  });
+
   it("leaves a pane without one alone", () => {
     ptySpawn("s1", "claude", [], "/tmp", false);
     expect(envOf()).not.toHaveProperty("CLAUDE_SECURESTORAGE_CONFIG_DIR");

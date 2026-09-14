@@ -157,7 +157,11 @@ export function parseTmuxEnvironment(stdout: string): Map<string, string> {
 // see ANTHROPIC_API_KEY, which silently outranks the auth token that aims it there. The
 // settings `env` block cannot express a REMOVAL, and a pane inherits the tmux server's
 // environment rather than ours, so this is where it has to be taken out (#579).
-const SCRUBBED_NAMES = new Set(["ANTHROPIC_API_KEY"]);
+// CLAUDE_SECURESTORAGE_CONFIG_DIR (2026-09-14) is the same shape of hazard as the key above:
+// it points a pane at ONE account's credential store, so a copy left in the server's global
+// environment would silently start an unassigned pane on somebody else's login. Spelled here
+// rather than imported to keep infra free of backends (backends/claude-account-store.ts owns it).
+export const SCRUBBED_NAMES = new Set(["ANTHROPIC_API_KEY", "CLAUDE_SECURESTORAGE_CONFIG_DIR"]);
 
 function scrubGlobalEnvironment(): void {
   const r = tmux(["show-environment", "-g"]);

@@ -95,7 +95,49 @@ export function upsertIndexEntry(entries: AccountIndexEntry[], email: string, sa
   return [...rest, { email: normalized, savedAt }].sort((a, b) => a.email.localeCompare(b.email));
 }
 
-export const serializeIndex = (entries: AccountIndexEntry[]): string => JSON.stringify({ accounts: entries }, null, 2);
+// Which account the DEFAULT Keychain slot holds, as MT last set it. Recorded because
+// ~/.claude.json cannot answer it any more: a pane running on its own credential store
+// (backends/claude-account-store.ts) writes ITS account into that shared file on login,
+// while the default slot keeps whatever it had. Absent = never switched through MT, and then
+// the file is still the best answer there is.
+export function parseDefaultAccount(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || typeof parsed.defaultAccount !== "string") return null;
+    const email = normalizeEmail(parsed.defaultAccount);
+    return email || null;
+  } catch {
+    return null;
+  }
+}
+
+// `defaultAccount` must be passed on EVERY write: an omitted one is written as absent, which
+// is how "logged out of the default slot" is expressed — so a writer that forgets it erases
+// the record rather than keeping it.
+export const serializeIndex = (entries: AccountIndexEntry[], defaultAccount: string | null = null): string =>
+  JSON.stringify(defaultAccount ? { accounts: entries, defaultAccount } : { accounts: entries }, null, 2);
+
+// Does this account have a credential store of its own? Injected (backends/claude-account-store
+// owns stores; this module owns the default slot) — no stores is the pre-2026-09-14 world.
+export type HasStore = (email: string) => Promise<boolean>;
+const NO_STORES: HasStore = async () => false;
+
+// Who the default Keychain slot is logged in as.
+//
+// ~/.claude.json alone was the answer until panes could carry their own store. It is shared by
+// every pane, so a login done in a pane pointed at ANOTHER account's store rewrites it without
+// the default slot changing at all — and believing it then costs more than a wrong label: the
+// switcher would snapshot THIS slot's credentials under that other account's name.
+export async function resolveDefaultAccount(io: ClaudeAccountIo, hasStore: HasStore = NO_STORES): Promise<string | null> {
+  const recorded = parseDefaultAccount(await io.readFile(io.indexPath));
+  const onDisk = emailOf(readOauthAccount(await io.readFile(io.claudeJsonPath)));
+  if (!recorded) return onDisk;
+  if (!onDisk || onDisk === recorded) return recorded;
+  // They disagree. An account with a store of its own has a pane that could have written the
+  // file; anything else is a real login done outside MT, which the record must follow.
+  return (await hasStore(onDisk)) ? recorded : onDisk;
+}
 
 // ---- the snapshot payload (lives inside a Keychain entry) --------------------------------
 
@@ -190,19 +232,28 @@ interface ClaudeAccountRouteOptions {
   // module owns credentials, not the session registry. Absent (tests that don't care)
   // means "restart is unavailable" and restart requests report 0.
   restartPanes?: () => { restarted: number; nudged: number };
+  // Whether an account has a credential store of its own (backends/claude-account-store.ts).
+  // Injected at the composition root for the same reason as `restartPanes`: this module owns
+  // the default slot, not the per-account stores. Absent = "no stores", the world before them.
+  hasStore?: HasStore;
 }
 
 const NO_RESTART = { restarted: 0, nudged: 0 };
 
-export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restartPanes }: ClaudeAccountRouteOptions, io: ClaudeAccountIo = realIo()): void {
-  // Current identity + the stored account list. `current` comes from ~/.claude.json every
-  // time (never cached), so a login done outside MT — `claude /logout` in any pane — is
-  // reflected on the next open of the dropdown without any bookkeeping here.
+export function mountClaudeAccountRoutes(
+  app: Express,
+  { isAllowedOrigin, restartPanes, hasStore }: ClaudeAccountRouteOptions,
+  io: ClaudeAccountIo = realIo(),
+): void {
+  // Who the default slot holds + the stored account list. Read every time (never cached), so
+  // a login done outside MT — `claude /logout` in any pane — is reflected on the next open of
+  // the dropdown; resolveDefaultAccount is what keeps a login done in a pane with its OWN
+  // store from being mistaken for one.
   app.get("/api/claude-account", async (_req, res) => {
     try {
-      const oauthAccount = readOauthAccount(await io.readFile(io.claudeJsonPath));
+      const current = await resolveDefaultAccount(io, hasStore);
       const accounts = parseIndex(await io.readFile(io.indexPath));
-      res.json({ current: emailOf(oauthAccount), accounts });
+      res.json({ current, accounts });
     } catch (e) {
       res.status(500).json({ error: message(e) });
     }
@@ -215,7 +266,7 @@ export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restar
     const target = isRecord(req.body) && typeof req.body.email === "string" ? normalizeEmail(req.body.email) : "";
     if (!target) return void res.status(400).json({ error: "email required" });
     try {
-      await handleSwitch(io, req, res, target, restartPanes);
+      await handleSwitch(io, req, res, target, restartPanes, hasStore);
     } catch (e) {
       res.status(500).json({ error: message(e) });
     }
@@ -241,7 +292,7 @@ export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restar
     if (!guard(req, res, isAllowedOrigin)) return;
     try {
       const claudeJsonRaw = await io.readFile(io.claudeJsonPath);
-      const currentEmail = emailOf(readOauthAccount(claudeJsonRaw));
+      const currentEmail = await resolveDefaultAccount(io, hasStore);
       const liveCredentials = await io.readKeychain(CLAUDE_KEYCHAIN_SERVICE);
       if (!liveCredentials) return void res.json({ ok: true, current: null });
       if (!currentEmail) {
@@ -251,7 +302,7 @@ export function mountClaudeAccountRoutes(app: Express, { isAllowedOrigin, restar
       }
       const index = parseIndex(await io.readFile(io.indexPath));
       const updated = await snapshotCurrent(io, index, claudeJsonRaw, currentEmail);
-      await io.writeFile(io.indexPath, serializeIndex(updated));
+      await io.writeFile(io.indexPath, serializeIndex(updated, null));
       await io.deleteKeychain(CLAUDE_KEYCHAIN_SERVICE);
       if (claudeJsonRaw) await io.writeFile(io.claudeJsonPath, withOauthAccount(claudeJsonRaw, null));
       res.json({ ok: true, current: null });
@@ -268,9 +319,12 @@ async function handleSwitch(
   res: Response,
   target: string,
   restartPanes?: () => { restarted: number; nudged: number },
+  hasStore?: HasStore,
 ): Promise<void> {
   const claudeJsonRaw = await io.readFile(io.claudeJsonPath);
-  const currentEmail = emailOf(readOauthAccount(claudeJsonRaw));
+  // NOT claude.json's own answer: snapshotting this slot's credentials under whatever name a
+  // store-carrying pane last wrote there would file account A's login under account B.
+  const currentEmail = await resolveDefaultAccount(io, hasStore);
   if (target === currentEmail) return void res.json({ ok: true, current: currentEmail });
 
   const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(target)));
@@ -290,7 +344,7 @@ async function handleSwitch(
   if (claudeJsonRaw && snapshot.oauthAccount) {
     await io.writeFile(io.claudeJsonPath, withOauthAccount(claudeJsonRaw, snapshot.oauthAccount));
   }
-  await io.writeFile(io.indexPath, serializeIndex(upsertIndexEntry(index, target, snapshot.savedAt)));
+  await io.writeFile(io.indexPath, serializeIndex(upsertIndexEntry(index, target, snapshot.savedAt), target));
   // The credentials are swapped; now move the FLEET. A running claude keeps its token
   // in-process for life, so without this the twenty existing panes — the ones stuck on
   // the old account's usage limit — would stay stuck. Restart-and-resume puts each one

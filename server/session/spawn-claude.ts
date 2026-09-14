@@ -106,11 +106,12 @@ export function createClaudeSpawner(deps: SpawnDeps) {
       resuming: canResume,
     });
     const resolved = requireResolution(resolveProvider(choice, getProviders(), process.env, sandbox));
-    // A pane with no account of its own must run on the DEFAULT login. It inherits our env
-    // and the tmux server's, so a store name either of them happens to carry is dropped the
-    // same way a provider session drops ANTHROPIC_API_KEY — a set variable cannot be unset
-    // from a settings block, only here.
-    const unset = accountEnv[STORE_ENV_VAR] || !process.env[STORE_ENV_VAR] ? resolved.unset : [...resolved.unset, STORE_ENV_VAR];
+    // A pane with no account of its own must run on the DEFAULT login — and it inherits BOTH
+    // our environment and the tmux server's, which an earlier account pane can have seeded
+    // (that is the #579 shape: a server created by one spawn keeps that spawn's environment).
+    // So the name is dropped unconditionally here rather than only when our own copy has it:
+    // a set variable cannot be unset from a settings block, only from this list.
+    const unset = accountEnv[STORE_ENV_VAR] ? resolved.unset : [...resolved.unset, STORE_ENV_VAR];
     // Remembered so a later resume continues on the backend this session began on, instead
     // of silently moving to the directory's default mid-conversation.
     if (launch) launchChoices.set(sessionId, choice);

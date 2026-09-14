@@ -109,6 +109,31 @@ describe("accountSpawnEnv", () => {
     expect(keychain.size).toBe(0);
   });
 
+  // Once an account has a store, that store owns its rotation: sending its panes back to the
+  // shared slot because the default happens to match would hand them the older of two logins.
+  it("keeps using a store that exists, even for the account the default slot holds", async () => {
+    const dir = accountStoreDir("a@b.co");
+    const { io } = fakeIo({
+      files: { [CLAUDE_JSON]: claudeJson("a@b.co") },
+      keychain: { [keychainServiceForDir(dir)]: "a-own-login" },
+    });
+    expect(await accountSpawnEnv("a@b.co", io)).toEqual({ [STORE_ENV_VAR]: dir });
+  });
+
+  // The trap this exists for: a login done in a store-carrying pane rewrites the SHARED
+  // ~/.claude.json, and reading that file alone would then send this account's panes to the
+  // default slot — which still holds somebody else's credentials.
+  it("does not believe a claude.json that a store-carrying pane rewrote", async () => {
+    const dirC = accountStoreDir("c@d.co");
+    const { io } = fakeIo({
+      files: { [CLAUDE_JSON]: claudeJson("c@d.co"), [INDEX]: JSON.stringify({ accounts: [], defaultAccount: "a@b.co" }) },
+      keychain: { [keychainServiceForDir(dirC)]: "c-own-login" },
+    });
+    expect(await accountSpawnEnv("c@d.co", io)).toEqual({ [STORE_ENV_VAR]: dirC });
+    // …and the account that really is in the slot still spawns without one.
+    expect(await accountSpawnEnv("a@b.co", io)).toEqual({});
+  });
+
   // No ~/.claude.json (or no oauthAccount in it) means the live identity is unknown — which
   // must not stop a named account from getting its own store.
   it("works with no identity on disk", async () => {

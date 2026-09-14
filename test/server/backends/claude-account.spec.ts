@@ -14,6 +14,9 @@ import {
   parseIndex,
   upsertIndexEntry,
   parseSnapshot,
+  parseDefaultAccount,
+  resolveDefaultAccount,
+  serializeIndex,
   CLAUDE_KEYCHAIN_SERVICE,
   type ClaudeAccountIo,
 } from "../../../server/backends/claude-account.js";
@@ -270,5 +273,62 @@ describe("POST /api/claude-account/logout", () => {
     const res = await request(appWith(io)).post("/api/claude-account/logout").send({});
     expect(res.status).toBe(409);
     expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("live-creds");
+  });
+});
+
+// Who the default Keychain slot holds. ~/.claude.json used to be the whole answer; a pane
+// running on its own credential store (per-page accounts, 2026-09-14) rewrites that shared
+// file on login without the slot changing, so it is no longer trusted on its own.
+describe("the default account", () => {
+  const withDefault = (email: string) => JSON.stringify({ accounts: [], defaultAccount: email });
+
+  it("is read back from the index, normalized", () => {
+    expect(parseDefaultAccount(withDefault(" A@B.co "))).toBe("a@b.co");
+    expect(parseDefaultAccount(JSON.stringify({ accounts: [] }))).toBeNull();
+    expect(parseDefaultAccount("broken")).toBeNull();
+    expect(parseDefaultAccount(null)).toBeNull();
+  });
+
+  it("survives a write only when the writer passes it", () => {
+    expect(JSON.parse(serializeIndex([], "a@b.co")).defaultAccount).toBe("a@b.co");
+    // A logout writes it away on purpose — the slot is empty.
+    expect(JSON.parse(serializeIndex([], null)).defaultAccount).toBeUndefined();
+  });
+
+  it("falls back to claude.json when MT has never switched", async () => {
+    const { io } = fakeIo({ files: { [CLAUDE_JSON]: claudeJson("a@b.co") } });
+    expect(await resolveDefaultAccount(io)).toBe("a@b.co");
+  });
+
+  it("keeps its own record when claude.json names an account that has a store", async () => {
+    const { io } = fakeIo({ files: { [CLAUDE_JSON]: claudeJson("c@d.co"), [INDEX]: withDefault("a@b.co") } });
+    expect(await resolveDefaultAccount(io, async (email) => email === "c@d.co")).toBe("a@b.co");
+  });
+
+  // A real `claude /logout` + login in an ordinary pane DOES move the slot, and the record
+  // must follow it rather than pin the chip to a login that is gone.
+  it("follows claude.json when that account has no store of its own", async () => {
+    const { io } = fakeIo({ files: { [CLAUDE_JSON]: claudeJson("c@d.co"), [INDEX]: withDefault("a@b.co") } });
+    expect(await resolveDefaultAccount(io, async () => false)).toBe("c@d.co");
+  });
+});
+
+describe("the routes keep the record current", () => {
+  it("a switch records the account it moved the slot to", async () => {
+    const { io, files } = fakeIo({
+      files: { [CLAUDE_JSON]: claudeJson("a@x.co") },
+      keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-a", [serviceForEmail("b@x.co")]: snapshotFor("b@x.co") },
+    });
+    await request(appWith(io)).post("/api/claude-account/switch").send({ email: "b@x.co" }).expect(200);
+    expect(parseDefaultAccount(files.get(INDEX) ?? null)).toBe("b@x.co");
+  });
+
+  it("a logout clears it — the slot holds nobody", async () => {
+    const { io, files } = fakeIo({
+      files: { [CLAUDE_JSON]: claudeJson("a@x.co"), [INDEX]: JSON.stringify({ accounts: [], defaultAccount: "a@x.co" }) },
+      keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-a" },
+    });
+    await request(appWith(io)).post("/api/claude-account/logout").send({}).expect(200);
+    expect(parseDefaultAccount(files.get(INDEX) ?? null)).toBeNull();
   });
 });

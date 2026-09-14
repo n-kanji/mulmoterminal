@@ -10,12 +10,16 @@
 // Split into two linear passes rather than one regex with a nested quantifier: a `(?:\.x+)+`
 // domain reads fine and backtracks badly on hostile input.
 const SHAPE_RE = /^[^\s@/\\]+@[^\s@/\\]+$/;
+// `\s` does not cover NUL and friends, and a control character survives every later step
+// until execFile refuses the argument — which, inside a spawn, is a socket that never answers.
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 const MAX_EMAIL = 254;
 
 export function claudeAccountEmail(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const email = value.trim().toLowerCase();
-  if (email.length === 0 || email.length > MAX_EMAIL || !SHAPE_RE.test(email)) return undefined;
+  if (email.length === 0 || email.length > MAX_EMAIL || CONTROL_RE.test(email) || !SHAPE_RE.test(email)) return undefined;
   const domain = email.slice(email.indexOf("@") + 1);
   // A domain needs a dot, and neither end of it may be one ("a@.com", "a@com.").
   return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".") ? email : undefined;

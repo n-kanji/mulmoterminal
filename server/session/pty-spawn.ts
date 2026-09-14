@@ -75,7 +75,11 @@ export function ptySpawn(
     // A pane inherits the tmux SERVER's environment, so stripping our own copy is not
     // enough — the server may already carry the name from an earlier session.
     if (unset.length > 0) tmuxScrubEnvNames(unset);
-    return { term: spawnPty("tmux", tmuxNewSessionArgs(sessionId, file, args, cwd, extraEnv), cwd, unset, extraEnv), tmux: true };
+    // NOT handed to the tmux client's own environment: a tmux SERVER that a spawn creates
+    // inherits THAT spawn's environment (measured — see infra/tmux.ts), and every session
+    // after it would then inherit this pane's account store. The `/usr/bin/env` prefix inside
+    // the new-session command is what puts it on the pane, and only on the pane.
+    return { term: spawnPty("tmux", tmuxNewSessionArgs(sessionId, file, args, cwd, extraEnv), cwd, unset), tmux: true };
   }
   return { term: spawnPty(file, args, cwd, unset, extraEnv), tmux: false };
 }

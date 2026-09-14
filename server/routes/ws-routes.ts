@@ -334,9 +334,17 @@ function startCodexEntry(
 async function accountEnvForSpawn(sessionId: string, requested: string | null, live: boolean): Promise<Record<string, string>> {
   if (live) return {};
   const account = effectiveAccount(sessionId, requested);
-  const env = await accountSpawnEnv(account);
-  if (account) launchAccounts.set(sessionId, account);
-  return env;
+  try {
+    const env = await accountSpawnEnv(account);
+    if (account) launchAccounts.set(sessionId, account);
+    return env;
+  } catch (err) {
+    // A locked Keychain, a `security` that will not answer — the pane still has to open. It
+    // starts on the default login and says why in the log; a rejected promise here would
+    // leave the socket up with no spawn behind it, which reads as a pane that hung.
+    console.warn(`[ws] could not resolve the credential store for ${account} — starting ${sessionId} on the default login: ${messageOf(err)}`);
+    return {};
+  }
 }
 
 async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { url?: string; headers?: unknown }) {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   tmuxSessionName,
   tmuxNewSessionArgs,
+  SCRUBBED_NAMES,
   TMUX_CONF_LINES,
   isResumableTmuxSession,
   parseTmuxEnvironment,
@@ -10,6 +11,7 @@ import {
   MS_OVERRIDE_ENTRY,
 } from "../../../server/infra/tmux";
 import { TERMINAL_SCROLLBACK_DEFAULT } from "../../../common/terminalScrollback";
+import { STORE_ENV_VAR } from "../../../server/backends/claude-account-store.js";
 
 describe("tmuxSessionName", () => {
   it("prefixes the session id", () => {
@@ -58,6 +60,15 @@ describe("tmuxNewSessionArgs with a per-pane environment", () => {
   it("leaves an ordinary pane's command exactly as it was", () => {
     const plain = tmuxNewSessionArgs("id1", "/bin/claude", ["--resume", "x"], "/proj", {});
     expect(plain.slice(plain.indexOf("--") + 1)).toEqual(["/bin/claude", "--resume", "x"]);
+  });
+});
+
+// The store variable is spelled in two places on purpose (infra must not import backends),
+// so the two spellings are pinned together rather than left to drift: a scrub list that has
+// stopped naming it would let an unassigned pane inherit somebody else's login, silently.
+describe("SCRUBBED_NAMES", () => {
+  it("covers the Claude account store variable", () => {
+    expect(SCRUBBED_NAMES.has(STORE_ENV_VAR)).toBe(true);
   });
 });
 
