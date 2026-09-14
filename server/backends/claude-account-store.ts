@@ -47,12 +47,14 @@ export const accountStoreRoot = (): string => path.join(os.homedir(), ".mulmoter
 // rebuilt anywhere else: a different spelling of the same directory is a different Keychain
 // entry, i.e. a pane that is silently logged out.
 export function accountStoreDir(email: string, root: string = accountStoreRoot()): string {
-  const slug = normalizeEmail(email).replace(/[^a-z0-9._@+-]+/g, "_");
-  // "." and ".." survive the character filter (both are legal in the local part) and would
-  // resolve to the root itself or its PARENT. Callers only ever pass a validated address, in
-  // which neither can stand alone — this is the belt for the day one does.
-  const safe = slug === "." || slug === ".." || slug === "" ? "_" : slug;
-  return path.resolve(root, safe).normalize("NFC");
+  const account = normalizeEmail(email);
+  // The readable part is a slug, so a person can tell the directories apart; the hash is what
+  // makes them DISTINCT. Without it "a!b@x.com" and "a#b@x.com" filter down to one directory,
+  // which is one Keychain entry, which is one account's panes running as the other.
+  // The filter also leaves "." and ".." standing, and those resolve to the root and its PARENT.
+  const slug = account.replace(/[^a-z0-9._@+-]+/g, "_").replace(/^\.{1,2}$/, "_") || "_";
+  const hash = createHash("sha256").update(account).digest("hex").slice(0, 8);
+  return path.resolve(root, `${slug}-${hash}`).normalize("NFC");
 }
 
 // The Keychain service Claude Code will read and write for a session pointed at `dir`.

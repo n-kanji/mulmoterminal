@@ -95,3 +95,21 @@ anything else that sets a per-pane variable:
    names has no store, and a store that exists always wins.
 3. **Validators feed execFile.** A control character passed `\s`-based checks and was refused
    deep inside the spawn, which reads as a pane that hangs rather than an error.
+
+## The ownership rule the second review pass settled
+
+A login lives in exactly ONE place at a time:
+
+- the default Keychain slot, for accounts no page has named; or
+- that account's own store, from the moment a page names it.
+
+Everything follows from that. Switching the default TO an account that has a store takes the
+store's credentials (the snapshot beside them may be months old) and then drops the store.
+Seeding only ever fills an EMPTY store. And because `~/.claude.json` is shared — a store-carrying
+pane rewrites it on login — MT records who the default slot holds, learns that record whenever
+it can see the answer unambiguously, and when the record and the file disagree about an account
+that has a store it refuses to move any credential until the operator says which is true. The
+alternative is filing one account's login under another's name, silently.
+
+Still open, and cheap to check the first time it matters: whether Claude Code trips a Keychain
+ACL prompt the first time it reads an entry MT created (`security` wrote it, not the CLI).

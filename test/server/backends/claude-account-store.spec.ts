@@ -36,16 +36,23 @@ const snapshotFor = (email: string) =>
   JSON.stringify({ credentials: `creds-${email}`, oauthAccount: { emailAddress: email }, savedAt: "2026-09-01T00:00:00Z" });
 
 describe("the store directory", () => {
-  it("is absolute, per account, and stable", () => {
-    expect(accountStoreDir("Board@Orosy.co.jp", ROOT)).toBe(`${ROOT}/board@orosy.co.jp`);
+  const hashOf = (email: string) => createHash("sha256").update(email).digest("hex").slice(0, 8);
+
+  it("is absolute, readable, per account, and stable", () => {
+    expect(accountStoreDir("Board@Orosy.co.jp", ROOT)).toBe(`${ROOT}/board@orosy.co.jp-${hashOf("board@orosy.co.jp")}`);
     expect(accountStoreDir("board@orosy.co.jp", ROOT)).toBe(accountStoreDir("  BOARD@OROSY.CO.JP ", ROOT));
   });
 
+  // Two addresses landing on one directory is two accounts landing on one Keychain entry.
+  it("gives addresses that slug alike directories of their own", () => {
+    expect(accountStoreDir("a!b@x.com", ROOT)).not.toBe(accountStoreDir("a#b@x.com", ROOT));
+  });
+
   it("cannot escape its root, whatever the address says", () => {
-    expect(accountStoreDir("../../etc/passwd@x.co", ROOT)).toBe(`${ROOT}/.._.._etc_passwd@x.co`);
+    expect(accountStoreDir("../../etc/passwd@x.co", ROOT).startsWith(`${ROOT}/.._.._etc_passwd@x.co-`)).toBe(true);
     // "." and ".." pass the character filter and would name the root and its PARENT.
-    expect(accountStoreDir("..", ROOT)).toBe(`${ROOT}/_`);
-    expect(accountStoreDir(".", ROOT)).toBe(`${ROOT}/_`);
+    expect(accountStoreDir("..", ROOT)).toBe(`${ROOT}/_-${hashOf("..")}`);
+    expect(accountStoreDir(".", ROOT)).toBe(`${ROOT}/_-${hashOf(".")}`);
   });
 });
 
@@ -53,14 +60,14 @@ describe("the store directory", () => {
 // same directory). Pinned as a literal so a refactor of the formula cannot drift silently.
 describe("the Keychain service name", () => {
   it("is the CLI's own derivation: the default entry plus 8 hex of sha256(dir)", () => {
-    const dir = `${ROOT}/b@orosy.co.jp`;
+    const dir = accountStoreDir("b@orosy.co.jp", ROOT);
     const hash = createHash("sha256").update(dir).digest("hex").slice(0, 8);
     expect(keychainServiceForDir(dir)).toBe(`${CLAUDE_KEYCHAIN_SERVICE}-${hash}`);
     // Pinned, so a refactor of the formula cannot drift silently. Checked against the real
     // CLI on 2026-09-14: with CLAUDE_SECURESTORAGE_CONFIG_DIR set, claude read the entry at
     // exactly this name — an empty one answered "Not logged in", and one seeded by hand
     // answered "OAuth session expired", which only the entry it actually reads can do.
-    expect(keychainServiceForDir(dir)).toBe("Claude Code-credentials-d93a60a1");
+    expect(keychainServiceForDir(dir)).toBe("Claude Code-credentials-9256c196");
   });
 });
 
