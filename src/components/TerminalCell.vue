@@ -1440,14 +1440,15 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                per row; the name chip clips at its own cap). Yields to the name input. -->
           <span v-if="!renaming" class="min-w-0 flex-auto" />
         </div>
-        <!-- The action buttons (attach / toolbar toggle / fork / restore-when-expanded /
-             close) stay on row 1 (the info row) and OUTSIDE the info track, so they're
-             always pinned top-right. The hand-rolled buttons here use `.stop`;
-             CellChromeButtons relies on shouldZoomOnHeaderClick declining clicks inside
-             any button (see its own comment). -->
+        <!-- The action buttons (toolbar toggle / read / restore-when-expanded / close) stay
+             on row 1 (the info row) and OUTSIDE the info track, so they're always pinned
+             top-right. Row 1 is the crowded one: attach / fork / park moved down to the
+             toolbar row on 2026-09-15 so the model name gets its pixels back. The
+             hand-rolled buttons here use `.stop`; CellChromeButtons relies on
+             shouldZoomOnHeaderClick declining clicks inside any button (see its own comment). -->
         <span class="cell-actions" :class="CELL_ACTIONS">
           <!-- Operator-requested order (2026-08-22): the toolbar toggle sits FIRST — a
-               stable leftmost anchor for the row — then attach / read / fork / close. -->
+               stable leftmost anchor for the row — then read / close. -->
           <button
             v-if="!expanded"
             type="button"
@@ -1460,24 +1461,12 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">more_horiz</span>
           </button>
-          <!-- R14: the attach button, always visible — the operator sends screenshots and
-               context files constantly and the picker must not hide behind the toolbar
-               toggle. Any file: the host copies it into the attachment store and the copy's
-               path is inserted. -->
-          <button
-            v-if="launched"
-            type="button"
-            data-testid="cell-attach-btn"
-            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
-            title="ファイルを添付（パスを挿入）"
-            aria-label="Attach a file"
-            @click.stop="attachInput?.click()"
-          >
-            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">attach_file</span>
-          </button>
-          <!-- @click.stop: the programmatic attachInput.click() dispatches a real click that
-               would bubble to the header's click-to-zoom — Finder opening AND the pane
-               maximizing was the reported bug. -->
+          <!-- The attach / fork / park buttons left this row for the toolbar row (operator
+               request 2026-09-15: with twenty-odd columns open, row 1 had no room left for
+               the model name). The picker input stays here — hidden, and the toolbar row's
+               button reaches it through the ref. @click.stop: the programmatic
+               attachInput.click() dispatches a real click that would bubble to the header's
+               click-to-zoom — Finder opening AND the pane maximizing was the reported bug. -->
           <input ref="attachInput" type="file" multiple class="hidden" aria-hidden="true" tabindex="-1" @click.stop @change="onAttachPick" />
           <!-- The reading view: the conversation rendered without tool logs. Row 1 because
                reading replies IS the operator's core loop on a tile — a long turn buries
@@ -1494,28 +1483,6 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
           >
             <span class="material-symbols-outlined text-[14px]" aria-hidden="true">menu_book</span>
           </button>
-          <!-- Fork sits where the Expand arrow used to be: the operator forks conversations
-               often and expands almost never (header click-to-zoom still expands). Claude
-               only (codex has no --fork-session), and only once there is a conversation
-               to branch. `.stop` so it doesn't trigger the header's click-to-zoom. -->
-          <button
-            v-if="sessionId && agent !== 'codex'"
-            type="button"
-            data-testid="cell-fork"
-            class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
-            title="Fork this conversation into a new column (claude --resume --fork-session)"
-            aria-label="Fork this session into a new column"
-            @click.stop="emit('fork')"
-          >
-            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">call_split</span>
-          </button>
-          <!-- Park (2026-08-26): shelve this column into the dock with a "resume when" note,
-               session intact. Only once there is a session to come back to.
-               The box opens on the last note this pane was parked with, and failing that on the
-               pane's own name (operator request 2026-09-12): most panes are named by hand, so
-               the operator was retyping what the header already said just to get a card that
-               reads as something. A note, once written, still wins over the name. -->
-          <CellParkMenu v-if="sessionId" :initial="parkNote ?? name" @park="(note) => emit('park', note)" />
           <CellChromeButtons :expanded="expanded" hide-expand @toggle-expand="emit('toggle-expand')" @close="close" />
         </span>
       </div>
@@ -1655,6 +1622,43 @@ onUnmounted(() => document.removeEventListener("keydown", onDiffKey));
                Hidden on a single-page grid (no targets). Sits behind the toolbar toggle
                like Expand — used when reorganizing, not every minute. -->
           <CellPageMenu :targets="pageTargets" @pick="(page) => emit('move-to-page', page)" />
+          <!-- Attach / fork / park (moved here from row 1, operator request 2026-09-15: with
+               twenty-odd columns open, row 1 had no room left for the model name). Any file:
+               the host copies it into the attachment store and the copy's path is inserted;
+               the hidden picker input lives on row 1 and is reached through the ref. -->
+          <button
+            v-if="launched"
+            type="button"
+            data-testid="cell-attach-btn"
+            class="cell-btn"
+            :class="CELL_BTN"
+            title="ファイルを添付（パスを挿入）"
+            aria-label="Attach a file"
+            @click.stop="attachInput?.click()"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
+          </button>
+          <!-- Fork: Claude only (codex has no --fork-session), and only once there is a
+               conversation to branch. -->
+          <button
+            v-if="sessionId && agent !== 'codex'"
+            type="button"
+            data-testid="cell-fork"
+            class="cell-btn"
+            :class="CELL_BTN"
+            title="Fork this conversation into a new column (claude --resume --fork-session)"
+            aria-label="Fork this session into a new column"
+            @click.stop="emit('fork')"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">call_split</span>
+          </button>
+          <!-- Park (2026-08-26): shelve this column into the dock with a "resume when" note,
+               session intact. Only once there is a session to come back to.
+               The box opens on the last note this pane was parked with, and failing that on the
+               pane's own name (operator request 2026-09-12): most panes are named by hand, so
+               the operator was retyping what the header already said just to get a card that
+               reads as something. A note, once written, still wins over the name. -->
+          <CellParkMenu v-if="sessionId" :initial="parkNote ?? name" @park="(note) => emit('park', note)" />
           <!-- Operator-requested swap (2026-08-22): the reorder arrows are gone (the header
                drag reorders columns), and the Expand button that left row 1 lives HERE
                instead — rare enough to sit behind the toolbar toggle, but still one click

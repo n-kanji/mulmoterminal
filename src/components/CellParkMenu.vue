@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CELL_BTN } from "./cellChromeClasses";
 // "Park this pane" (operator request 2026-08-26): the header button that shelves a column into
 // the dock, asking first what the operator is waiting for — the note is the point, a parked
 // pane with no note is a pane the operator will not remember why it is there.
@@ -56,15 +57,15 @@ function onKeydown(e: KeyboardEvent) {
     <button
       type="button"
       data-testid="cell-park"
-      class="cell-btn inline-flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded border-0 bg-transparent text-inherit hover:bg-hover"
-      :class="{ 'bg-hover': open }"
+      class="cell-btn flex-none"
+      :class="[CELL_BTN, { 'bg-hover': open }]"
       title="保留にする（閉じずに小さく格納・再開条件をメモ）"
       aria-label="Park this pane"
       aria-haspopup="true"
       :aria-expanded="open"
       @click.stop="open = !open"
     >
-      <span class="material-symbols-outlined text-[14px]" aria-hidden="true">move_to_inbox</span>
+      <span class="material-symbols-outlined" aria-hidden="true">move_to_inbox</span>
     </button>
     <div
       v-if="open"

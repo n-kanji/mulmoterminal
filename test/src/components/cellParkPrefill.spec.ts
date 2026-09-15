@@ -14,7 +14,9 @@ vi.mock("../../../src/components/Terminal.vue", () => ({
     name: "TerminalView",
     props: ["sessionId", "connectKey", "cwd", "hideHeader"],
     emits: ["session", "cwd"],
-    template: '<div class="stub-term" />',
+    // The header-actions slot carries attach / fork / park since 2026-09-15; render it
+    // the way Terminal.vue does — only while the header row is shown.
+    template: '<div class="stub-term"><slot v-if="!hideHeader" name="header-actions" /></div>',
     methods: {
       terminate() {},
     },
@@ -44,6 +46,8 @@ const openParkBox = async (props: Record<string, unknown>) => {
       ...props,
     },
   });
+  await flushPromises();
+  await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click"); // park sits on the toolbar row (2026-09-15)
   await flushPromises();
   await w.find('[data-testid="cell-park"]').trigger("click");
   await flushPromises();

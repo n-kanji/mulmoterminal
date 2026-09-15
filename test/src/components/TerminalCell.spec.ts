@@ -1709,14 +1709,16 @@ describe("TerminalCell", () => {
     expect(w.find('[data-testid="ccx-remove"]').text()).toContain("Discard");
   });
 
-  it("row 1 keeps ... + fork/close; row 2 (tools) is hidden until the ... summons it", async () => {
+  it("row 1 keeps ... + read/close; row 2 (tools) is hidden until the ... summons it", async () => {
     const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj" });
     await flushPromises();
     const header = w.find(".cell-header");
     expect(header.find(".cell-dir").exists()).toBe(false); // identity moved to stripe + hover title
     expect(header.find(".cell-close").exists()).toBe(true);
-    // Fork took the Expand arrow's spot (the header's click-to-zoom still expands).
-    expect(header.find('[data-testid="cell-fork"]').exists()).toBe(true);
+    // Fork / attach / park moved down to the toolbar row (2026-09-15); Expand went there earlier.
+    expect(header.find('[data-testid="cell-fork"]').exists()).toBe(false);
+    expect(header.find('[data-testid="cell-attach-btn"]').exists()).toBe(false);
+    expect(header.find('[data-testid="cell-park"]').exists()).toBe(false);
     expect(header.find('[aria-label="Expand terminal"]').exists()).toBe(false);
     const tools = header.find('[aria-label="Toggle the terminal tool bar"]');
     expect(tools.exists()).toBe(true);
@@ -1729,7 +1731,7 @@ describe("TerminalCell", () => {
     expect(w.findComponent({ name: "TerminalView" }).props("hideHeader")).toBe(false);
   });
 
-  it("pins fork + close outside the info track so crowded header info can't push them off", async () => {
+  it("pins read + close outside the info track so crowded header info can't push them off", async () => {
     const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj" });
     await flushPromises();
     // The info (dot / dir / chips / prompt) lives in the shrinkable, clipping track…
@@ -1737,7 +1739,7 @@ describe("TerminalCell", () => {
     // …while the actions are a SIBLING of it, so they can never be pushed out of the cell.
     expect(w.find(".cell-header > .cell-actions").exists()).toBe(true);
     expect(w.find('[data-testid="cell-header-main"] .cell-actions').exists()).toBe(false);
-    expect(w.find('.cell-actions [data-testid="cell-fork"]').exists()).toBe(true);
+    expect(w.find('.cell-actions [data-testid="cell-read"]').exists()).toBe(true);
     expect(w.find(".cell-actions .cell-close").exists()).toBe(true);
   });
 
@@ -1920,14 +1922,21 @@ describe("TerminalCell", () => {
       expect(empty.find('[data-testid="cell-fork"]').exists()).toBe(false);
     });
 
-    // Fork replaced the Expand arrow on row 1 (operator request: forking is frequent,
-    // expanding is not — the header's click-to-zoom still expands). It must be reachable
-    // in the tiles WITHOUT summoning the toolbar row.
-    it("lives on the always-visible row 1, in the Expand arrow's old spot", async () => {
+    // Fork, attach and park live on the toolbar row, behind the "..." toggle (operator
+    // request 2026-09-15: with twenty-odd columns open, row 1 had no room left for the
+    // model name). In a tile they appear once the toggle summons the row.
+    it("lives on the toolbar row with attach and park, not on row 1", async () => {
       const w = mountCell(id, { initialCwd: "/home/me/proj" }); // tiled: no toolbar row
       await flushPromises();
-      expect(w.find('.cell-actions [data-testid="cell-fork"]').exists()).toBe(true);
-      expect(w.find('[aria-label="Expand terminal"]').exists()).toBe(false);
+      expect(w.find('[data-testid="cell-fork"]').exists()).toBe(false);
+      expect(w.find('[data-testid="cell-attach-btn"]').exists()).toBe(false);
+      expect(w.find('[data-testid="cell-park"]').exists()).toBe(false);
+      await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click");
+      await flushPromises();
+      expect(w.find('.cell-actions [data-testid="cell-fork"]').exists()).toBe(false);
+      expect(w.find('[data-testid="cell-fork"]').exists()).toBe(true);
+      expect(w.find('[data-testid="cell-attach-btn"]').exists()).toBe(true);
+      expect(w.find('[data-testid="cell-park"]').exists()).toBe(true);
     });
 
     // The reading view opens from row 1 too (reading replies is the core loop on a
@@ -1944,6 +1953,8 @@ describe("TerminalCell", () => {
 
     it("does not also zoom the cell when clicked (row 1's header click zooms)", async () => {
       const w = mountCell(id, { initialCwd: "/home/me/proj" });
+      await flushPromises();
+      await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click");
       await flushPromises();
       await w.find('[data-testid="cell-fork"]').trigger("click");
       expect(w.emitted("fork")).toHaveLength(1);

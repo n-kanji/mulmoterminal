@@ -25,7 +25,9 @@ vi.mock("../../../src/components/Terminal.vue", () => ({
     name: "TerminalView",
     props: ["sessionId", "connectKey", "cwd", "hideHeader"],
     emits: ["session", "cwd"],
-    template: '<div class="stub-term" />',
+    // The header-actions slot carries attach / fork / park since 2026-09-15; render it
+    // the way Terminal.vue does — only while the header row is shown.
+    template: '<div class="stub-term"><slot v-if="!hideHeader" name="header-actions" /></div>',
     methods: {
       terminate() {},
     },
@@ -165,6 +167,10 @@ describe("the header attach button", () => {
   // .md rides the same upload as a drop.
   it("uploads a picked file of any type and inserts the saved path", async () => {
     const w = await mountCell();
+    // The button sits on the toolbar row since 2026-09-15; the "..." toggle summons it.
+    expect(w.find('[data-testid="cell-attach-btn"]').exists()).toBe(false);
+    await w.find('[aria-label="Toggle the terminal tool bar"]').trigger("click");
+    await flushPromises();
     expect(w.find('[data-testid="cell-attach-btn"]').exists()).toBe(true);
     const input = w.find('input[type="file"]');
     expect(input.attributes("accept")).toBeUndefined();
