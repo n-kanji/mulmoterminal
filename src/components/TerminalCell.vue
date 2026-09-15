@@ -250,9 +250,11 @@ const ROW1_BUILTIN_CHIPS = new Set(["git", "diff", "ctx", "usage"]);
 // Fork-local (iTerm2 mode): usage stays out of the default header — the token-transfer chip
 // answered a question the operator never asks. ctx (the model) is BACK in (R14): the strip's
 // right-edge badge disappears the moment the strip fills with mission + summary, and "which
-// model is this pane on" must be answerable from the header row too. A directory config that
-// explicitly lists chips still wins.
-const DEFAULT_CELL_CHIP_IDS = ["git", "diff", "ctx"];
+// model is this pane on" must be answerable from the header row too. The git chip
+// ("main ●11") left the default on 2026-09-15 — with twenty-odd columns open it was the
+// last thing crowding the model name out, and the branch is on the toolbar row anyway.
+// A directory config that explicitly lists chips still wins.
+const DEFAULT_CELL_CHIP_IDS = ["diff", "ctx"];
 interface CellChipView {
   key: string;
   builtin: string | null;

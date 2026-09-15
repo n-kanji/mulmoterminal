@@ -1731,6 +1731,16 @@ describe("TerminalCell", () => {
     expect(w.findComponent({ name: "TerminalView" }).props("hideHeader")).toBe(false);
   });
 
+  // Operator request 2026-09-15: the git chip ("main ●11") is out of the default row 1 —
+  // it was the last thing crowding the model name out of a narrow column. The model chip
+  // stays. Pinned so a rebase can't quietly bring the branch back.
+  it("keeps the git chip out of row 1 by default", async () => {
+    const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj" });
+    await flushPromises();
+    expect(w.find('[data-testid="cell-header-main"]').exists()).toBe(true);
+    expect(w.find('[data-testid="cell-header-main"] [data-testid="git-chip"]').exists()).toBe(false);
+  });
+
   it("pins read + close outside the info track so crowded header info can't push them off", async () => {
     const w = mountCell("11111111-1111-1111-1111-111111111111", { initialCwd: "/home/me/proj" });
     await flushPromises();
