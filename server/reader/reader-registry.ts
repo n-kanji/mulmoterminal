@@ -21,13 +21,15 @@ export interface ReaderRoot {
 }
 
 /** The roots on the operator's machine that exist: ~/Projects, where nearly every brief
- *  is, and the Obsidian vault. NOT the Google Drive folder under ~/Library/CloudStorage —
+ *  is, the Obsidian vault, and ~/spaceengine-docs (the team-docs clone — a brief written
+ *  there for publishing sits directly in the root, and on 2026-09-15 one fell through to a
+ *  throwaway tab because this list did not know the folder). NOT the Google Drive folder under ~/Library/CloudStorage —
  *  a file-provider location, which macOS guards with an "access data from other apps"
  *  prompt aimed at this process (node, under launchd) every time it is touched. Each
  *  server start probed it, and the operator got a prompt that never went away (2026-09-10).
  *  A root that is not there is dropped, so a machine without a vault lists what it has. */
 export function defaultReaderRoots(home: string, exists: (p: string) => boolean = fs.existsSync): ReaderRoot[] {
-  const candidates = [path.join(home, "Projects"), path.join(home, "Obsidian")];
+  const candidates = [path.join(home, "Projects"), path.join(home, "Obsidian"), path.join(home, "spaceengine-docs")];
   return candidates.filter((dir) => exists(dir)).map((dir) => ({ dir }));
 }
 

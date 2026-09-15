@@ -46,6 +46,12 @@ describe("defaultReaderRoots", () => {
     const roots = defaultReaderRoots("/home/u", (p) => p === "/home/u/Projects");
     expect(roots).toEqual([{ dir: "/home/u/Projects" }]);
   });
+
+  it("knows the team-docs clone, so a brief written there for publishing is not a stray tab", () => {
+    const roots = defaultReaderRoots("/home/u", () => true);
+    expect(roots.map((r) => r.dir)).toEqual(["/home/u/Projects", "/home/u/Obsidian", "/home/u/spaceengine-docs"]);
+    expect(placeOf("/home/u/spaceengine-docs/_review-x.html", roots)).toEqual({ root: "/home/u/spaceengine-docs", project: "", folder: "" });
+  });
 });
 
 describe("ReaderRegistry.register", () => {
