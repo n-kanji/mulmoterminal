@@ -58,7 +58,7 @@ export function createShellSpawners(deps: SpawnDeps) {
       sendFrame(entry.ws, { type: "output", data });
     });
     term.onExit(({ exitCode, signal }) => {
-      console.log(`[pty] launcher exited code=${exitCode} signal=${signal}`);
+      console.log(`[pty] launcher exited ${sessionId} code=${exitCode} signal=${signal}`);
       sendExitAndClose(entry.ws, exitCode, signal);
       deps.reap(sessionId);
     });

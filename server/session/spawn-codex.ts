@@ -33,7 +33,7 @@ export function createCodexSpawner(deps: SpawnDeps) {
       onOutput?.(data);
     });
     entry.term.onExit(({ exitCode, signal }) => {
-      console.log(`[pty] codex exited code=${exitCode} signal=${signal}`);
+      console.log(`[pty] codex exited ${sessionId} code=${exitCode} signal=${signal}`);
       sendExitAndClose(entry.ws, exitCode, signal);
       deps.reap(sessionId);
     });

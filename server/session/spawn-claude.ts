@@ -182,7 +182,7 @@ export function createClaudeSpawner(deps: SpawnDeps) {
     });
 
     entry.term.onExit(({ exitCode, signal }) => {
-      console.log(`[pty] exited code=${exitCode} signal=${signal}`);
+      console.log(`[pty] exited ${sessionId} code=${exitCode} signal=${signal}`);
       sendExitAndClose(entry.ws, exitCode, signal);
       // Clear the dot if it died mid-turn, then tear down everything (deletes
       // ptys/knownSessions/activity and publishes "closed") so a process that

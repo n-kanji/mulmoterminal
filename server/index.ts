@@ -1,3 +1,5 @@
+// First import on purpose: stamps every log line, including ones written while the rest loads.
+import "./infra/install-log-timestamps.js";
 import express from "express";
 import http from "http";
 import path from "path";
