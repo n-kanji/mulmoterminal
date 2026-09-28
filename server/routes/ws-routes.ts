@@ -234,9 +234,35 @@ export function attachSocketErrorLogger(ws: Pick<WebSocket, "on">, kind: Termina
 }
 
 async function startRunTerminal(deps: WsRouteDeps, ws: WebSocket, url: URL): Promise<void> {
+  const wire = holdEarlyFrames(ws); // before the await: the browser's resize is already on its way
   const resolved = await resolveRunTarget(url);
   if (!resolved) return closeWithError(ws, "Command not found — check your config / script.json.");
-  beginRunTerminal(deps, ws, resolved, termSizeFromParams(url.searchParams));
+  beginRunTerminal(deps, ws, resolved, termSizeFromParams(url.searchParams), wire);
+}
+
+// A frame as the socket delivers it; handleClientFrame / handleCommandFrame only stringify it.
+type EarlyFrame = { toString(): string };
+
+// The browser sends its first frames — the pane's `resize` above all — the instant the socket
+// opens, and the connection handlers that await something (the Keychain in
+// handleClaudeConnection, a git subprocess in startRunTerminal) wire their message listener
+// only afterwards. `ws` drops a message nobody is listening for. That is how a reattached pane
+// sat at the spawn default (120 columns) until its next fit, painting 120-column rows into a
+// 26-column xterm — the "layout is broken after every restart" of 2026-09-28. Hold what arrives
+// early; the returned `wire` installs the real handler and replays the held frames into it, in
+// order, ahead of anything live.
+export function holdEarlyFrames(ws: WebSocket): (handler: (raw: EarlyFrame) => void) => void {
+  const held: EarlyFrame[] = [];
+  const hold = (raw: EarlyFrame) => {
+    held.push(raw);
+  };
+  ws.on("message", hold);
+  return (handler) => {
+    ws.off("message", hold);
+    ws.on("message", handler);
+    for (const raw of held) handler(raw);
+    held.length = 0;
+  };
 }
 
 // Spawn the ephemeral Run PTY and wire its lifecycle. resolveRunTarget above can await a git
@@ -245,7 +271,14 @@ async function startRunTerminal(deps: WsRouteDeps, ws: WebSocket, url: URL): Pro
 // is ephemeral: no reattach, no reap/grace, so its only kill is the close handler below). Bail
 // if the socket has since closed — the same guard handleClaudeConnection applies after its
 // keychain refresh.
-export function beginRunTerminal(deps: WsRouteDeps, ws: WebSocket, resolved: { command: string; cwd: string }, size: TermSize | null = null): void {
+export function beginRunTerminal(
+  deps: WsRouteDeps,
+  ws: WebSocket,
+  resolved: { command: string; cwd: string },
+  size: TermSize | null = null,
+  // Installs the message handler — holdEarlyFrames' `wire` when the caller awaited first.
+  wire: (handler: (raw: EarlyFrame) => void) => void = (handler) => ws.on("message", handler),
+): void {
   if (ws.readyState !== ws.OPEN) return;
   let term: IPty;
   try {
@@ -254,7 +287,7 @@ export function beginRunTerminal(deps: WsRouteDeps, ws: WebSocket, resolved: { c
     console.error(`[ws/run] failed to start command: ${messageOf(err)}`);
     return closeWithError(ws, "Failed to start the command.");
   }
-  ws.on("message", (raw) => handleCommandFrame(term, raw));
+  wire((raw) => handleCommandFrame(term, raw));
   ws.on("close", () => {
     try {
       term.kill(); // ephemeral: no reattach/grace window — the viewer is gone, so end the process
@@ -371,6 +404,8 @@ async function accountEnvForSpawn(sessionId: string, requested: string | null, l
 }
 
 async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { url?: string; headers?: unknown }) {
+  // First, before anything can await: keep the frames the browser sends on open (its resize).
+  const wire = holdEarlyFrames(ws);
   // ?session=<id> resumes an existing conversation; absent => fresh session. For
   // new sessions we generate the id ourselves (--session-id) so the server always
   // knows the current session's id, even before any file exists.
@@ -481,7 +516,7 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
   entry.active = attachGuiMcp;
   if (entry.active) deps.setWaiting(sessionId, false);
 
-  ws.on("message", (raw) => deps.handleClientFrame(entry, ws, raw, sessionId));
+  wire((raw) => deps.handleClientFrame(entry, ws, raw, sessionId));
   ws.on("close", () => deps.handleClientClose(entry, ws, sessionId));
 }
 
