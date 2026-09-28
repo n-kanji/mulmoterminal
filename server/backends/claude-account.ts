@@ -257,8 +257,9 @@ interface ClaudeAccountRouteOptions {
   // credentials (session/restart-claude-panes.ts): how many restarted, and how many of those
   // got the auto-continue nudge (only the working / limit-stuck ones). Injected — this
   // module owns credentials, not the session registry. Absent (tests that don't care)
-  // means "restart is unavailable" and restart requests report 0.
-  restartPanes?: () => { restarted: number; nudged: number };
+  // means "restart is unavailable" and restart requests report 0. `only` narrows it to the
+  // named sessions (the per-page move, 2026-09-28); absent = the whole fleet.
+  restartPanes?: (only?: ReadonlySet<string> | null) => { restarted: number; nudged: number };
   // The per-account credential stores (backends/claude-account-store.ts), injected at the
   // composition root for the same reason as `restartPanes`: this module owns the default slot,
   // not the stores. All absent = "no stores", the world before them.
@@ -272,6 +273,18 @@ interface ClaudeAccountRouteOptions {
 }
 
 const NO_RESTART = { restarted: 0, nudged: 0 };
+
+// The `sessions` narrowing of a restart request: absent = the whole fleet (null); a list of
+// ids = just those; anything else = a malformed request (false), refused rather than read as
+// "everything" — a client that meant one page must not restart twenty panes on a typo. The
+// ids are only ever compared against the live registry's keys, so their shape is not
+// validated beyond "a non-empty string": an id nobody has simply matches nothing.
+export function sessionsFromBody(body: unknown): ReadonlySet<string> | null | false {
+  if (!isRecord(body) || body.sessions === undefined) return null;
+  const list = body.sessions;
+  if (!Array.isArray(list) || !list.every((s): s is string => typeof s === "string" && s.length > 0)) return false;
+  return new Set(list);
+}
 
 export function mountClaudeAccountRoutes(app: Express, options: ClaudeAccountRouteOptions, io: ClaudeAccountIo = realIo()): void {
   mountReadAndSwitch(app, options, io);
@@ -314,10 +327,18 @@ function mountReadAndSwitch(app: Express, options: ClaudeAccountRouteOptions, io
   // The fleet restart on its own: for a switch done with the box unticked, or done outside
   // MT entirely (`claude /logout` + login in a pane) — either way the operator can still
   // move every existing pane onto whatever the live credentials now are.
+  //
+  // With `sessions: [...]` in the body (the per-page move, 2026-09-28) only those panes
+  // restart: the chip has just re-stamped them with the page's account, and their reconnect
+  // carries it. The account itself never travels here — the reconnect's `?account=` is the
+  // one place a pane's account is decided (session/launch-account.ts), and a second channel
+  // for the same fact is how two of them disagree.
   app.post("/api/claude-account/restart-panes", (req, res) => {
     if (!guard(req, res, isAllowedOrigin)) return;
+    const only = sessionsFromBody(req.body);
+    if (only === false) return void res.status(400).json({ error: "sessions must be a list of session ids" });
     try {
-      const fleet = restartPanes ? restartPanes() : NO_RESTART;
+      const fleet = restartPanes ? restartPanes(only) : NO_RESTART;
       res.json({ ok: true, restartedPanes: fleet.restarted, nudgedPanes: fleet.nudged });
     } catch (e) {
       res.status(500).json({ error: message(e) });

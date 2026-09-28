@@ -207,7 +207,7 @@ export function mountAppRoutes(app: Express, deps: AppRouteDeps): void {
 function mountAccountChip(app: Express, deps: AppRouteDeps): void {
   mountClaudeAccountRoutes(app, {
     isAllowedOrigin: deps.isAllowedOrigin,
-    restartPanes: () => restartClaudePanes(deps.reap),
+    restartPanes: (only) => restartClaudePanes(deps.reap, undefined, undefined, undefined, only ?? null),
     hasStore: (email) => accountHasStore(email),
     readStore: (email) => readAccountStore(email),
     dropStore: (email) => dropAccountStore(email),

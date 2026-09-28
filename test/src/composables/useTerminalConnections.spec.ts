@@ -160,6 +160,36 @@ describe("useTerminalConnections — detached-slot state replay", () => {
     expect(second.onCwd).toHaveBeenCalledWith("/resolved");
   });
 
+  it("updateTarget: a re-stamped account rides the NEXT connect without forcing one now (the per-page move)", () => {
+    vi.useFakeTimers();
+    try {
+      const el = document.createElement("div");
+      conn.attach("cell-race", { ...target("sess-1"), account: null }, { onSession: vi.fn(), onCwd: vi.fn() }, el);
+      const first = FakeWebSocket.instances.at(-1);
+      if (!first) throw new Error("no socket created");
+      first.onopen?.();
+      expect(first.url).not.toContain("account=");
+
+      // The grid re-stamps the cell; the component hands the slot its new target. Nothing
+      // reconnects here — the same socket is still the live one.
+      conn.updateTarget("cell-race", { ...target("sess-1"), account: "b@orosy.co.jp" });
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(conn.connView.get("cell-race")?.status).toBe("connected");
+
+      // The server restarts the pty and closes the socket plainly (no exit frame): the
+      // reconnect must carry the new stamp AND the same session, so the cold resume lands on
+      // the new account. Before updateTarget it carried the stamp the pane launched with.
+      first.onclose?.();
+      vi.advanceTimersByTime(10_000);
+      const second = FakeWebSocket.instances.at(-1);
+      if (!second || second === first) throw new Error("no reconnect");
+      expect(second.url).toContain("account=b%40orosy.co.jp");
+      expect(second.url).toContain("session=sess-1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("wires the Enter handler through ensure() (cr mode): sends \\x1b\\r on Shift+Enter and cancels the default", () => {
     mockKeyState.handler = () => true; // reset (the mock persists across tests)
     setTerminalSubmitMode("cr");

@@ -11,13 +11,27 @@
 // Both lists only reach NEW panes. A running claude holds its token in-process for life, so
 // a pane that is already up keeps the account it started on — which is why a pane whose
 // account differs from its page labels itself in the status strip rather than being quietly
-// misdescribed here.
+// misdescribed here. The one way to move those is the explicit "move the running panes" item
+// under the page list (2026-09-28): re-stamp, restart, resume.
 import { computed, ref, useTemplateRef } from "vue";
 import { useDropdownMenu } from "../composables/useDropdownMenu";
 import { useClaudeAccount } from "../composables/useClaudeAccount";
-import { applyPageAccount, usePageAccount } from "../composables/usePageAccount";
+import { applyPageAccount, movePagePanes, usePageAccount } from "../composables/usePageAccount";
 
-const { current, ambiguous, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin, declareDefault } = useClaudeAccount();
+const {
+  current,
+  ambiguous,
+  accounts,
+  busy,
+  error,
+  notice,
+  refresh,
+  switchTo,
+  restartAllPanes,
+  restartPanes: restartSessions,
+  logoutForNewLogin,
+  declareDefault,
+} = useClaudeAccount();
 // Null when no grid is mounted (a full-screen overlay): there is no page to assign, so the
 // menu shows the default login only.
 const { pageAccount } = usePageAccount();
@@ -63,6 +77,21 @@ function pickForPage(email: string | null): void {
   applyPageAccount(email);
   const target = email ?? `既定のログイン（${current.value ?? "未ログイン"}）`;
   notice.value = `${pageAccount.value?.pageName ?? "このページ"}の新しいペインは ${target} で起動します。起動済みのペインはそのままです。`;
+}
+
+// Move this page's RUNNING panes onto its account (operator request 2026-09-28): the grid
+// re-stamps them, then the server restarts exactly those, and each resumes its conversation on
+// the page's login. The one case where an existing pane's account changes — and it changes on
+// a click that names the page, never on a page default set later.
+async function moveRunningPanes(): Promise<void> {
+  if (busy.value) return;
+  const where = effective.value ?? "既定のログイン";
+  const sessions = movePagePanes();
+  if (sessions.length === 0) {
+    notice.value = `${pageAccount.value?.pageName ?? "このページ"}の起動済みペインはすべて ${where} で動いています。`;
+    return;
+  }
+  await restartSessions(sessions, where);
 }
 
 async function pickDefault(email: string): Promise<void> {
@@ -143,6 +172,21 @@ async function pickDefault(email: string): Promise<void> {
         >
           <span class="material-symbols-outlined w-[16px] text-[15px]" aria-hidden="true">{{ email === pageAccount.account ? "check" : "" }}</span>
           <span class="min-w-0 truncate">{{ email }}</span>
+        </button>
+        <!-- The running panes' move: the two lists above reach NEW panes only, and a page that
+             was assigned after its panes started keeps running them on the old login with no
+             way to say "all of this page, on this account, now" short of the global switch. -->
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="page-account-move-panes"
+          class="flex w-full cursor-pointer items-center gap-2 rounded border-0 bg-transparent px-2 py-1.5 text-left text-[12px] text-muted hover:bg-hover hover:text-fg"
+          :disabled="busy"
+          :title="`${pageAccount.pageName}の起動済みの claude ペインを ${effective ?? '既定のログイン'} で再起動し、それぞれの会話を復元する。すでにそのアカウントのペインはそのまま。`"
+          @click="moveRunningPanes()"
+        >
+          <span class="material-symbols-outlined w-[16px] text-[15px]" aria-hidden="true">restart_alt</span>
+          <span class="min-w-0 truncate">起動済みのペインも {{ effective ? effective.split("@")[0] : "既定" }} に移す（再起動・会話は復元）</span>
         </button>
         <div class="my-1 border-t border-border" />
       </template>

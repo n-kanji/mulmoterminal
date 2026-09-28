@@ -262,6 +262,16 @@ watch(
   },
 );
 
+// The account stamp can change under a LIVE pane (the per-page move re-stamps the cell, then
+// the server restarts its pty). The reconnect that follows builds its URL from the target the
+// manager holds — not from these props — so the new stamp has to reach the slot BEFORE that
+// close arrives. No reconnect here: the running process keeps its login regardless, and the
+// restart is the server's to do.
+watch(
+  () => props.account,
+  () => conn.updateTarget(slotKey, currentTarget()),
+);
+
 // Report to the server whether this terminal is the user's actively-viewed pane, so
 // an unfocused grid cell can surface blocked/done and a viewed one stays suppressed.
 const managesAttention = computed(() => terminalManagesAttention(!!props.command, !!props.launcher));

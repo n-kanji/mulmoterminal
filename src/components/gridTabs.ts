@@ -554,6 +554,38 @@ export function stampAccount(state: GridState, uid: number, email: string | null
   return { ...state, cells: state.cells.map((c) => (c.uid === uid && !c.account && c.agent !== "codex" ? { ...c, account } : c)) };
 }
 
+// The one deliberate exception to "a stamp is for life" (operator request 2026-09-28): move
+// the RUNNING claude panes among `uids` — the caller's "every cell on this page", read off the
+// same laid-out order the account map uses (GridView's pageAccountByUid) — onto `email`: the
+// page's own account, or the default login when null. Returns the new state and the session
+// ids that changed, which the caller restarts (POST /api/claude-account/restart-panes with
+// those ids) so each one cold-resumes with its new stamp on the `/ws` query. Stamped first,
+// restarted second: the reconnect reads the stamp whenever it fires, so the order of the two
+// round trips cannot matter.
+// A pane already on the account is left alone — no stamp change, no restart — which is what
+// makes the item safe to click twice. Codex cells and cells with no session are not panes
+// this can move: the first runs on no claude.ai login, the second has nothing to restart and
+// will inherit the page's account on launch anyway (cellConnectAccount).
+export function restampPanes(state: GridState, uids: Iterable<number>, email: string | null): { state: GridState; sessions: string[] } {
+  const target = accountEmail(email);
+  const wanted = new Set(uids);
+  const moving = new Set<number>();
+  const sessions: string[] = [];
+  for (const c of state.cells) {
+    if (!wanted.has(c.uid) || c.hole || c.agent === "codex" || !c.session || c.account === target) continue;
+    moving.add(c.uid);
+    sessions.push(c.session);
+  }
+  if (moving.size === 0) return { state, sessions };
+  const cells = state.cells.map((c) => {
+    if (!moving.has(c.uid)) return c;
+    const rest: Cell = { ...c };
+    delete rest.account;
+    return target ? { ...rest, account: target } : rest;
+  });
+  return { state: { ...state, cells }, sessions };
+}
+
 export function setCwd(state: GridState, uid: number, cwd: string): GridState {
   return { ...state, cells: state.cells.map((c) => (c.uid === uid ? { ...c, cwd } : c)) };
 }

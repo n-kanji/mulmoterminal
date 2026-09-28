@@ -17,6 +17,11 @@ function restartNotice(restarted: number | undefined, nudged: number | undefined
   return `restarted ${restarted} pane(s) ${tail}, auto-continued ${nudged ?? 0}`;
 }
 
+// The per-page move's confirmation (2026-09-28): how many of this page's panes restarted onto
+// `where`, and how many of those were mid-work and got the carry-on nudge.
+const moveNotice = (r: PostResult, where: string): string =>
+  `${r.restartedPanes ?? 0} 個のペインを ${where} で再起動しました（会話は復元、作業中だった ${r.nudgedPanes ?? 0} 個に続行を指示）。`;
+
 interface PostResult {
   ok: boolean;
   error?: string;
@@ -111,6 +116,13 @@ export function useClaudeAccount() {
     return report(result, `Restarted ${result.restartedPanes ?? 0} pane(s), auto-continued ${result.nudgedPanes ?? 0}.`, "restart failed");
   };
 
+  // The per-page move (2026-09-28): restart just these sessions, already re-stamped by the grid
+  // with the page's account. `where` is for the confirmation only — the reconnect carries it.
+  const restartPanes = async (sessions: string[], where: string): Promise<boolean> => {
+    const result = await post("/api/claude-account/restart-panes", { sessions });
+    return report(result, moveNotice(result, where), "restart failed");
+  };
+
   // The operator settles which account the default slot holds. Nothing else can: the two
   // sources disagree and only they know which login they last typed where.
   const declareDefault = async (email: string): Promise<boolean> =>
@@ -121,5 +133,5 @@ export function useClaudeAccount() {
 
   onMounted(() => void refresh());
 
-  return { current, ambiguous, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, logoutForNewLogin, declareDefault };
+  return { current, ambiguous, accounts, busy, error, notice, refresh, switchTo, restartAllPanes, restartPanes, logoutForNewLogin, declareDefault };
 }

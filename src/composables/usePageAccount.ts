@@ -14,17 +14,27 @@ export interface PageAccountView {
   pageName: string;
 }
 
-const view = ref<PageAccountView | null>(null);
-let applier: ((email: string | null) => void) | null = null;
+// What the grid does for the chip: point the active page at an account, and — the running
+// panes' move (operator request 2026-09-28) — re-stamp the page's live panes with that account
+// and hand back their session ids for the restart. Two functions, one registration: they
+// belong to the same grid, and a chip that could set a page it cannot move is half a control.
+export interface PageAccountHandler {
+  setAccount: (email: string | null) => void;
+  // Returns the sessions whose stamp just changed; empty when every pane is already there.
+  movePanes: () => string[];
+}
 
-// GridView owns the pages: it registers the setter and keeps `view` current.
-export function registerPageAccountHandler(h: (email: string | null) => void): () => void {
-  applier = h;
+const view = ref<PageAccountView | null>(null);
+let handler: PageAccountHandler | null = null;
+
+// GridView owns the pages: it registers the handler and keeps `view` current.
+export function registerPageAccountHandler(h: PageAccountHandler): () => void {
+  handler = h;
   // Guarded like useNewTerminal's: a second mount registering before the first unmounts must
-  // keep ITS applier and ITS view, or the chip goes blank for the grid that is actually up.
+  // keep ITS handler and ITS view, or the chip goes blank for the grid that is actually up.
   return () => {
-    if (applier !== h) return;
-    applier = null;
+    if (handler !== h) return;
+    handler = null;
     view.value = null;
   };
 }
@@ -36,7 +46,13 @@ export function reportPageAccount(next: PageAccountView): void {
 // Point the ACTIVE page at an account (null = follow the default login). No-op without a
 // grid — the chip hides the per-page section in that case rather than offering a dead click.
 export function applyPageAccount(email: string | null): void {
-  applier?.(email);
+  handler?.setAccount(email);
+}
+
+// Re-stamp the active page's running panes with the page's account and return the session
+// ids to restart. Without a grid there is nothing to move, and an empty list says so.
+export function movePagePanes(): string[] {
+  return handler?.movePanes() ?? [];
 }
 
 export function usePageAccount() {

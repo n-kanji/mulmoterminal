@@ -245,6 +245,29 @@ describe("pane restarts", () => {
       ).status,
     ).toBe(403);
   });
+
+  it("POST /restart-panes with `sessions` narrows the restart to those ids (the per-page move); a malformed list is refused, not widened", async () => {
+    const { io } = switchable();
+    const restartPanes = vi.fn((only?: ReadonlySet<string> | null) => ({ restarted: only?.size ?? 99, nudged: 0 }));
+    const res = await request(appWith(io, true, restartPanes))
+      .post("/api/claude-account/restart-panes")
+      .send({ sessions: ["s1", "s2"] });
+    expect(res.body).toEqual({ ok: true, restartedPanes: 2, nudgedPanes: 0 });
+    expect([...(restartPanes.mock.calls[0][0] as ReadonlySet<string>)]).toEqual(["s1", "s2"]);
+    // No `sessions` at all = the fleet (the switch's own restart), so the seam sees null.
+    await request(appWith(io, true, restartPanes))
+      .post("/api/claude-account/restart-panes")
+      .send({});
+    expect(restartPanes.mock.calls[1][0]).toBeNull();
+    // A typo'd body must not restart twenty panes: 400, and the seam is never reached.
+    for (const sessions of ["s1", [1], [""], {}]) {
+      const bad = await request(appWith(io, true, restartPanes))
+        .post("/api/claude-account/restart-panes")
+        .send({ sessions });
+      expect(bad.status).toBe(400);
+    }
+    expect(restartPanes).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("POST /api/claude-account/logout", () => {

@@ -9,6 +9,7 @@ import {
   pageSlice,
   parseGridState,
   realCells,
+  restampPanes,
   setPageAccount,
   setSession,
   stampAccount,
@@ -16,6 +17,7 @@ import {
   PAGE_SIZE,
   type GridState,
 } from "../../../src/components/gridTabs";
+import { cellConnectAccount } from "../../../src/components/cellAccount";
 
 const cell = (uid: number, session: string | null = null) => ({ uid, session, cwd: "/tmp" });
 const base = (cells = [cell(0)]): GridState => ({ cells, expanded: null, page: 0, nextUid: cells.length, sortMode: "manual" });
@@ -135,5 +137,57 @@ describe("opening a page", () => {
   it("leaves the grid alone when the terminals are all used up", () => {
     const full = base(busy(PAGE_SIZE * MAX_PAGES));
     expect(addPage(full)).toBe(full);
+  });
+});
+
+// The one deliberate exception to "a stamp is for life" (operator request 2026-09-28): the
+// chip's "move this page's running panes" re-stamps them and names the sessions to restart.
+describe("restampPanes", () => {
+  type Cell = GridState["cells"][number];
+  const stamped = (uid: number, session: string | null, account?: string, extra: Partial<Cell> = {}): Cell => ({
+    ...cell(uid, session),
+    ...(account ? { account } : {}),
+    ...extra,
+  });
+  const grid = (cells: Cell[]): GridState => ({ ...base(), cells, nextUid: cells.length });
+
+  it("re-stamps the running claude panes among the uids and returns exactly their sessions", () => {
+    const state = grid([
+      stamped(0, "s0"), // launched on the default login before the page was assigned
+      stamped(1, "s1", "kanji@spaceengine.io"), // stamped with the other account
+      stamped(2, "s2", "b@orosy.co.jp"), // already there: untouched, not restarted
+      stamped(3, null), // no session: nothing to restart, will inherit on launch
+      stamped(4, "s4", undefined, { agent: "codex" as const }), // not a claude.ai login at all
+      stamped(5, "s5"), // not among the uids (another page)
+    ]);
+    const moved = restampPanes(state, [0, 1, 2, 3, 4], "B@Orosy.co.jp");
+    expect(moved.sessions).toEqual(["s0", "s1"]);
+    const by = (uid: number): Cell => moved.state.cells.find((c) => c.uid === uid) ?? stamped(-1, null);
+    expect(by(0)?.account).toBe("b@orosy.co.jp");
+    expect(by(1)?.account).toBe("b@orosy.co.jp");
+    expect(by(2)?.account).toBe("b@orosy.co.jp");
+    expect(by(3)?.account).toBeUndefined();
+    expect(by(4)?.account).toBeUndefined();
+    expect(by(5)?.account).toBeUndefined();
+    // A cell that now carries the page's account CONNECTS as it — that is what the restart reads.
+    expect(cellConnectAccount(by(0), "b@orosy.co.jp")).toBe("b@orosy.co.jp");
+  });
+
+  it("moves panes back onto the default login by clearing their stamps, and is a no-op when everyone is there already", () => {
+    const state = grid([stamped(0, "s0", "b@orosy.co.jp"), stamped(1, "s1")]);
+    const moved = restampPanes(state, [0, 1], null);
+    expect(moved.sessions).toEqual(["s0"]);
+    // Cleared means ABSENT, not `account: undefined` — the persisted blob must not carry the key.
+    expect(Object.keys(moved.state.cells[0])).not.toContain("account");
+    // Second click: nothing differs, so the state object itself is returned and no session named.
+    const again = restampPanes(moved.state, [0, 1], null);
+    expect(again.state).toBe(moved.state);
+    expect(again.sessions).toEqual([]);
+  });
+
+  it("survives a reload: the new stamp is what comes back from localStorage", () => {
+    const moved = restampPanes(grid([stamped(0, UUID)]), [0], "b@orosy.co.jp");
+    const back = parseGridState(JSON.stringify(moved.state)) as GridState;
+    expect(back.cells[0].account).toBe("b@orosy.co.jp");
   });
 });

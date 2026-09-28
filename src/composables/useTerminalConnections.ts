@@ -660,6 +660,18 @@ export function retarget(key: string, target: ConnTarget) {
   connect(c);
 }
 
+// The target changed in a way that must NOT reconnect — today only its account stamp (the
+// per-page move, 2026-09-28). The slot's target is what the NEXT connect builds its URL from,
+// not the component's props, so a re-stamped pane whose server-side pty is about to be
+// restarted has to hand the new stamp over here first: without this the reconnect carried the
+// account it launched with and the pane came back on the old login (caught live, 2026-09-28).
+// The running socket is left alone — the process behind it holds its login for life anyway.
+export function updateTarget(key: string, target: ConnTarget) {
+  const c = conns.get(key);
+  if (!c) return;
+  c.target = target;
+}
+
 // Permanently tear the slot down (close socket, dispose xterm). Used for ephemeral
 // (command) slots on unmount, and as the back end of terminate().
 export function release(key: string) {

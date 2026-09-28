@@ -107,6 +107,31 @@ describe("restartClaudePanes", () => {
     expect(takeResumeNudge("h1")).toBeUndefined();
   });
 
+  it("restarts only the named sessions when `only` is given (the per-page move), and everything without it", () => {
+    const page1 = fakeEntry("claude", true);
+    const page2 = fakeEntry("claude", true);
+    const entries = () =>
+      new Map<string, PtyEntry>([
+        ["p1", page1 as PtyEntry],
+        ["p2", page2 as PtyEntry],
+      ]);
+    const reaped: string[] = [];
+    // An id that names no live pty is simply not there to restart — not an error.
+    const fleet = restartClaudePanes(
+      (id) => void reaped.push(id),
+      () => "carry on",
+      entries(),
+      new Set(),
+      new Set(["p1", "ghost"]),
+    );
+    expect(fleet).toEqual({ restarted: 1, nudged: 1 });
+    expect(reaped).toEqual(["p1"]);
+    expect(page2.closedWs?.close).not.toHaveBeenCalled();
+    expect(takeResumeNudge("p2")).toBeUndefined();
+    // null = the whole fleet, exactly as before `only` existed.
+    expect(restartClaudePanes(vi.fn(), () => null, entries(), new Set(), null)).toEqual({ restarted: 2, nudged: 0 });
+  });
+
   it("survives a close() that throws", () => {
     const entry = fakeEntry("claude", true);
     entry.closedWs?.close.mockImplementation(() => {

@@ -15,6 +15,7 @@ import {
   addPage,
   MAX_PAGES,
   stampAccount,
+  restampPanes,
   pageAccount,
   pageOfIndex,
   setCwd,
@@ -736,8 +737,20 @@ const detachPageAccount = () => {
 const publishPageAccount = () => reportPageAccount({ account: activePageAccount.value, pageName: activePageName.value });
 watch([activePageAccount, activePageName], publishPageAccount);
 onActivated(() => {
-  offPageAccount = registerPageAccountHandler((email) => {
-    state.value = setPageAccount(state.value, state.value.page, email);
+  offPageAccount = registerPageAccountHandler({
+    setAccount: (email) => {
+      state.value = setPageAccount(state.value, state.value.page, email);
+    },
+    // The running panes' move (2026-09-28): which cells are "on this page" is read off the
+    // same laid-out order as pageAccountByUid, so the panes this moves are exactly the ones
+    // whose status strip has been saying they differ from the page.
+    movePanes: () => {
+      const page = state.value.page;
+      const uids = orderedCells.value.filter((_, at) => pageOfIndex(at) === page).map((c) => c.uid);
+      const moved = restampPanes(state.value, uids, activePageAccount.value);
+      state.value = moved.state;
+      return moved.sessions;
+    },
   });
   publishPageAccount();
 });

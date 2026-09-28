@@ -68,17 +68,25 @@ export interface FleetRestart {
   nudged: number;
 }
 
+// `only` (operator request 2026-09-28) narrows the restart to the named sessions: the chip's
+// "move this page's running panes onto its account" re-stamps those cells and restarts just
+// them, so the other pages — on their own subscriptions, mid-work — are not touched. Absent
+// (the switch's fleet restart) means every claude pane, as before. A session in `only` that
+// has no live pty is simply not there to restart; the client's next connect cold-resumes it
+// with the new stamp anyway.
 export function restartClaudePanes(
   reap: (id: string) => void,
   nudgeFor: (id: string) => string | null = defaultNudgeFor,
   entries: Map<string, PtyEntry> = ptys,
   hidden: Set<string> = hiddenSessions,
+  only: ReadonlySet<string> | null = null,
 ): FleetRestart {
   let restarted = 0;
   let nudged = 0;
   // Snapshot the entries: reap deletes from the live map mid-iteration.
   for (const [id, entry] of [...entries]) {
     if (entry.agent !== "claude" || hidden.has(id)) continue;
+    if (only && !only.has(id)) continue;
     // Decide the nudge while the pane is still alive — it may need the screen.
     const nudge = nudgeFor(id);
     const ws = entry.ws;
