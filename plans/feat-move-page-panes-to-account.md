@@ -75,8 +75,10 @@ Three gaps worth a follow-up, none fixed here:
 - Snapshotting the live slot trusts `~/.claude.json` for the NAME. A pane on its own store
   rewrites that file on login, so a snapshot can be filed under the wrong account. The
   profile endpoint (`/api/oauth/profile` with the access token) is the only honest name.
-- `declareDefault` cannot be used to correct a record that drifted while the sources agree,
-  and does not clear the ambiguity it is offered for.
+- `declareDefault` cannot be used to correct a record that drifted while the sources agree.
+  (It DID leave the ambiguity in place after being answered — fixed the same evening with
+  `settledOnDisk` in the index; see the commit "answering 'which login is the default' once
+  is remembered".)
 - Nothing shows which account a pane's token actually bills. The status strip shows the
   stamp; the operator caught this from claude.ai's usage meter.
 
