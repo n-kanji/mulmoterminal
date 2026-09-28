@@ -15,6 +15,7 @@ import {
   upsertIndexEntry,
   parseSnapshot,
   parseDefaultAccount,
+  parseSettledOnDisk,
   resolveDefaultAccount,
   serializeIndex,
   CLAUDE_KEYCHAIN_SERVICE,
@@ -420,6 +421,36 @@ describe("switching with per-account stores around", () => {
       await request(app).post("/api/claude-account/default").send({ email: "b@x.co" }).expect(200);
       expect(parseDefaultAccount(files.get(INDEX) ?? null)).toBe("b@x.co");
       expect((await request(app).get("/api/claude-account")).body.ambiguous).toBeNull();
+    });
+
+    // The other answer: the record is right and the file is a store-carrying pane talking. That
+    // pane keeps rewriting the file, so the answer has to be remembered or the question comes
+    // back on every reload (operator report 2026-09-28).
+    it("is settled by keeping the record, and stays settled while the file still names that account", async () => {
+      const { app, files } = ambiguous();
+      await request(app).post("/api/claude-account/default").send({ email: "a@x.co" }).expect(200);
+      expect(parseDefaultAccount(files.get(INDEX) ?? null)).toBe("a@x.co");
+      expect(parseSettledOnDisk(files.get(INDEX) ?? null)).toBe("b@x.co");
+      const res = await request(app).get("/api/claude-account").expect(200);
+      expect(res.body.ambiguous).toBeNull();
+      expect(res.body.current).toBe("a@x.co");
+      // A pane on b's store logging in again rewrites the file with the SAME account: still settled.
+      files.set(CLAUDE_JSON, claudeJson("b@x.co"));
+      expect((await request(app).get("/api/claude-account")).body.ambiguous).toBeNull();
+    });
+
+    it("asks again when the file names a different store-carrying account than the one settled", async () => {
+      const store = new Map([
+        ["b@x.co", "b-live"],
+        ["d@x.co", "d-live"],
+      ]);
+      const { io, files } = fakeIo({
+        files: { [CLAUDE_JSON]: claudeJson("d@x.co"), [INDEX]: JSON.stringify({ accounts: [], defaultAccount: "a@x.co", settledOnDisk: "b@x.co" }) },
+        keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-whoever" },
+      });
+      const res = await request(appWithStores(io, store)).get("/api/claude-account").expect(200);
+      expect(res.body.ambiguous).toEqual({ recorded: "a@x.co", onDisk: "d@x.co" });
+      expect(files.get(INDEX)).toContain("settledOnDisk"); // an unanswered question does not erase the old answer
     });
 
     it("will not relabel the slot as some third account", async () => {

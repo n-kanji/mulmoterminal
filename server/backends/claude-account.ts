@@ -112,11 +112,28 @@ export function parseDefaultAccount(raw: string | null): string | null {
   }
 }
 
+// The ~/.claude.json account the operator has already ANSWERED for (2026-09-28): they were
+// asked "record says A, file says B, which is the default?" and said A. B keeps rewriting the
+// file every time one of its store-carrying panes logs in or refreshes its profile, so without
+// remembering the answer the same question came back on every reload, forever. Absent = no
+// disagreement has been settled; a file that names some OTHER account asks again.
+export function parseSettledOnDisk(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || typeof parsed.settledOnDisk !== "string") return null;
+    return normalizeEmail(parsed.settledOnDisk) || null;
+  } catch {
+    return null;
+  }
+}
+
 // `defaultAccount` must be passed on EVERY write: an omitted one is written as absent, which
 // is how "logged out of the default slot" is expressed — so a writer that forgets it erases
-// the record rather than keeping it.
-export const serializeIndex = (entries: AccountIndexEntry[], defaultAccount: string | null = null): string =>
-  JSON.stringify(defaultAccount ? { accounts: entries, defaultAccount } : { accounts: entries }, null, 2);
+// the record rather than keeping it. `settledOnDisk` rides only with a default: it answers
+// a question about that default, and a logout or a switch makes the answer moot.
+export const serializeIndex = (entries: AccountIndexEntry[], defaultAccount: string | null = null, settledOnDisk: string | null = null): string =>
+  JSON.stringify(defaultAccount ? { accounts: entries, defaultAccount, ...(settledOnDisk ? { settledOnDisk } : {}) } : { accounts: entries }, null, 2);
 
 // Does this account have a credential store of its own? Injected (backends/claude-account-store
 // owns stores; this module owns the default slot) — no stores is the pre-2026-09-14 world.
@@ -144,13 +161,17 @@ export interface DefaultAccountState {
 }
 
 export async function readDefaultAccountState(io: ClaudeAccountIo, hasStore: HasStore = NO_STORES): Promise<DefaultAccountState> {
-  const recorded = parseDefaultAccount(await io.readFile(io.indexPath));
+  const index = await io.readFile(io.indexPath);
+  const recorded = parseDefaultAccount(index);
   const onDisk = emailOf(readOauthAccount(await io.readFile(io.claudeJsonPath)));
   if (!recorded) return { current: onDisk, recorded, onDisk, ambiguous: false };
   if (!onDisk || onDisk === recorded) return { current: recorded, recorded, onDisk, ambiguous: false };
   // They disagree. An account with a store of its own has a pane that could have written the
   // file; anything else is a real login done outside MT, which the record must follow.
   const stored = await hasStore(onDisk);
+  // The operator already answered THIS disagreement (declareDefault kept the record and noted
+  // the file's account): not a question any more, until the file names someone else.
+  if (stored && parseSettledOnDisk(index) === onDisk) return { current: recorded, recorded, onDisk, ambiguous: false };
   return { current: stored ? recorded : onDisk, recorded, onDisk, ambiguous: stored };
 }
 
@@ -161,9 +182,11 @@ export const resolveDefaultAccount = async (io: ClaudeAccountIo, hasStore: HasSt
 // an answer it did not have — without that second half, a machine that has never used the
 // switcher has no record at all, and the first per-account login rewrites the shared file
 // before anything has written down what the slot actually holds.
-export async function rememberDefaultAccount(io: ClaudeAccountIo, email: string | null): Promise<void> {
+// `settledOnDisk` (see parseSettledOnDisk) is passed by declareDefault alone: every other
+// writer changes what the slot holds, and the old answer is about the old slot.
+export async function rememberDefaultAccount(io: ClaudeAccountIo, email: string | null, settledOnDisk: string | null = null): Promise<void> {
   const entries = parseIndex(await io.readFile(io.indexPath));
-  await io.writeFile(io.indexPath, serializeIndex(entries, email));
+  await io.writeFile(io.indexPath, serializeIndex(entries, email, settledOnDisk));
 }
 
 // ---- the snapshot payload (lives inside a Keychain entry) --------------------------------
@@ -391,7 +414,9 @@ function mountDeclareDefault(app: Express, options: ClaudeAccountRouteOptions, i
       if (!email || (email !== state.recorded && email !== state.onDisk)) {
         return void res.status(400).json({ error: "email must be one of the two accounts in question" });
       }
-      await rememberDefaultAccount(io, email);
+      // Keeping the record means the file's account was a store-carrying pane talking: note
+      // it, so the same file keeps being that and not a fresh question on the next reload.
+      await rememberDefaultAccount(io, email, email === state.recorded ? state.onDisk : null);
       res.json({ ok: true, current: email });
     } catch (e) {
       res.status(500).json({ error: message(e) });
