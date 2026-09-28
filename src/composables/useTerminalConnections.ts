@@ -159,6 +159,10 @@ interface Conn {
   theme: ITheme | undefined; // last applied, so a rebuilt terminal keeps the cell's colours
   font: TerminalFont; // same reason as `theme` — a rebuilt terminal must not snap back to the default
   lastRebuildMs: number; // rate-limits the #846 recovery so a stuck reading can't spin
+  // The last size the host actually measured (see measuredSize). A slot that reconnects while
+  // it is off-screen — another page, a hidden tab, during a server restart — cannot measure,
+  // and this is what its PTY is born at instead of the server default. Null until first fit.
+  lastMeasured: { cols: number; rows: number } | null;
 }
 
 // A rebuild costs a re-attach and the client-side scrollback, so a slot gets at most one per
@@ -172,8 +176,9 @@ const conns = new Map<string, Conn>();
 // bottom. The fit() can throw when the host isn't laid out yet — the caller's
 // ResizeObserver fit() then follows — so it's swallowed.
 function fitAndSyncSize(c: Conn): void {
+  const measured = measuredSize(c); // also remembers it for an off-screen reconnect
   try {
-    c.fitAddon.fit();
+    if (measured) c.fitAddon.fit();
   } catch {
     // host not laid out yet
   }
@@ -429,6 +434,7 @@ function ensure(key: string, target: ConnTarget, font: TerminalFont): Conn {
     theme: undefined,
     font,
     lastRebuildMs: 0,
+    lastMeasured: null,
   };
   conns.set(key, c);
   connView.set(key, { status: "connecting", serverCwd: target.cwd });
@@ -489,15 +495,27 @@ function scheduleReconnect(c: Conn) {
 // off `term`: the callers connect BEFORE their fit, so `term.cols` is still the previous slot's
 // size (or xterm's 80x24 default on a fresh terminal). Null while the host is not laid out —
 // the addon then has nothing to propose — and the server falls back to its default.
+//
+// Falls back to the last real measurement (`lastMeasured`) when the host cannot be measured
+// right now: a slot on another page or in a hidden tab reconnects after a server restart
+// without a layout, and its PTY would otherwise be born at the server default and crushed —
+// the very thing the URL size is for. A host that IS laid out but has no size yet measures as
+// the addon's floor (2x1); that is not a pane anyone can read, so it counts as unmeasured too.
 function measuredSize(c: Conn): { cols: number; rows: number } | null {
   try {
     const dims = c.fitAddon.proposeDimensions();
-    if (!dims || !Number.isInteger(dims.cols) || !Number.isInteger(dims.rows) || dims.cols < 1 || dims.rows < 1) return null;
-    return { cols: dims.cols, rows: dims.rows };
+    if (dims && Number.isInteger(dims.cols) && Number.isInteger(dims.rows) && dims.cols >= MIN_MEASURED_COLS && dims.rows >= MIN_MEASURED_ROWS) {
+      c.lastMeasured = { cols: dims.cols, rows: dims.rows };
+      return c.lastMeasured;
+    }
   } catch {
-    return null;
+    // host not laid out yet
   }
+  return c.lastMeasured;
 }
+// Below this the reading is the fit addon's 2x1 floor for a zero-size host, not a pane.
+const MIN_MEASURED_COLS = 10;
+const MIN_MEASURED_ROWS = 2;
 
 function connect(c: Conn) {
   if (c.released) return;
