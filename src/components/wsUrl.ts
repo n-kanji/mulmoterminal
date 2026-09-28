@@ -11,6 +11,24 @@ export interface LaunchChoice {
   model?: string | null;
 }
 
+// The pane's measured terminal size, sent as ?cols=&rows= on EVERY terminal socket so the
+// server opens the PTY — or brings the reattached tmux window — to the real width before the
+// program inside paints. Without it the PTY opens at the server's default (120 columns) and
+// the first resize frame shrinks it; Claude Code cannot erase the lines that wrap in that
+// shrink, so every reloaded or restarted pane opened on overlapping banner fragments until
+// its next full repaint (2026-09-28). Null when the host is not laid out yet: the server then
+// falls back to its default and the resize frame corrects it, exactly as before.
+export interface TermSizeParam {
+  cols: number;
+  rows: number;
+}
+
+function setSizeParams(params: URLSearchParams, size: TermSizeParam | null | undefined): void {
+  if (!size) return;
+  params.set("cols", String(size.cols));
+  params.set("rows", String(size.rows));
+}
+
 export interface TerminalWsUrlInput {
   host: string; // location.host
   secure: boolean; // location.protocol === "https:"
@@ -26,11 +44,12 @@ export interface TerminalWsUrlInput {
   // (`--resume <id> --fork-session`) rather than a fresh conversation. Claude only — codex
   // has no equivalent, and CodexWsUrlInput has no such field to set.
   fork?: string | null;
+  size?: TermSizeParam | null;
 }
 
 // The two session-terminal endpoints (/ws for claude, /ws/codex for codex) send the
 // identical session/cwd/gui query, so they share this assembly — only the path differs.
-function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devTerminal, launch, fork, account }: TerminalWsUrlInput): string {
+function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devTerminal, launch, fork, account, size }: TerminalWsUrlInput): string {
   const params = new URLSearchParams();
   if (sessionId) params.set("session", sessionId);
   if (cwd) params.set("cwd", cwd);
@@ -43,6 +62,7 @@ function sessionTerminalWsUrl(path: string, { host, secure, sessionId, cwd, devT
   if (launch?.provider) params.set("provider", launch.provider);
   if (launch?.model) params.set("model", launch.model);
   if (account) params.set("account", account);
+  setSizeParams(params, size);
   const qs = params.toString();
   const suffix = qs ? `?${qs}` : "";
   const proto = secure ? "wss:" : "ws:";
@@ -53,7 +73,7 @@ export function buildTerminalWsUrl(input: TerminalWsUrlInput): string {
   return sessionTerminalWsUrl("ws", input);
 }
 
-export type RunWsUrlInput = { host: string; secure: boolean; cwd?: string | null } & (
+export type RunWsUrlInput = { host: string; secure: boolean; cwd?: string | null; size?: TermSizeParam | null } & (
   | { index: number } // position in the directory's script.json (the server resolves it)
   | { buttonId: string; session: string | null; agent: "claude" | "codex"; model: string | null } // a header run:"shell" button, re-resolved server-side
 );
@@ -73,6 +93,7 @@ export function buildRunWsUrl(input: RunWsUrlInput): string {
     params.set("index", String(input.index));
   }
   if (input.cwd) params.set("cwd", input.cwd);
+  setSizeParams(params, input.size);
   const proto = input.secure ? "wss:" : "ws:";
   return `${proto}//${input.host}/ws/run?${params.toString()}`;
 }
@@ -84,17 +105,19 @@ export interface LaunchWsUrlInput {
   cwd?: string | null;
   launcher?: number; // position in the configured launcher list (the server resolves it)
   shell?: boolean; // run the OS default shell ($SHELL) — no configured index (the header "new terminal" button)
+  size?: TermSizeParam | null;
 }
 
 // The launcher-terminal endpoint (a configured shell/codex/command, or the OS default shell).
 // Persistent & reattachable like /ws: the browser sends the launcher INDEX (config is the allowlist)
 // — or `shell=1` for the OS default shell, which needs no index — plus the session id to reattach.
-export function buildLaunchWsUrl({ host, secure, sessionId, cwd, launcher, shell }: LaunchWsUrlInput): string {
+export function buildLaunchWsUrl({ host, secure, sessionId, cwd, launcher, shell, size }: LaunchWsUrlInput): string {
   const params = new URLSearchParams();
   if (sessionId) params.set("session", sessionId);
   if (cwd) params.set("cwd", cwd);
   if (shell) params.set("shell", "1");
   else params.set("launcher", String(launcher));
+  setSizeParams(params, size);
   const proto = secure ? "wss:" : "ws:";
   return `${proto}//${host}/ws/launch?${params.toString()}`;
 }
@@ -105,6 +128,7 @@ export interface CodexWsUrlInput {
   sessionId: string | null; // reattach/resume this codex session; null => fresh
   cwd?: string | null;
   devTerminal?: boolean; // grid dev terminal: no GUI MCP (?gui=0). Single view omits it => GUI MCP.
+  size?: TermSizeParam | null;
 }
 
 // The codex-terminal endpoint (a first-class codex session). Persistent & reattachable like
@@ -134,10 +158,10 @@ export interface ConnTargetUrlInput {
 
 // A command cell's endpoint: a script.json entry by index, or a header shell button by id
 // (+ the session context to re-resolve it server-side).
-function runCommandWsUrl(command: RunCommand, host: string, secure: boolean): string {
+function runCommandWsUrl(command: RunCommand, host: string, secure: boolean, size: TermSizeParam | null): string {
   return command.source === "button"
-    ? buildRunWsUrl({ host, secure, cwd: command.cwd, buttonId: command.buttonId, session: command.session, agent: command.agent, model: command.model })
-    : buildRunWsUrl({ host, secure, cwd: command.cwd, index: command.index });
+    ? buildRunWsUrl({ host, secure, cwd: command.cwd, size, buttonId: command.buttonId, session: command.session, agent: command.agent, model: command.model })
+    : buildRunWsUrl({ host, secure, cwd: command.cwd, size, index: command.index });
 }
 
 // Which endpoint a slot connects to. The order is the rule: a Run command is ephemeral and
@@ -148,14 +172,17 @@ function runCommandWsUrl(command: RunCommand, host: string, secure: boolean): st
 //
 // `host`/`secure` are parameters rather than reads of `location`, which is what lets this be
 // exercised at all.
-export function connWsUrl(target: ConnTargetUrlInput, resumeId: string | null, host: string, secure: boolean): string {
-  if (target.command) return runCommandWsUrl(target.command, host, secure);
+//
+// `size` is the pane's measured terminal size (TermSizeParam), the same for every endpoint:
+// each of them spawns or reattaches a PTY that should be born at the pane's width.
+export function connWsUrl(target: ConnTargetUrlInput, resumeId: string | null, host: string, secure: boolean, size: TermSizeParam | null = null): string {
+  if (target.command) return runCommandWsUrl(target.command, host, secure, size);
   if (target.launcher) {
     return "shell" in target.launcher
-      ? buildLaunchWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, shell: true })
-      : buildLaunchWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, launcher: target.launcher.index });
+      ? buildLaunchWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, shell: true, size })
+      : buildLaunchWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, launcher: target.launcher.index, size });
   }
-  if (target.codex) return buildCodexWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, devTerminal: target.devTerminal });
+  if (target.codex) return buildCodexWsUrl({ host, secure, sessionId: resumeId, cwd: target.cwd, devTerminal: target.devTerminal, size });
   return buildTerminalWsUrl({
     host,
     secure,
@@ -165,5 +192,6 @@ export function connWsUrl(target: ConnTargetUrlInput, resumeId: string | null, h
     launch: target.launch,
     fork: target.fork,
     account: target.account,
+    size,
   });
 }

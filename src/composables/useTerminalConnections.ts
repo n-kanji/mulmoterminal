@@ -484,6 +484,21 @@ function scheduleReconnect(c: Conn) {
   }, delay);
 }
 
+// The size the pane's host would fit right now, WITHOUT applying it — the connect URL carries
+// it so the PTY is born at the pane's width (wsUrl.ts TermSizeParam). Measured rather than read
+// off `term`: the callers connect BEFORE their fit, so `term.cols` is still the previous slot's
+// size (or xterm's 80x24 default on a fresh terminal). Null while the host is not laid out —
+// the addon then has nothing to propose — and the server falls back to its default.
+function measuredSize(c: Conn): { cols: number; rows: number } | null {
+  try {
+    const dims = c.fitAddon.proposeDimensions();
+    if (!dims || !Number.isInteger(dims.cols) || !Number.isInteger(dims.rows) || dims.cols < 1 || dims.rows < 1) return null;
+    return { cols: dims.cols, rows: dims.rows };
+  } catch {
+    return null;
+  }
+}
+
 function connect(c: Conn) {
   if (c.released) return;
   if (c.reconnectTimer) {
@@ -508,7 +523,7 @@ function connect(c: Conn) {
   // same session instead of spawning a fresh one each retry.
   const resumeId = c.knownSessionId ?? c.target.sessionId;
   const secure = location.protocol === "https:";
-  const url = connWsUrl(c.target, resumeId, location.host, secure);
+  const url = connWsUrl(c.target, resumeId, location.host, secure, measuredSize(c));
   const sock = new WebSocket(url);
   c.ws = sock;
 

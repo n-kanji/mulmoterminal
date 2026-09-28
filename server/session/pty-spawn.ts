@@ -22,7 +22,13 @@ import {
   cleanupSandbox,
 } from "../infra/sandbox.js";
 import type { PtyEntry } from "./types.js";
+import type { TermSize } from "./ws-frames.js";
 
+// The size a PTY opens at when the browser did not say (a hidden worker, an old client). A
+// browser pane sends its measured size on the connect URL (ws-frames.ts termSizeFromParams),
+// and the PTY is born at THAT: a tmux reattach at the wrong size widens the surviving window,
+// the program repaints for it, and the browser's first resize frame then crushes it back —
+// which is what left every reloaded pane showing overlapping banner fragments (2026-09-28).
 const PTY_COLS = 120;
 const PTY_ROWS = 30;
 
@@ -33,13 +39,20 @@ const PTY_ROWS = 30;
 // `unset` drops variables the session must NOT inherit — ANTHROPIC_API_KEY for a provider
 // session, which would silently outrank its auth token (#579). It cannot be expressed in
 // the settings `env` block, which can set a variable but not remove one.
-export function spawnPty(bin: string, args: string[], cwd: string, unset: readonly string[] = [], extraEnv: Record<string, string> = {}): IPty {
+export function spawnPty(
+  bin: string,
+  args: string[],
+  cwd: string,
+  unset: readonly string[] = [],
+  extraEnv: Record<string, string> = {},
+  size: TermSize | null = null,
+): IPty {
   const env = { ...withoutUnset(sanitizePtyEnv(process.env, path.delimiter), unset), ...extraEnv };
   // On Windows neither the name nor the arguments reach node-pty as they are: its PATH
   // lookup ignores executable extensions (so `claude` misses claude.exe, #794), and a batch
   // shim has to be run through cmd.exe (#798). See infra/resolve-bin.ts.
   const launch = resolvePtyLaunchForEnv(bin, args, env);
-  return pty.spawn(launch.file, launch.args, { name: "xterm-256color", cols: PTY_COLS, rows: PTY_ROWS, cwd, env });
+  return pty.spawn(launch.file, launch.args, { name: "xterm-256color", cols: size?.cols ?? PTY_COLS, rows: size?.rows ?? PTY_ROWS, cwd, env });
 }
 
 // Would this session run in the Docker sandbox? Single-view interactive only (the caller
@@ -60,6 +73,8 @@ export interface PtyEnvOverrides {
   unset?: readonly string[];
   // Variables set for THIS pane only (the Claude account store).
   env?: Record<string, string>;
+  // The pane's measured size (see spawnPty); absent => the default.
+  size?: TermSize | null;
 }
 
 export function ptySpawn(
@@ -70,7 +85,7 @@ export function ptySpawn(
   persistent: boolean,
   overrides: PtyEnvOverrides = {},
 ): { term: IPty; tmux: boolean } {
-  const { unset = [], env: extraEnv = {} } = overrides;
+  const { unset = [], env: extraEnv = {}, size = null } = overrides;
   if (persistent && tmuxAvailable()) {
     // A pane inherits the tmux SERVER's environment, so stripping our own copy is not
     // enough — the server may already carry the name from an earlier session.
@@ -79,21 +94,28 @@ export function ptySpawn(
     // inherits THAT spawn's environment (measured — see infra/tmux.ts), and every session
     // after it would then inherit this pane's account store. The `/usr/bin/env` prefix inside
     // the new-session command is what puts it on the pane, and only on the pane.
-    return { term: spawnPty("tmux", tmuxNewSessionArgs(sessionId, file, args, cwd, extraEnv), cwd, unset), tmux: true };
+    return { term: spawnPty("tmux", tmuxNewSessionArgs(sessionId, file, args, cwd, extraEnv), cwd, unset, {}, size), tmux: true };
   }
-  return { term: spawnPty(file, args, cwd, unset, extraEnv), tmux: false };
+  return { term: spawnPty(file, args, cwd, unset, extraEnv, size), tmux: false };
 }
 
 // Spawn the single-view session inside a Docker container (the sandbox path). Exports the
 // host's live Keychain credential so the containerized claude is authenticated — without
 // it the container reads a stale/absent ~/.claude/.credentials.json and shows "Not logged in".
-export function spawnSandboxEntry(sessionId: string, claudeArgs: string[], cwd: string, ws: WebSocket | null, addDirs: string[] | null = null): PtyEntry {
+export function spawnSandboxEntry(
+  sessionId: string,
+  claudeArgs: string[],
+  cwd: string,
+  ws: WebSocket | null,
+  addDirs: string[] | null = null,
+  size: TermSize | null = null,
+): PtyEntry {
   cleanupSandbox(sessionId); // clear any stale container/config/credential with this name
   const claudeConfig = writeSandboxClaudeConfig(sessionId, cwd);
   const credentials = writeSandboxCredentials(sessionId);
   if (credentials === null)
     console.warn("[sandbox] no Claude credential found in the macOS Keychain — the container may be unauthenticated. Run `claude` on the host to log in.");
-  const term = spawnPty("docker", buildDockerRunArgs(sessionId, claudeArgs, cwd, claudeConfig, credentials, addDirs), cwd);
+  const term = spawnPty("docker", buildDockerRunArgs(sessionId, claudeArgs, cwd, claudeConfig, credentials, addDirs), cwd, [], {}, size);
   console.log(`[pty] spawned claude (pid=${term.pid} via docker sandbox) in ${cwd}`);
   return { term, ws, buffer: EMPTY_REPLAY_TAIL, cwd, sandbox: true, active: false, agent: "claude" };
 }

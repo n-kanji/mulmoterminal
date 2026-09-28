@@ -10,7 +10,7 @@ import { trackCodexActivity } from "./codex-activity-track.js";
 import { claimedCodexRollouts, codexRolloutIds, ptys } from "./registry.js";
 import { ptySpawn } from "./pty-spawn.js";
 import { attachCodexAutoRun } from "./draft-injection.js";
-import { sendExitAndClose, sendFrame } from "./ws-frames.js";
+import { sendExitAndClose, sendFrame, type TermSize } from "./ws-frames.js";
 import { EMPTY_REPLAY_TAIL, appendReplayTail } from "./terminal-replay.js";
 import type { PtyEntry } from "./types.js";
 import type { SpawnDeps } from "./spawn-deps.js";
@@ -61,15 +61,18 @@ export function createCodexSpawner(deps: SpawnDeps) {
     resumeRolloutId: string | null,
     cwd: string,
     attachGuiMcp: boolean,
-    initialPrompt: string | null,
+    // `seed`: typed as the first turn (a plugin's codex-run). `size`: the pane's measured
+    // terminal size from the connect URL, so the PTY opens at it (ws-frames.ts).
+    { seed = null, size = null }: { seed?: string | null; size?: TermSize | null } = {},
   ): PtyEntry {
+    const initialPrompt = seed;
     const root = codexSessionsRoot();
     const before = snapshotSessions(root);
     // Single view: point codex at the in-process GUI MCP (same per-session URL as claude's) so it
     // can drive the GUI panel. Grid dev terminals pass gui=0 → no MCP.
     const guiMcpUrl = attachGuiMcp ? `http://127.0.0.1:${PORT}/api/mcp/${sessionId}` : null;
     const args = buildCodexArgs({ resume: resumeRolloutId, model: deps.codexModel, guiMcpUrl });
-    const { term, tmux } = ptySpawn(sessionId, deps.codexBin, args, cwd, true);
+    const { term, tmux } = ptySpawn(sessionId, deps.codexBin, args, cwd, true, { size });
     const via = tmux ? " via tmux" : "";
     const resumeNote = resumeRolloutId ? ` (resume ${resumeRolloutId})` : "";
     console.log(`[pty] spawned codex (pid=${term.pid}${via}) in ${cwd}${resumeNote}`);

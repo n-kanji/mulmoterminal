@@ -35,9 +35,22 @@ describe("beginRunTerminal", () => {
 
     beginRunTerminal({ spawnCommandPty } as unknown as WsRouteDeps, ws as unknown as WebSocket, RESOLVED);
 
-    expect(spawnCommandPty).toHaveBeenCalledWith(RESOLVED.command, RESOLVED.cwd, ws);
+    // No size on the URL => null: the spawn falls back to its default size.
+    expect(spawnCommandPty).toHaveBeenCalledWith(RESOLVED.command, RESOLVED.cwd, ws, null);
     ws.emit("close"); // the viewer leaves — the ephemeral PTY must be killed
     expect(term.kill).toHaveBeenCalledTimes(1);
+  });
+
+  // 2026-09-28: the pane's measured size (?cols=&rows=) reaches the spawn, so the command's
+  // PTY opens at the pane's width instead of the default followed by a shrink.
+  it("hands the viewer's measured size to the spawn", () => {
+    const term = { kill: vi.fn() } as unknown as IPty;
+    const spawnCommandPty = vi.fn(() => term);
+    const ws = fakeWs(OPEN);
+
+    beginRunTerminal({ spawnCommandPty } as unknown as WsRouteDeps, ws as unknown as WebSocket, RESOLVED, { cols: 26, rows: 67 });
+
+    expect(spawnCommandPty).toHaveBeenCalledWith(RESOLVED.command, RESOLVED.cwd, ws, { cols: 26, rows: 67 });
   });
 
   // The leak: the viewer left during the (git-backed) resolve, so the socket is already

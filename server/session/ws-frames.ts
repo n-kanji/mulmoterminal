@@ -20,12 +20,38 @@ const MAX_TERM_COLS = 500;
 const MIN_TERM_ROWS = 1;
 const MAX_TERM_ROWS = 200;
 
+/** A terminal size in cells — what a resize frame carries, and what a PTY is spawned at. */
+export interface TermSize {
+  cols: number;
+  rows: number;
+}
+
+function withinTermBounds(cols: number, rows: number): boolean {
+  return cols >= MIN_TERM_COLS && cols <= MAX_TERM_COLS && rows >= MIN_TERM_ROWS && rows <= MAX_TERM_ROWS;
+}
+
 /** A well-formed `resize` frame with both dimensions inside the allowed bounds. */
 export function isResizeFrame(msg: { type?: unknown; cols?: unknown; rows?: unknown }): msg is { type: "resize"; cols: number; rows: number } {
   if (msg.type !== "resize" || !Number.isInteger(msg.cols) || !Number.isInteger(msg.rows)) return false;
-  const cols = Number(msg.cols);
-  const rows = Number(msg.rows);
-  return cols >= MIN_TERM_COLS && cols <= MAX_TERM_COLS && rows >= MIN_TERM_ROWS && rows <= MAX_TERM_ROWS;
+  return withinTermBounds(Number(msg.cols), Number(msg.rows));
+}
+
+// `?cols=&rows=` on a terminal socket's URL: the size the browser has ALREADY measured for the
+// pane, so the PTY can be born at it. Without it the PTY opens at the built-in default and the
+// browser's first resize frame shrinks it moments later — and a tmux reattach (server restart,
+// reload of a parked pane) first widens the surviving window to that default, so the program
+// inside repaints at 120 columns and is then crushed to the real width. Claude Code's renderer
+// cannot erase lines that wrapped in that shrink; the pane shows overlapping fragments of its
+// banner until the next full repaint. Same bounds as a resize frame: this too is client input.
+// Null when absent or malformed — the spawn then uses its default, exactly as before.
+export function termSizeFromParams(params: URLSearchParams): TermSize | null {
+  const rawCols = params.get("cols");
+  const rawRows = params.get("rows");
+  if (rawCols === null || rawRows === null) return null;
+  if (!/^\d+$/.test(rawCols) || !/^\d+$/.test(rawRows)) return null;
+  const cols = Number(rawCols);
+  const rows = Number(rawRows);
+  return withinTermBounds(cols, rows) ? { cols, rows } : null;
 }
 
 // Send a JSON frame if the socket is still there and open. Null-tolerant so the PTY

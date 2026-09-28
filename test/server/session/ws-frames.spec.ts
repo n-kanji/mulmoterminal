@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sendFrame, sendExitAndClose, closeWithError, isResizeFrame, type FrameSocket } from "../../../server/session/ws-frames.js";
+import { sendFrame, sendExitAndClose, closeWithError, isResizeFrame, termSizeFromParams, type FrameSocket } from "../../../server/session/ws-frames.js";
 
 const OPEN = 1;
 const CLOSED = 3;
@@ -131,5 +131,42 @@ describe("isResizeFrame", () => {
     expect(isResizeFrame({ type: "resize", cols: "120", rows: "30" })).toBe(false);
     expect(isResizeFrame({ type: "resize", cols: null, rows: 30 })).toBe(false);
     expect(isResizeFrame({ type: "resize" })).toBe(false);
+  });
+});
+
+// 2026-09-28: ?cols=&rows= on the connect URL — the browser's measured pane size, so a PTY (or a
+// reattached tmux window) opens at the real width instead of the 120-column default and a shrink.
+describe("termSizeFromParams", () => {
+  const of = (qs: string) => termSizeFromParams(new URLSearchParams(qs));
+
+  it("reads a well-formed pair", () => {
+    expect(of("cols=26&rows=67")).toEqual({ cols: 26, rows: 67 });
+  });
+
+  it("is null when either half is missing — the spawn keeps its default", () => {
+    expect(of("")).toBeNull();
+    expect(of("cols=26")).toBeNull();
+    expect(of("rows=67")).toBeNull();
+  });
+
+  it("rejects what a resize frame would reject: non-integers and out-of-bounds sizes", () => {
+    expect(of("cols=26.5&rows=67")).toBeNull();
+    expect(of("cols=abc&rows=67")).toBeNull();
+    expect(of("cols=-26&rows=67")).toBeNull();
+    expect(of("cols=1&rows=67")).toBeNull(); // below the 2-column floor
+    expect(of("cols=501&rows=67")).toBeNull();
+    expect(of("cols=26&rows=0")).toBeNull();
+    expect(of("cols=26&rows=201")).toBeNull();
+  });
+
+  it("agrees with isResizeFrame on the bounds", () => {
+    for (const [cols, rows] of [
+      [2, 1],
+      [500, 200],
+      [80, 24],
+    ]) {
+      expect(of(`cols=${cols}&rows=${rows}`)).toEqual({ cols, rows });
+      expect(isResizeFrame({ type: "resize", cols, rows })).toBe(true);
+    }
   });
 });

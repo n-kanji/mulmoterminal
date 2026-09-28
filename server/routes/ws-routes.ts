@@ -27,7 +27,7 @@ import { codexRolloutIds, launchAccounts, markDevTerminalSession, ptys } from ".
 import { ForkNotResumableError } from "../agents/claude-args.js";
 import { sandboxWouldRun } from "../session/pty-spawn.js";
 import { handleCommandFrame } from "../session/pty-connection.js";
-import { closeWithError } from "../session/ws-frames.js";
+import { closeWithError, termSizeFromParams, type TermSize } from "../session/ws-frames.js";
 import { ProviderRefusedError } from "../session/provider-env.js";
 import { sessionExistsOnDisk } from "../session/session-reads.js";
 import { currentAgentSessionId } from "../session/session-alias.js";
@@ -236,7 +236,7 @@ export function attachSocketErrorLogger(ws: Pick<WebSocket, "on">, kind: Termina
 async function startRunTerminal(deps: WsRouteDeps, ws: WebSocket, url: URL): Promise<void> {
   const resolved = await resolveRunTarget(url);
   if (!resolved) return closeWithError(ws, "Command not found — check your config / script.json.");
-  beginRunTerminal(deps, ws, resolved);
+  beginRunTerminal(deps, ws, resolved, termSizeFromParams(url.searchParams));
 }
 
 // Spawn the ephemeral Run PTY and wire its lifecycle. resolveRunTarget above can await a git
@@ -245,11 +245,11 @@ async function startRunTerminal(deps: WsRouteDeps, ws: WebSocket, url: URL): Pro
 // is ephemeral: no reattach, no reap/grace, so its only kill is the close handler below). Bail
 // if the socket has since closed — the same guard handleClaudeConnection applies after its
 // keychain refresh.
-export function beginRunTerminal(deps: WsRouteDeps, ws: WebSocket, resolved: { command: string; cwd: string }): void {
+export function beginRunTerminal(deps: WsRouteDeps, ws: WebSocket, resolved: { command: string; cwd: string }, size: TermSize | null = null): void {
   if (ws.readyState !== ws.OPEN) return;
   let term: IPty;
   try {
-    term = deps.spawnCommandPty(resolved.command, resolved.cwd, ws);
+    term = deps.spawnCommandPty(resolved.command, resolved.cwd, ws, size);
   } catch (err) {
     console.error(`[ws/run] failed to start command: ${messageOf(err)}`);
     return closeWithError(ws, "Failed to start the command.");
@@ -267,9 +267,31 @@ export function beginRunTerminal(deps: WsRouteDeps, ws: WebSocket, resolved: { c
 // Reattach a same-process live PTY, else spawn a launcher (which itself reattaches a
 // surviving tmux session or creates one). `command` is the resolved launcher command,
 // or the fallback for a tmux reattach with no launcher index.
-function startLaunchEntry(deps: WsRouteDeps, sessionId: string, ws: WebSocket, live: PtyEntry | undefined, command: string, cwd: string): PtyEntry {
-  if (live) return deps.reattachPty(live, ws, sessionId);
-  return deps.spawnLauncherPty(sessionId, ws, command, cwd);
+function startLaunchEntry(deps: WsRouteDeps, sessionId: string, viewer: Viewer, live: PtyEntry | undefined, command: string, cwd: string): PtyEntry {
+  const { ws, size } = viewer;
+  if (live) return deps.reattachPty(presized(live, size), ws, sessionId);
+  return deps.spawnLauncherPty(sessionId, ws, command, cwd, size);
+}
+
+// The browser end of a terminal socket: the socket, and the pane size it measured
+// (?cols=&rows=, ws-frames.ts termSizeFromParams — null when it had none to offer).
+interface Viewer {
+  ws: WebSocket;
+  size: TermSize | null;
+}
+
+// A live PTY about to be reattached is brought to the new viewer's size BEFORE the replay,
+// so the program's first repaint is for the pane it is actually in. The browser's resize
+// frame would do the same a moment later; doing it here just means the replay and the
+// repaint agree from the first byte. The kernel raises no SIGWINCH for an unchanged size.
+function presized(live: PtyEntry, size: TermSize | null): PtyEntry {
+  if (!size) return live;
+  try {
+    live.term.resize(size.cols, size.rows);
+  } catch {
+    // the PTY is on its way out — the reattach path reports that on its own
+  }
+  return live;
 }
 
 // Resolve a launcher ws request to a session: reattach a live pty / surviving tmux
@@ -315,14 +337,15 @@ function resolveCodexSession(requested: string | null): { sessionId: string; liv
 function startCodexEntry(
   deps: WsRouteDeps,
   sessionId: string,
-  ws: WebSocket,
+  viewer: Viewer,
   live: PtyEntry | undefined,
   resumeRolloutId: string | null,
   cwd: string,
   attachGuiMcp: boolean,
 ): PtyEntry {
-  if (live) return deps.reattachPty(live, ws, sessionId);
-  return deps.spawnCodexPty(sessionId, ws, resumeRolloutId, cwd, attachGuiMcp, null); // interactive: no seed
+  const { ws, size } = viewer;
+  if (live) return deps.reattachPty(presized(live, size), ws, sessionId);
+  return deps.spawnCodexPty(sessionId, ws, resumeRolloutId, cwd, attachGuiMcp, { size }); // interactive: no seed
 }
 
 // The account's credential store for a spawn, resolved (and seeded on first use) before it —
@@ -372,6 +395,10 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
   // 2026-09-14). Unlike the launch choice it survives a resume: the pane's page named the
   // account, and a conversation has to continue on the credentials it began on.
   const requestedAccount = accountFromParams(url.searchParams);
+
+  // ?cols=&rows= — the pane's measured size, so the PTY (or the reattached tmux window) opens
+  // at the real width rather than the default followed by a shrink (ws-frames.ts).
+  const size = termSizeFromParams(url.searchParams);
 
   // Decide the effective session id BEFORE telling the browser. A requested id
   // is honored only if it can actually be served: a live pty (reattach) or an
@@ -438,8 +465,8 @@ async function handleClaudeConnection(deps: WsRouteDeps, ws: WebSocket, req: { u
     if (live?.sandbox) writeSandboxCredentials(sessionId);
     const initialPrompt = firstTurnFor(sessionId, !!live, fork, resume, attachGuiMcp, cwd, requested);
     entry = live
-      ? deps.reattachPty(live, ws, sessionId)
-      : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork, accountEnv });
+      ? deps.reattachPty(presized(live, size), ws, sessionId)
+      : deps.spawnClaudePty(sessionId, resume, ws, { cwd, attachGuiMcp, launch, initialPrompt, fork, accountEnv, size });
   } catch (err) {
     // A failed spawn (claude missing, or node-pty's spawn-helper not executable)
     // must close just this connection — never crash the whole server.
@@ -483,7 +510,7 @@ function handleLaunchConnection(deps: WsRouteDeps, ws: WebSocket, req: { url?: s
 
   let entry: PtyEntry;
   try {
-    entry = startLaunchEntry(deps, sessionId, ws, live, command, cwd);
+    entry = startLaunchEntry(deps, sessionId, { ws, size: termSizeFromParams(url.searchParams) }, live, command, cwd);
   } catch (err) {
     console.error(`[ws/launch] failed to start ${sessionId}: ${messageOf(err)}`);
     return closeWithError(ws, "Failed to start the launch command.");
@@ -506,7 +533,7 @@ function handleCodexConnection(deps: WsRouteDeps, ws: WebSocket, req: { url?: st
 
   let entry: PtyEntry;
   try {
-    entry = startCodexEntry(deps, sessionId, ws, live, resumeRolloutId, cwd, attachGuiMcp);
+    entry = startCodexEntry(deps, sessionId, { ws, size: termSizeFromParams(url.searchParams) }, live, resumeRolloutId, cwd, attachGuiMcp);
   } catch (err) {
     console.error(`[ws/codex] failed to start ${sessionId}: ${messageOf(err)}`);
     return closeWithError(ws, "Failed to start codex. Is the `codex` CLI installed and on your PATH?");

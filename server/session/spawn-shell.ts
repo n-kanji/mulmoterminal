@@ -8,7 +8,7 @@ import { getLaunchers } from "../config/config-routes.js";
 import { launcherAt, shellInvocation } from "./shell-command.js";
 import { ptys } from "./registry.js";
 import { ptySpawn, spawnPty } from "./pty-spawn.js";
-import { sendExitAndClose, sendFrame } from "./ws-frames.js";
+import { sendExitAndClose, sendFrame, type TermSize } from "./ws-frames.js";
 import { EMPTY_REPLAY_TAIL, appendReplayTail } from "./terminal-replay.js";
 import type { PtyEntry } from "./types.js";
 import type { SpawnDeps } from "./spawn-deps.js";
@@ -18,9 +18,9 @@ export function createShellSpawners(deps: SpawnDeps) {
   // spawnClaudePty this is NOT a Claude session — no id, no hooks, no transcript, no
   // reap/grace. It's an ephemeral grid terminal (the Run menu); the caller kills it
   // when the viewer's socket closes.
-  function spawnCommandPty(command: string, cwd: string, ws: WebSocket): IPty {
+  function spawnCommandPty(command: string, cwd: string, ws: WebSocket, size: TermSize | null = null): IPty {
     const { shell, args } = shellInvocation(command, false, process.platform, process.env.SHELL);
-    const term = spawnPty(shell, args, cwd);
+    const term = spawnPty(shell, args, cwd, [], {}, size);
     console.log(`[pty] spawned command (pid=${term.pid}) in ${cwd}: ${command}`);
 
     term.onData((data) => {
@@ -44,10 +44,10 @@ export function createShellSpawners(deps: SpawnDeps) {
   // transcript, or resume. The command is run via the login shell with `exec` so it
   // becomes the single foreground process ($SHELL, codex, etc.) — env vars in the
   // command (e.g. $SHELL) expand, and the process stays interactive in the PTY.
-  function spawnLauncherPty(sessionId: string, ws: WebSocket, command: string, cwd: string): PtyEntry {
+  function spawnLauncherPty(sessionId: string, ws: WebSocket, command: string, cwd: string, size: TermSize | null = null): PtyEntry {
     // Persistent: reattaches a surviving tmux session (command ignored) or creates one.
     const { shell, args } = shellInvocation(command, true, process.platform, process.env.SHELL);
-    const { term, tmux } = ptySpawn(sessionId, shell, args, cwd, true);
+    const { term, tmux } = ptySpawn(sessionId, shell, args, cwd, true, { size });
     console.log(`[pty] spawned launcher (pid=${term.pid}${tmux ? " via tmux" : ""}) in ${cwd}: ${command}`);
 
     const entry: PtyEntry = { term, ws, buffer: EMPTY_REPLAY_TAIL, cwd, tmux, active: false, agent: "shell" };

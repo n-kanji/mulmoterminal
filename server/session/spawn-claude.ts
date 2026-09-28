@@ -11,7 +11,7 @@ import { resolveAliasedSessionId } from "./session-alias.js";
 import { ptySpawn, sandboxWouldRun, spawnSandboxEntry } from "./pty-spawn.js";
 import { attachDraftInjection } from "./draft-injection.js";
 import { withChannelConsent } from "./channel-consent.js";
-import { sendExitAndClose, sendFrame } from "./ws-frames.js";
+import { sendExitAndClose, sendFrame, type TermSize } from "./ws-frames.js";
 import { EMPTY_REPLAY_TAIL, appendReplayTail } from "./terminal-replay.js";
 import { sessionExistsOnDisk } from "./session-reads.js";
 import type { PtyEntry } from "./types.js";
@@ -39,6 +39,10 @@ export interface SpawnClaudeOptions {
   // this pane runs as `sessionId` with a copy of that conversation, and the source keeps
   // running untouched wherever it is.
   fork?: boolean;
+  // The pane's measured terminal size, from the connect URL (ws-frames.ts termSizeFromParams),
+  // so the PTY — and on a tmux reattach, the surviving window — opens at the real width
+  // instead of the default and a shrink. Absent for hidden workers and old clients.
+  size?: TermSize | null;
   // The per-pane Claude account store (2026-09-14), already resolved by the caller
   // (backends/claude-account-store.ts) because resolving it touches the Keychain. Empty —
   // the usual case — runs on whatever login the default slot holds. PROCESS env, never the
@@ -81,7 +85,7 @@ export function createClaudeSpawner(deps: SpawnDeps) {
   // a viewer yet (e.g. spawnBackgroundChat) — output just buffers until a client
   // reattaches.
   function spawnClaudePty(sessionId: string, resume: string | null, ws: WebSocket | null, options: SpawnClaudeOptions = {}): PtyEntry {
-    const { initialPrompt, cwd = CLAUDE_CWD, attachGuiMcp = true, draft, launch, fork = false, accountEnv = {} } = options;
+    const { initialPrompt, cwd = CLAUDE_CWD, attachGuiMcp = true, draft, launch, fork = false, accountEnv = {}, size = null } = options;
     // attachGuiMcp picks the MCP mode (see buildClaudeArgs): the single view (default)
     // attaches the GUI MCP + --strict-mcp-config (main's classic behavior); the grid's
     // dev terminals attach neither, so the user's + project's MCP servers load normally.
@@ -155,9 +159,9 @@ export function createClaudeSpawner(deps: SpawnDeps) {
         // sandbox pane cannot carry a per-page account. Say so rather than run it as the
         // wrong account silently. (Grid cells pass gui=0, which never sandboxes.)
         if (Object.keys(accountEnv).length > 0) console.warn(`[sandbox] ${sessionId} runs on the default Claude login — the sandbox has no per-account store.`);
-        return spawnSandboxEntry(sessionId, args, cwd, ws, dir.addDirs);
+        return spawnSandboxEntry(sessionId, args, cwd, ws, dir.addDirs, size);
       }
-      const { term, tmux } = ptySpawn(sessionId, deps.claudeBin, args, cwd, true, { unset, env: accountEnv });
+      const { term, tmux } = ptySpawn(sessionId, deps.claudeBin, args, cwd, true, { unset, env: accountEnv, size });
       console.log(`[pty] spawned claude (pid=${term.pid}${tmux ? " via tmux" : ""}) in ${cwd}`);
       return { term, ws, buffer: EMPTY_REPLAY_TAIL, cwd, tmux, active: false, agent: "claude" };
     }

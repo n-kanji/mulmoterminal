@@ -276,3 +276,37 @@ describe("the account query", () => {
     expect(connWsUrl(target, "s1", "localhost:3456", false)).toBe("ws://localhost:3456/ws?session=s1&gui=0&account=b%40orosy.co.jp");
   });
 });
+
+// 2026-09-28: the pane's measured size rides on every terminal socket, so the PTY is born at the
+// pane's width instead of the server default followed by a shrink (the overlapping-banner reload).
+describe("terminal size on the connect URL", () => {
+  const size = { cols: 26, rows: 67 };
+  const q = (url: string) => new URL(url).searchParams;
+
+  it("claude: sends cols/rows when measured", () => {
+    const p = q(buildTerminalWsUrl({ host: "h", secure: false, sessionId: "abc", devTerminal: true, size }));
+    expect(p.get("cols")).toBe("26");
+    expect(p.get("rows")).toBe("67");
+  });
+
+  it("omits both when the host is not laid out yet (null) or not given", () => {
+    expect(buildTerminalWsUrl({ host: "localhost", secure: false, sessionId: "abc", size: null })).toBe("ws://localhost/ws?session=abc");
+    expect(buildTerminalWsUrl({ host: "localhost", secure: false, sessionId: "abc" })).toBe("ws://localhost/ws?session=abc");
+  });
+
+  it("codex, launcher, shell and run endpoints carry it too", () => {
+    expect(q(buildCodexWsUrl({ host: "h", secure: false, sessionId: null, size })).get("cols")).toBe("26");
+    expect(q(buildLaunchWsUrl({ host: "h", secure: false, sessionId: null, launcher: 0, size })).get("rows")).toBe("67");
+    expect(q(buildLaunchWsUrl({ host: "h", secure: false, sessionId: null, shell: true, size })).get("cols")).toBe("26");
+    expect(q(buildRunWsUrl({ host: "h", secure: false, index: 1, size })).get("cols")).toBe("26");
+    expect(q(buildRunWsUrl({ host: "h", secure: false, buttonId: "b", session: null, agent: "claude", model: null, size })).get("rows")).toBe("67");
+  });
+
+  it("connWsUrl passes it through to whichever endpoint it picks", () => {
+    const base: ConnTargetUrlInput = { cwd: "/w", devTerminal: true, command: null, launcher: null };
+    expect(q(connWsUrl(base, "abc", "h", false, size)).get("cols")).toBe("26");
+    expect(q(connWsUrl({ ...base, codex: true }, "abc", "h", false, size)).get("cols")).toBe("26");
+    expect(q(connWsUrl({ ...base, launcher: { shell: true } }, null, "h", false, size)).get("cols")).toBe("26");
+    expect(q(connWsUrl(base, "abc", "h", false)).get("cols")).toBeNull();
+  });
+});
