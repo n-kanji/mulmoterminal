@@ -43,9 +43,42 @@ carried the stamp the pane had launched with. `updateTarget` (manager) + a `watc
 in `useTerminalConnections.spec.ts` drives the close and checks the second socket's URL.
 
 The same live run also found that the DEFAULT login (kanji@) had been logged out since about
-2026-09-24 (its refresh token expired; the Keychain slot holds empty tokens), so seven of the
-eight panes running on it were sitting on "Not logged in". Not caused by this change — but
-it is what the operator was actually seeing when they said page 1 "runs on kanji".
+2026-09-24 (the Keychain slot held empty tokens), so seven of the eight panes running on it
+were sitting on "Not logged in". Not caused by this change — but it is what the operator was
+actually seeing when they said page 1 "runs on kanji".
+
+## What the operator's usage meter then revealed (2026-09-28, after the move)
+
+board@'s Claude Code usage stayed at 0% while kanji@'s climbed. Asking the Anthropic profile
+endpoint with the token in the board@ STORE answered `kanji@spaceengine.io`: the
+`MulmoTerminal-claude-account:board@orosy.co.jp` snapshot (saved 2026-09-15) was kanji@'s
+login filed under board@'s name — the exact hazard the ownership rule above describes, and
+the store had been seeded from it. So every "board@" pane, this one included, had been
+spending kanji@'s subscription, and the SAME refresh token living in two Keychain entries is
+why the default slot died on 09-24: the store's copy rotated it.
+
+Repair, done by the operator by hand because the auto-mode classifier refused the pane
+restarts and Keychain deletes (`~/fix-accounts*.sh`, three rounds):
+1. default slot <- the live kanji@ token; identity re-checked via the profile endpoint;
+   the duplicate store entry, the mislabeled board@ snapshot and the expired kanji@ snapshot
+   deleted (backups kept as `MulmoTerminal-backup-20260928:*`); fleet restart.
+2. `/login` as board@ in one page-1 pane — the first genuine board@ login on this machine.
+3. That login rewrote the shared `~/.claude.json` to board@, MulmoTerminal's record of the
+   default slot followed it, and two kanji-stamped panes were spawned onto an EMPTY kanji
+   store (login wizard). Record set back to kanji@ by editing
+   `~/.mulmoterminal/claude-accounts.json` directly — `POST /api/claude-account/default`
+   accepts an email only while the two sources disagree, and only records it, so the
+   ambiguity banner stays until a default-slot pane rewrites `~/.claude.json` again.
+   Empty store dropped, those two panes restarted with `sessions: [...]`.
+
+Three gaps worth a follow-up, none fixed here:
+- Snapshotting the live slot trusts `~/.claude.json` for the NAME. A pane on its own store
+  rewrites that file on login, so a snapshot can be filed under the wrong account. The
+  profile endpoint (`/api/oauth/profile` with the access token) is the only honest name.
+- `declareDefault` cannot be used to correct a record that drifted while the sources agree,
+  and does not clear the ambiguity it is offered for.
+- Nothing shows which account a pane's token actually bills. The status strip shows the
+  stamp; the operator caught this from claude.ai's usage meter.
 
 ## Deliberate override of an earlier rule
 
