@@ -76,6 +76,8 @@ import {
   moveSeparator,
   parkCell,
   parkedOf,
+  parkedOnPage,
+  settleParkedPages,
   removeParked,
   removeSeparator,
   separatorsByUid,
@@ -173,6 +175,12 @@ watch(
 );
 
 const pages = computed(() => pageCount(state.value.cells.length));
+// When a page goes away, the panes parked from it move to the page they are now showing on
+// for good, rather than jumping to whatever page is next made at that number (2026-09-29).
+watch(pages, () => {
+  const settled = settleParkedPages(state.value);
+  if (settled !== state.value) state.value = settled;
+});
 
 // Nothing has been launched yet (only the entry launch cell) — show the newcomer a
 // pointer to the guide, cleared the moment any terminal starts.
@@ -570,6 +578,7 @@ const onPark = (uid: number, note: string) =>
     note,
     Date.now(),
     renderCells.value.map((c) => c.uid),
+    state.value.page,
   ));
 const onUnpark = (uid: number) => {
   state.value = unparkCell(state.value, uid);
@@ -588,8 +597,9 @@ const onParkedClose = (uid: number) => {
   if (entry.cell.session) fetch(`/api/session/${encodeURIComponent(entry.cell.session)}/terminate`, { method: "POST" }).catch(() => {});
   state.value = removeParked(state.value, uid);
 };
+// Each page shows its own dock (operator report 2026-09-29).
 const parkedCards = computed<ParkedCard[]>(() =>
-  parkedOf(state.value).map((p) => ({
+  parkedOnPage(state.value, state.value.page).map((p) => ({
     uid: p.cell.uid,
     cwd: p.cell.cwd,
     name: p.cell.name ?? null,

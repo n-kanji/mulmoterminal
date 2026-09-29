@@ -12,6 +12,8 @@ import {
   setParkNote,
   setSeparatorLabel,
   unparkCell,
+  parkedOnPage,
+  settleParkedPages,
 } from "../../../src/components/gridBlocks.js";
 
 const U = (n: number) => `${String(n % 10).repeat(8)}-aaaa-aaaa-aaaa-aaaaaaaaaaaa`;
@@ -285,5 +287,44 @@ describe("parking", () => {
     expect(s.parked).toEqual([{ cell: { uid: 2, session: U(7), cwd: "/q", launcher: null, agent: undefined, name: "q" }, note: "when X", at: NOW }]);
     expect(s.separators).toEqual([{ id: 3, beforeUid: 1 }]);
     expect(s.nextUid).toBe(4);
+  });
+});
+
+describe("each page has its own dock (2026-09-29)", () => {
+  it("files a parked pane under the page it left", () => {
+    const cells = Array.from({ length: PAGE_SIZE + 4 }, (_, i) => cell(i, U(i)));
+    const s = parkCell(parkCell(make(cells), PAGE_SIZE + 1, "p2", NOW), 0, "p1", NOW);
+    expect(parkedOnPage(s, 0).map((p) => p.cell.uid)).toEqual([0]);
+    expect(parkedOnPage(s, 1).map((p) => p.cell.uid)).toEqual([PAGE_SIZE + 1]);
+  });
+
+  it("shows a pane whose page has gone on the last page rather than hiding it", () => {
+    const s = make([cell(0, U(0))], { parked: [{ cell: cell(9, U(9)), note: "", at: NOW, page: 3 }] });
+    expect(parkedOnPage(s, 0).map((p) => p.cell.uid)).toEqual([9]);
+  });
+
+  it("files it under the page the operator parked it from, when the caller says which", () => {
+    // Auto sort draws a column on a page other than its index's; the caller passes the page on screen.
+    const cells = Array.from({ length: PAGE_SIZE + 4 }, (_, i) => cell(i, U(i)));
+    const s = parkCell(make(cells), PAGE_SIZE + 2, "", NOW, undefined, 0);
+    expect(parkedOnPage(s, 0).map((p) => p.cell.uid)).toEqual([PAGE_SIZE + 2]);
+  });
+
+  it("keeps a pane on the page it shows on when its own page empties, even once that page returns", () => {
+    // The last column of page 2 is parked: page 2 goes, the card settles on page 1 for good.
+    const cells = Array.from({ length: PAGE_SIZE + 1 }, (_, i) => cell(i, U(i)));
+    const s = parkCell(make(cells), PAGE_SIZE, "", NOW);
+    expect(s.parked?.[0].page).toBeUndefined();
+    const regrown = { ...s, cells: [...s.cells, cell(50, U(50))] };
+    expect(parkedOnPage(regrown, 0).map((p) => p.cell.uid)).toEqual([PAGE_SIZE]);
+  });
+
+  it("settles a stale tag, and leaves a settled state as it is", () => {
+    const stale = make([cell(0, U(0))], { parked: [{ cell: cell(9, U(9)), note: "", at: NOW, page: 3 }] });
+    expect(settleParkedPages(stale).parked?.[0].page).toBeUndefined();
+    const fine = make([cell(0, U(0))], { parked: [{ cell: cell(9, U(9)), note: "", at: NOW }] });
+    expect(settleParkedPages(fine)).toBe(fine);
+    // And on reload.
+    expect(parseGridState(JSON.stringify(stale))?.parked?.[0].page).toBeUndefined();
   });
 });

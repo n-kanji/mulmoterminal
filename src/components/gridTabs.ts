@@ -126,6 +126,13 @@ export interface ParkedCell {
   cell: Cell;
   note: string;
   at: number;
+  // The page the pane was parked FROM (operator report 2026-09-29). Each page has its own dock:
+  // with pages torn off into their own windows, one shared dock meant a page's shelved panes
+  // stayed behind when the page left, and were lost when it came back. An index, like `pages`,
+  // so it is read through `parkedPage` (gridBlocks), which clamps a page that has since gone to
+  // the last one rather than hiding the pane. Absent = page 0, which is where every pane parked
+  // before this lived.
+  page?: number;
 }
 
 export interface GridState {
@@ -1095,6 +1102,8 @@ const asSeparators = (v: unknown, running: readonly Cell[], mintId: () => number
   return out.length ? out : undefined;
 };
 
+const asParkedPage = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 && v < MAX_PAGES ? v : undefined);
+
 // Persisted parked panes: a cell with a real session (nothing else can come back), its note,
 // and when it was parked. Same field whitelist as a grid cell.
 const asParked = (v: unknown, firstUid: number): ParkedCell[] | undefined => {
@@ -1117,6 +1126,7 @@ const asParked = (v: unknown, firstUid: number): ParkedCell[] | undefined => {
       },
       note: typeof entry.note === "string" ? parkNote(entry.note) : "",
       at: typeof entry.at === "number" ? entry.at : 0,
+      page: asParkedPage(entry.page),
     });
   }
   return out.length ? out : undefined;
@@ -1185,7 +1195,14 @@ export function parseGridState(raw: string | null): GridState | null {
     // The window this workspace was torn off (2026-09-14), re-validated like every other
     // persisted string: it names a localStorage key this app writes back to.
     const origin = typeof parsed.origin === "string" && isStateKey(parsed.origin) ? parsed.origin : undefined;
-    return clampPage(ensureEntry(reserveSlots({ cells, expanded, page, nextUid, sortMode: asSortMode(parsed.sortMode), pages, separators, parked, origin })));
+    const grid = clampPage(
+      ensureEntry(reserveSlots({ cells, expanded, page, nextUid, sortMode: asSortMode(parsed.sortMode), pages, separators, parked, origin })),
+    );
+    // A parked pane's page, pulled onto a page that exists (gridBlocks' settleParkedPages, which
+    // this module cannot import): a tag past the last page would jump to the next page made.
+    const last = pageCount(grid.cells.length) - 1;
+    if (!grid.parked?.some((p) => (p.page ?? 0) > last)) return grid;
+    return { ...grid, parked: grid.parked.map((p) => ((p.page ?? 0) > last ? { ...p, page: last > 0 ? last : undefined } : p)) };
   } catch {
     return null;
   }

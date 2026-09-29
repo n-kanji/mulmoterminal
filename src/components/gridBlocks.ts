@@ -78,6 +78,33 @@ export function moveSeparator(state: GridState, id: number, dir: -1 | 1, order: 
 
 export const parkedOf = (state: GridState): readonly ParkedCell[] => state.parked ?? [];
 
+/** The page a parked pane belongs to, clamped onto a page that exists: pages come and go (a
+ *  page empties, one is torn off), and a pane whose page went away must still be SOMEWHERE the
+ *  operator can see it, not filed under a tab that is not drawn. */
+export const parkedPage = (state: GridState, p: ParkedCell): number => Math.min(Math.max(0, p.page ?? 0), Math.max(0, pageCount(state.cells.length) - 1));
+
+/** The dock of one page (operator report 2026-09-29): each page shelves its own panes. */
+export const parkedOnPage = (state: GridState, page: number): ParkedCell[] => parkedOf(state).filter((p) => parkedPage(state, p) === page);
+
+/** Write every clamped page back into its tag. Clamping only when READING is not enough: a tag
+ *  left pointing past the last page would jump to whatever page is next created at that index
+ *  (a new terminal overflowing, a page coming home) and vanish from the dock it was showing on.
+ *  Run whenever the page count may have dropped. Same identity when nothing moves. */
+export function settleParkedPages(state: GridState): GridState {
+  const parked = parkedOf(state);
+  if (!parked.some((p) => (p.page ?? 0) !== parkedPage(state, p))) return state;
+  return {
+    ...state,
+    parked: parked.map((p) => {
+      const page = parkedPage(state, p);
+      if (page === (p.page ?? 0)) return p;
+      const entry: ParkedCell = { ...p, page };
+      if (!page) delete entry.page;
+      return entry;
+    }),
+  };
+}
+
 /** Can this cell be parked? It needs a session to come back to — a launch form, a running
  *  command (never persisted) or a reserved slot has nothing to shelve. */
 export function canPark(cell: Cell | undefined): boolean {
@@ -92,9 +119,14 @@ export function canPark(cell: Cell | undefined): boolean {
  *  2026-09-13, drag-to-reorder), so the array is the operator's order and cannot also be
  *  re-sorted by time. Front-insertion keeps the default the dock always had — the thing
  *  shelved a minute ago sits on top — while a hand-dragged order below it survives. */
-export function parkCell(state: GridState, uid: number, note: string, now: number, order?: number[]): GridState {
+export function parkCell(state: GridState, uid: number, note: string, now: number, order?: number[], onPage?: number): GridState {
   const cell = state.cells.find((c) => c.uid === uid);
   if (!canPark(cell) || !cell) return state;
+  // The dock it lands in: the page the operator parked it FROM. The caller knows that page
+  // (`onPage`); the stored index is only the fallback, because the auto sort draws a column on
+  // a page other than the one its index is in, and a card filed there would vanish on park.
+  // Read BEFORE the close, which can reflow the column onto another page.
+  const page = onPage ?? pageOfIndex(state.cells.indexOf(cell));
   const next = closeCell(state, uid, order);
   const trimmed = parkNote(note);
   // Everything the cell IS travels with it. `account` especially (2026-09-14): a pane holds the
@@ -114,7 +146,9 @@ export function parkCell(state: GridState, uid: number, note: string, now: numbe
     parent: cell.parent,
   };
   if (trimmed) kept.parkNote = trimmed;
-  return { ...next, parked: [{ cell: kept, note: trimmed, at: now }, ...parkedOf(next)] };
+  const entry: ParkedCell = { cell: kept, note: trimmed, at: now };
+  if (page > 0) entry.page = page;
+  return settleParkedPages({ ...next, parked: [entry, ...parkedOf(next)] });
 }
 
 /** Bring a parked pane back, onto the page being looked at (its first free slot, else the end

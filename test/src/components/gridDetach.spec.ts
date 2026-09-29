@@ -17,7 +17,7 @@ import {
   type Cell,
   type GridState,
 } from "../../../src/components/gridTabs";
-import { parkCell } from "../../../src/components/gridBlocks";
+import { parkCell, parkedOf, parkedOnPage } from "../../../src/components/gridBlocks";
 import {
   addDetached,
   canDetachPage,
@@ -413,5 +413,65 @@ describe("the cap on how many columns come back", () => {
     const crowd: PagePayload = { meta: {}, cells: Array.from({ length: PAGE_SIZE + 4 }, (_, i) => live(400 + i)) };
     const back = must(reattachPage({ cells: [live(0)], expanded: null, page: 0, nextUid: 1, sortMode: "manual" }, crowd));
     expect(runningCount(realCells(pageSlice(back.cells, 1)))).toBe(PAGE_SIZE);
+  });
+});
+
+// Operator report 2026-09-29: page 2 torn off, a pane parked in each window, page 2 merged back
+// — and page 2's dock was gone, because the dock belonged to the window, not the page.
+describe("each page keeps its own dock across windows", () => {
+  const sessionsOf = (list: readonly { cell: Cell }[]) => list.map((p) => p.cell.session);
+  const NOW = 1_700_000_000_000;
+
+  it("takes the page's parked panes with it and leaves the others where they were", () => {
+    const start = parkCell(parkCell(twoPages([live(20), live(21), live(22)], [live(0), live(1)]), 1, "home wait", NOW), 22, "work wait", NOW);
+    expect(sessionsOf(parkedOnPage(start, 0))).toEqual([uuid(1)]);
+    expect(sessionsOf(parkedOnPage(start, 1))).toEqual([uuid(22)]);
+    const { parent, child, uids } = must(detachPage(start, 1, STATE_KEY));
+    expect(sessionsOf(parkedOf(parent))).toEqual([uuid(1)]);
+    expect(sessionsOf(parkedOnPage(child, 0))).toEqual([uuid(22)]);
+    expect(parkedOf(child)[0].note).toBe("work wait");
+    // The child's parked uid is its own and does not collide with a column.
+    expect(new Set([...child.cells.map((c) => c.uid), ...parkedOf(child).map((p) => p.cell.uid)]).size).toBe(child.cells.length + 1);
+    expect(child.nextUid).toBeGreaterThan(Math.max(...parkedOf(child).map((p) => p.cell.uid)));
+    // The origin window lets go of the parked pane's connection slot too.
+    expect(uids).toContain(22);
+  });
+
+  it("comes home with both docks intact, each on its own page", () => {
+    const start = parkCell(twoPages([live(20), live(21)], [live(0), live(1)]), 1, "home wait", NOW);
+    const { parent, child } = must(detachPage(start, 1, STATE_KEY));
+    const parkedThere = parkCell(child, must(child.cells.find((c) => c.session === uuid(21))).uid, "work wait", NOW);
+    // Through storage, the way it really travels.
+    const payloads = pagesPayload(must(parseGridState(JSON.stringify(parkedThere)))).map((p) => must(normalizePayload(JSON.parse(JSON.stringify(p)))));
+    const { state: merged, rejected } = reattachPages(parent, payloads);
+    expect(rejected).toEqual([]);
+    expect(sessionsOf(parkedOnPage(merged, 0))).toEqual([uuid(1)]);
+    expect(sessionsOf(parkedOnPage(merged, 1))).toEqual([uuid(21)]);
+    expect(parkedOnPage(merged, 1)[0].note).toBe("work wait");
+    const all = [...merged.cells.map((c) => c.uid), ...parkedOf(merged).map((p) => p.cell.uid)].filter((u) => u !== undefined);
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("brings a page home whose columns are all parked, onto the page on screen", () => {
+    const lone: PagePayload = { meta: {}, cells: [], parked: [{ cell: live(30), note: "later", at: NOW }] };
+    const normalized = must(normalizePayload(JSON.parse(JSON.stringify(lone))));
+    const home = twoPages();
+    expect(reattachBlockedReason(home, normalized)).toBeNull();
+    const back = must(reattachPage(home, normalized));
+    expect(pageCount(back.cells.length)).toBe(pageCount(home.cells.length));
+    expect(sessionsOf(parkedOnPage(back, home.page))).toEqual([uuid(30)]);
+  });
+
+  it("does not bring back a parked session this window already holds", () => {
+    const home = twoPages();
+    const dup: PagePayload = { meta: {}, cells: [], parked: [{ cell: live(20), note: "", at: NOW }] };
+    expect(reattachBlockedReason(home, dup)).not.toBeNull();
+  });
+
+  it("remembers which page a pane was parked from across a reload", () => {
+    const s = parkCell(twoPages(), 21, "x", NOW);
+    const reloaded = must(parseGridState(JSON.stringify(s)));
+    expect(sessionsOf(parkedOnPage(reloaded, 1))).toEqual([uuid(21)]);
+    expect(parkedOnPage(reloaded, 0)).toEqual([]);
   });
 });

@@ -40,9 +40,10 @@ import {
   togglePagePin,
   type Cell,
   type GridState,
+  type ParkedCell,
   type Separator,
 } from "./gridTabs";
-import { parkedOf, separatorsOf } from "./gridBlocks";
+import { parkedOf, parkedOnPage, parkedPage, separatorsOf, settleParkedPages } from "./gridBlocks";
 import { isRecord } from "../../common/isRecord";
 
 // ------------------------------------------------------------------------------- the luggage
@@ -55,6 +56,10 @@ export interface PagePayload {
   meta: { label?: string; account?: string };
   cells: Cell[];
   separators?: { beforeUid: number; label?: string }[];
+  // The page's own dock (operator report 2026-09-29). Before this the dock stayed with the
+  // window, so a torn-off page's shelved panes were dropped with its grid when it came home.
+  // No `page`: in the luggage they simply belong to the page they travel with.
+  parked?: ParkedCell[];
 }
 
 /** A page this window tore off, as the tab row shows it. */
@@ -85,6 +90,23 @@ const withLinksInside = (c: Cell, inside: ReadonlySet<number>): Cell => {
   return next;
 };
 
+// A parked pane as luggage: no page (the luggage IS the page) and no parent link (a link to a
+// column is meaningless from the dock; asParked drops it on reload for the same reason).
+const parkedLuggage = (p: ParkedCell): ParkedCell => {
+  const cell = { ...p.cell };
+  delete cell.parent;
+  return { cell, note: p.note, at: p.at };
+};
+
+// Parked panes arriving in a window: uids from `start`, all on `page`.
+const landParked = (list: readonly ParkedCell[], start: number, page: number): ParkedCell[] =>
+  list.map((p, i) => {
+    const entry: ParkedCell = { ...p, cell: { ...p.cell, uid: start + i } };
+    if (page > 0) entry.page = page;
+    else delete entry.page;
+    return entry;
+  });
+
 // Lines are kept by the COLUMN they stand before, so a line whose column did not come along is
 // not a line any more. Ids are minted fresh in the receiving window (they are its own counter).
 const remapSeparators = (
@@ -97,10 +119,14 @@ const remapSeparators = (
     return beforeUid === undefined ? [] : [{ id: mintId(), beforeUid, label: s.label }];
   });
 
-/** The page as luggage, or null when it holds nothing that can travel. */
+/** The page as luggage, or null when it holds nothing that can travel. A page whose columns
+ *  are all closed but whose dock is not still travels: those panes are alive. */
 export function pagePayload(state: GridState, page: number): PagePayload | null {
   const cells = realCells(pageSlice(state.cells, page)).filter(travels);
-  if (cells.length === 0) return null;
+  const parked = parkedOnPage(state, page)
+    .filter((p) => p.cell.session !== null)
+    .map(parkedLuggage);
+  if (cells.length === 0 && parked.length === 0) return null;
   const uids = new Set(cells.map((c) => c.uid));
   const separators = separatorsOf(state)
     .filter((s) => uids.has(s.beforeUid))
@@ -110,6 +136,7 @@ export function pagePayload(state: GridState, page: number): PagePayload | null 
     meta: { label: meta?.label, account: meta?.account },
     cells: cells.map((c) => withLinksInside(c, uids)),
     separators: separators.length ? separators : undefined,
+    parked: parked.length ? parked : undefined,
   };
 }
 
@@ -126,11 +153,21 @@ export function normalizePayload(raw: unknown): PagePayload | null {
   if (!isRecord(raw) || !Array.isArray(raw.cells)) return null;
   const meta = isRecord(raw.meta) ? raw.meta : {};
   const parsed = parseGridState(
-    JSON.stringify({ cells: raw.cells, separators: raw.separators, pages: [meta], expanded: null, page: 0, nextUid: 0, sortMode: "manual" }),
+    JSON.stringify({
+      cells: raw.cells,
+      separators: raw.separators,
+      parked: raw.parked,
+      pages: [meta],
+      expanded: null,
+      page: 0,
+      nextUid: 0,
+      sortMode: "manual",
+    }),
   );
   if (!parsed) return null;
   const cells = realCells(parsed.cells).filter(travels).slice(0, PAGE_SIZE);
-  if (cells.length === 0) return null;
+  const parked = parkedOf(parsed).map(parkedLuggage);
+  if (cells.length === 0 && parked.length === 0) return null;
   const uids = new Set(cells.map((c) => c.uid));
   const separators = separatorsOf(parsed)
     .filter((s) => uids.has(s.beforeUid))
@@ -140,6 +177,7 @@ export function normalizePayload(raw: unknown): PagePayload | null {
     meta: { label: page?.label, account: page?.account },
     cells: cells.map((c) => withLinksInside(c, uids)),
     separators: separators.length ? separators : undefined,
+    parked: parked.length ? parked : undefined,
   };
 }
 
@@ -176,11 +214,24 @@ export const canDetachPage = (state: GridState, page: number): boolean => detach
  *
  *  `uids` is what left, so the caller can retire those terminals' slots in the connection pool
  *  once the new window has taken them over. */
-export function detachPage(state: GridState, page: number, origin: string): { parent: GridState; child: GridState; uids: number[] } | null {
-  if (!canDetachPage(state, page)) return null;
+export function detachPage(from: GridState, page: number, origin: string): { parent: GridState; child: GridState; uids: number[] } | null {
+  if (!canDetachPage(from, page)) return null;
+  const state = settleParkedPages(from);
   const payload = pagePayload(state, page);
   if (!payload) return null;
-  const uids = payload.cells.map((c) => c.uid);
+  // The page's dock goes with it. What stays is renumbered onto the pages as they are once this
+  // one is spliced out: a pane parked from a later page follows that page forward.
+  const leaving = parkedOnPage(state, page);
+  const staying = parkedOf(state)
+    .filter((p) => !leaving.includes(p))
+    .map((p) => {
+      const at = parkedPage(state, p);
+      const entry: ParkedCell = { ...p };
+      if (at > page) entry.page = at - 1;
+      if (!entry.page) delete entry.page;
+      return entry;
+    });
+  const uids = [...payload.cells.map((c) => c.uid), ...leaving.map((p) => p.cell.uid)];
   const moved = new Set(state.cells.filter((_, i) => pageOfIndex(i) === page).map((c) => c.uid));
   const remaining = state.cells.filter((_, i) => pageOfIndex(i) !== page);
   const survivors = new Set(remaining.map((c) => c.uid));
@@ -194,6 +245,7 @@ export function detachPage(state: GridState, page: number, origin: string): { pa
         cells,
         pages: pages?.length ? pages : undefined,
         separators: separators.length ? separators : undefined,
+        parked: staying.length ? staying : undefined,
         // Zoom is a pointer at a column; the column is in the other window now.
         expanded: state.expanded !== null && moved.has(state.expanded) ? null : state.expanded,
         page: Math.min(state.page, Math.max(0, pageCount(cells.length) - 1)),
@@ -213,7 +265,8 @@ function detachedState(payload: PagePayload, origin: string): GridState {
     if (next.parent === undefined) delete next.parent;
     return next;
   });
-  let nextUid = cells.length;
+  const parked = landParked(payload.parked ?? [], cells.length, 0);
+  let nextUid = cells.length + parked.length;
   const separators = remapSeparators(payload.separators, renumber, () => nextUid++);
   return {
     cells,
@@ -223,6 +276,7 @@ function detachedState(payload: PagePayload, origin: string): GridState {
     sortMode: "manual",
     pages: [{ label: payload.meta.label, account: payload.meta.account }],
     separators: separators.length ? separators : undefined,
+    parked: parked.length ? parked : undefined,
     origin,
   };
 }
@@ -232,7 +286,10 @@ function detachedState(payload: PagePayload, origin: string): GridState {
 /** Why this luggage cannot come back, or null when it can. */
 export function reattachBlockedReason(state: GridState, payload: PagePayload): string | null {
   const incoming = arrivingCells(state, payload);
-  if (incoming.length === 0) return "戻すペインがありません（すでにこのウィンドウにあります）";
+  const shelved = arrivingParked(state, payload, incoming);
+  if (incoming.length === 0 && shelved.length === 0) return "戻すペインがありません（すでにこのウィンドウにあります）";
+  // Only parked panes: they join the dock of the page on screen, so no page is needed.
+  if (incoming.length === 0) return null;
   // Counted on the same trimmed grid reattachPage lands on, or a grid whose last page holds
   // nothing but an abandoned launch form would refuse a page it has room for.
   if (pageCount(dropTrailingLaunch(state).cells.length) >= MAX_PAGES) return `ページがもう ${MAX_PAGES} 枚あります`;
@@ -244,9 +301,24 @@ export function reattachBlockedReason(state: GridState, payload: PagePayload): s
 // clicked "bring it back" while the other window was clicking "go home" — the second copy of a
 // session must not become a second column, or the two would evict each other from the server.
 // Parked panes count: they hold their session too.
+const heldSessions = (cells: readonly Cell[]): Set<string> => new Set(cells.map((c) => c.session).filter((s): s is string => s !== null && s !== undefined));
+
 function arrivingCells(state: GridState, payload: PagePayload): Cell[] {
-  const held = new Set([...state.cells, ...parkedOf(state).map((p) => p.cell)].map((c) => c.session).filter((s): s is string => s !== null && s !== undefined));
+  const held = heldSessions([...state.cells, ...parkedOf(state).map((p) => p.cell)]);
   return payload.cells.filter((c) => travels(c) && !held.has(c.session as string)).slice(0, PAGE_SIZE);
+}
+
+// The same rule for the page's dock, counting the columns arriving alongside it.
+function arrivingParked(state: GridState, payload: PagePayload, incoming: readonly Cell[]): ParkedCell[] {
+  const held = heldSessions([...state.cells, ...parkedOf(state).map((p) => p.cell), ...incoming]);
+  const out: ParkedCell[] = [];
+  for (const p of payload.parked ?? []) {
+    const session = p.cell.session;
+    if (session === null || session === undefined || held.has(session)) continue;
+    held.add(session);
+    out.push(p);
+  }
+  return out.slice(0, MAX_TERMINALS);
 }
 
 /** Put a page back, as a NEW page at the end of this grid.
@@ -254,9 +326,16 @@ function arrivingCells(state: GridState, payload: PagePayload): Cell[] {
  *  The page before it is pinned first, for the reason addPage pins: an elastic list packs
  *  columns forward, so an un-sealed boundary would let the returning page dissolve into the one
  *  in front of it the moment a column closed. */
-export function reattachPage(state: GridState, payload: PagePayload): GridState | null {
-  if (reattachBlockedReason(state, payload) !== null) return null;
+export function reattachPage(from: GridState, payload: PagePayload): GridState | null {
+  if (reattachBlockedReason(from, payload) !== null) return null;
+  // Settled first: a stale tag past the last page would otherwise be read as the page arriving.
+  const state = settleParkedPages(from);
   const incoming = arrivingCells(state, payload);
+  const shelved = arrivingParked(state, payload, incoming);
+  // A page that came back with nothing but its dock: the panes join the dock of the page the
+  // operator is looking at, rather than an empty page being made to hold them.
+  if (incoming.length === 0)
+    return { ...state, nextUid: state.nextUid + shelved.length, parked: [...parkedOf(state), ...landParked(shelved, state.nextUid, state.page)] };
   // Same first step as addPage and moveCellToPage: the padding below would strand an abandoned
   // launch form mid-list, where "+ Terminal" can no longer see it to cancel.
   const trimmed = dropTrailingLaunch(state);
@@ -270,12 +349,14 @@ export function reattachPage(state: GridState, payload: PagePayload): GridState 
     if (next.parent === undefined) delete next.parent;
     return next;
   });
-  let nextUid = start + cells.length;
+  const parkedBack = [...parkedOf(sealed), ...landParked(shelved, start + cells.length, target)];
+  let nextUid = start + cells.length + shelved.length;
   const arrived = remapSeparators(payload.separators, renumber, () => nextUid++);
   const separatorsBack = [...separatorsOf(sealed), ...arrived];
   let next: GridState = {
     ...sealed,
     cells: [...sealed.cells, ...cells],
+    parked: parkedBack.length ? parkedBack : undefined,
     nextUid,
     page: target,
     // Same rule as every other add: arriving columns un-zoom rather than being hidden behind
