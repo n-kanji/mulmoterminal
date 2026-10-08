@@ -1,9 +1,9 @@
 // The reader's HTTP surface (plans/reader-view.md), all under /api/reader:
 //
 //   GET  /docs                 the index (every registered brief, newest first)
-//   POST /register {path}      add a brief (viewhtml, right after Claude writes it)
-//   POST /open {path}          register + ask the open reader tab to show it; 409 when no
-//                              tab is listening, so viewhtml opens a browser instead
+//   POST /register {path}      add a brief (viewhtml, right after Claude writes it, before
+//                              it opens /reader?doc= in a NEW tab — see common/readerApi.ts
+//                              for why there is no "show it in the open tab" route)
 //   POST /read {path}          the operator opened it
 //   POST /unread {path}        put it back in the unread pile
 //   POST /read-many {paths}    mark a batch read (the "all shown" button, the backlog sweep)
@@ -38,7 +38,7 @@ import { isWithin } from "../infra/path-within.js";
 import { messageOf } from "../errors.js";
 import { assetContentType, injectReaderBridge, isBrief, markCommentsApplied, replaceAnnotationsJson, validAnnotationsJson } from "./reader-doc.js";
 import type { ReaderRegistry } from "./reader-registry.js";
-import { READER_OPEN_CHANNEL, type ReaderIndex, type ReaderOpenEvent, type ReaderPane } from "../../common/readerApi.js";
+import { type ReaderIndex, type ReaderPane } from "../../common/readerApi.js";
 
 export interface ReaderRouteDeps {
   registry: ReaderRegistry;
@@ -46,8 +46,6 @@ export interface ReaderRouteDeps {
   panes: () => ReaderPane[];
   /** Type text into a session's input box and submit it (remoteHost/terminalInput.ts). */
   sendToSession: (sessionId: string, text: string) => Promise<{ sent: boolean }>;
-  /** Deliver to exactly ONE subscriber; false when nobody got it. */
-  publishToOne: (channel: string, data: unknown) => boolean;
 }
 
 const ALLOWED_CDNS = [
@@ -77,7 +75,6 @@ export const READER_DOC_CSP = [
   "frame-ancestors http://localhost:* http://127.0.0.1:*",
 ].join("; ");
 
-export const NO_READER_TAB_ERROR = "no reader tab is open";
 const MAX_SEND_TEXT = 10_000;
 
 const pathOf = (body: unknown): string | null => {
@@ -97,16 +94,6 @@ function mountIndexRoutes(app: Express, deps: ReaderRouteDeps): void {
     const result = deps.registry.register(p);
     if (!result.ok) return void res.status(result.status).json({ error: result.error });
     res.json({ ok: true, doc: result.doc, added: result.added });
-  });
-
-  app.post("/api/reader/open", (req, res) => {
-    const p = pathOf(req.body);
-    if (!p) return void res.status(400).json({ error: "path is required" });
-    const result = deps.registry.register(p);
-    if (!result.ok) return void res.status(result.status).json({ error: result.error });
-    const event: ReaderOpenEvent = { path: result.doc.path };
-    if (!deps.publishToOne(READER_OPEN_CHANNEL, event)) return void res.status(409).json({ error: NO_READER_TAB_ERROR, doc: result.doc });
-    res.json({ ok: true, doc: result.doc });
   });
 
   app.post("/api/reader/read", (req, res) => {

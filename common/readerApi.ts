@@ -1,7 +1,7 @@
 // The Reader (plans/reader-view.md): one inbox for the annotated HTML briefs Claude writes
 // for the operator. Both sides read these shapes — the Express routes under /api/reader
 // answer with them, the /reader view renders them, and `viewhtml` (the operator's CLI)
-// posts to them.
+// posts to them and then opens /reader?doc=<path> in a new browser tab.
 //
 // Fork-local. MulmoClaude has no counterpart: the briefs and their comment layer are the
 // operator's own html-summary skill, not a shared package.
@@ -51,20 +51,13 @@ export interface ReaderPane {
   working: boolean | undefined;
 }
 
-/** The pub/sub channel an open reader tab listens on: `viewhtml` asks the host to show a
- *  doc, and the host hands the request to ONE tab (the same one-subscriber rule as
- *  AGENT_COLUMN_CHANNEL) rather than opening a new browser tab per brief — the tab pile-up
- *  is the problem the reader exists to end. */
-export const READER_OPEN_CHANNEL = "reader-open";
-
-export interface ReaderOpenEvent {
-  path: string;
-}
-
-export const readerOpenEventOf = (data: unknown): ReaderOpenEvent | null => {
-  if (!isRecord(data)) return null;
-  return typeof data.path === "string" && data.path ? { path: data.path } : null;
-};
+/** There is deliberately NO "show this doc in the open reader tab" channel. Until
+ *  2026-10-08 `viewhtml` POSTed /open and the host pushed the path to the one subscribed tab,
+ *  so a new brief never added a tab. The operator reads several briefs side by side —
+ *  four tabs parked to come back to — and the push kept replacing one of them, so what was
+ *  parked to read was gone before it was read. A brief now always opens in a NEW tab
+ *  (viewhtml: /register, then /reader?doc= through the OS opener). The pile-up this was
+ *  meant to prevent is the operator's to manage; losing a parked page is not. */
 
 /** The message the comment layer's bridge posts to the reader (window.postMessage). The
  *  bridge is injected by the server when it serves a doc (server/reader/reader-doc.ts). */

@@ -1,16 +1,15 @@
 // @vitest-environment node
 // Route-level tests over a real temp root. Which failure is an HTTP status matters: viewhtml
-// reads a 409 from /open as "no tab, open a browser", and the view reads a non-200 from the
-// save as "your comment did not land".
+// reads a non-200 from /register as "not a brief for the reader, serve it the old way", and
+// the view reads a non-200 from the save as "your comment did not land".
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import express from "express";
 import request from "supertest";
-import { mountReaderRoutes, NO_READER_TAB_ERROR, type ReaderRouteDeps } from "../../../server/reader/reader-routes.js";
+import { mountReaderRoutes, type ReaderRouteDeps } from "../../../server/reader/reader-routes.js";
 import { ReaderRegistry } from "../../../server/reader/reader-registry.js";
-import { READER_OPEN_CHANNEL } from "../../../common/readerApi.js";
 
 const briefHtml = (title: string, items: unknown[] = []) =>
   `<html><head><title>${title}</title></head><body><img src="shot.png"><script type="application/json" id="annotations-data">${JSON.stringify({ items })}</script></body></html>`;
@@ -34,7 +33,6 @@ const appWith = (over: Partial<ReaderRouteDeps> = {}) => {
       { id: "busy", cwd: path.join(root, "p"), agent: "claude", working: true },
     ],
     sendToSession: vi.fn(async () => ({ sent: true })),
-    publishToOne: vi.fn(() => true),
     ...over,
   };
   const app = express();
@@ -77,17 +75,10 @@ describe("index routes", () => {
     expect((await request(app).post("/api/reader/read-many").send({ paths: "x" })).status).toBe(400);
   });
 
-  it("/open hands the doc to the one open tab, or 409s so viewhtml opens a browser", async () => {
+  it("has no /open: a brief is never pushed into a tab that is already open (operator, 2026-10-08)", async () => {
     const app = appWith();
     const abs = write("p/a.html", briefHtml("A"));
-    const ok = await request(app).post("/api/reader/open").send({ path: abs });
-    expect(ok.status).toBe(200);
-    expect(deps.publishToOne).toHaveBeenCalledWith(READER_OPEN_CHANNEL, { path: abs });
-    const none = appWith({ publishToOne: () => false });
-    const res = await request(none).post("/api/reader/open").send({ path: abs });
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe(NO_READER_TAB_ERROR);
-    expect(res.body.doc.path).toBe(abs);
+    expect((await request(app).post("/api/reader/open").send({ path: abs })).status).toBe(404);
   });
 });
 

@@ -510,7 +510,6 @@ mountReaderRoutes(app, {
   registry: readerRegistry,
   panes: () => [...ptys.entries()].map(([id, entry]) => ({ id, cwd: entry.cwd, agent: entry.agent, working: activity.get(id)?.working })),
   sendToSession: agentBroadcastSender,
-  publishToOne: (channel, data) => pubsub?.publishToOne(channel, data) ?? false,
 });
 
 // The per-pane next-instruction queue (plans/feat-next-instruction-queue.md). Same

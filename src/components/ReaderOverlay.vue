@@ -10,10 +10,9 @@
 // it into the pane that owns the folder).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ReaderDoc, ReaderDocState, ReaderPane } from "../../common/readerApi";
-import { READER_OPEN_CHANNEL, readerBridgeMessageOf, readerOpenEventOf } from "../../common/readerApi";
+import { readerBridgeMessageOf } from "../../common/readerApi";
 import { useReader, readerGoto } from "../composables/useReader";
 import { useEscapeToClose } from "../composables/useEscapeToClose";
-import { usePubSub } from "../composables/usePubSub";
 import {
   annotationsJsonOf,
   fetchReaderIndex,
@@ -348,30 +347,10 @@ watch(
 );
 
 // ---- lifecycle -------------------------------------------------------------------------
-// `viewhtml` asks the host to show a brief; the host hands it to ONE subscriber. This
-// component is mounted in every tab, so the subscription is held ONLY while the reader is
-// open — otherwise the grid tab, connected first, would take the event and be navigated
-// off the terminals (review of 16fcc53c). The index is also re-read whenever the tab comes
-// back into view and on a slow timer, since Claude marks comments applied by editing the
-// files underneath us.
-let unsubscribeOpen: (() => void) | null = null;
-watch(
-  isOpen,
-  (open) => {
-    if (open && !unsubscribeOpen) {
-      unsubscribeOpen = usePubSub().subscribe(READER_OPEN_CHANNEL, (data) => {
-        const event = readerOpenEventOf(data);
-        if (!event) return;
-        void refreshIndex().then(() => readerGoto(event.path));
-        window.focus();
-      });
-    } else if (!open && unsubscribeOpen) {
-      unsubscribeOpen();
-      unsubscribeOpen = null;
-    }
-  },
-  { immediate: true },
-);
+// A brief arrives as its own tab (viewhtml opens /reader?doc= through the OS; see
+// common/readerApi.ts for why nothing is pushed into a tab that is already open). The
+// index is re-read whenever the tab comes back into view and on a slow timer, since
+// Claude marks comments applied by editing the files underneath us.
 let timer: ReturnType<typeof setInterval> | null = null;
 const onVisible = (): void => {
   if (!document.hidden && isOpen.value) void refreshIndex();
@@ -387,7 +366,6 @@ onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
   document.removeEventListener("visibilitychange", onVisible);
   if (timer) clearInterval(timer);
-  unsubscribeOpen?.();
 });
 watch(
   isOpen,

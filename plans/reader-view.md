@@ -77,9 +77,16 @@ working unchanged.
 
 ### `viewhtml`
 
-- If MulmoTerminal answers: `POST /api/reader/open`. 200 = an open reader tab took it
-  (pub/sub, one subscriber). 409 = registered but no tab; open `/reader?doc=` once.
+- If MulmoTerminal answers: `POST /api/reader/register`, then open `/reader?doc=<path>`
+  through the OS opener — a **new tab every time**, never a tab that is already open.
 - Otherwise (server down, path outside the roots, not a brief): the old per-file server.
+- Revised 2026-10-08 (operator report). Originally `POST /api/reader/open` handed the path to
+  the one subscribed reader tab (200) and only opened a tab when none listened (409): "no
+  tab per brief" was the point. In use the operator parks several briefs in several tabs to
+  read later, and the push replaced one of them with each new brief — the parked page was
+  gone before it was read. The `/open` route, the `reader-open` channel and the overlay's
+  subscription are removed so no caller can bring the replacement back; the tab pile-up is
+  the operator's to manage (the index inside each tab still lists everything).
 
 ## Rejected
 
