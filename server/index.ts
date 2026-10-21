@@ -11,7 +11,7 @@ import { createPubSub } from "./infra/pubsub.js";
 import { toolSummaries } from "./infra/plugins-registry.js";
 import { initMarkdownBackend } from "./backends/markdown.js";
 import { initArtifactsBackend } from "./backends/artifacts.js";
-import { getUserMcpServers, getWorklogConfig, getTerminalSubmit, getQuickCommands, APP_CONFIG_FILE } from "./config/config-routes.js";
+import { getUserMcpServers, getWorklogConfig, getTerminalSubmit, getQuickCommands, getLoginAlert, APP_CONFIG_FILE } from "./config/config-routes.js";
 import { enforceKeymap } from "./config/keymap-check.js";
 import { readFileSync } from "node:fs";
 import { submitSequenceForAgent } from "../common/terminalSubmit.js";
@@ -96,6 +96,9 @@ import { allowedToolNames } from "./infra/plugins-registry.js";
 import { resumableSessionPredicate } from "./session/resumable-sessions.js";
 import { installProcessGuards } from "./infra/process-guards.js";
 import { pruneOrphanSettings } from "./session/session-settings.js";
+import { createLoginHealthMonitor, mountLoginHealthRoutes } from "./backends/claude-login-health.js";
+import { realStoreIo } from "./backends/claude-account-store.js";
+import { postSlackMessage } from "./infra/slack-notify.js";
 
 // Per-session activity flags, driven by Claude hooks (see /api/hook).
 
@@ -568,6 +571,25 @@ const scheduledSessions = createScheduledSessionRegistry({
 const SCHEDULED_SWEEP_INTERVAL_MS = 60 * 60_000;
 void scheduledSessions.sweep();
 setInterval(() => void scheduledSessions.sweep(), SCHEDULED_SWEEP_INTERVAL_MS).unref();
+
+// The login-expiry watch (operator request 2026-10-21, backends/claude-login-health): scan
+// the Claude Code logins at startup and hourly, serve the report to the toolbar chip, post to
+// Slack when one is lapsing or has lapsed. Hourly is plenty — the horizon is days — and
+// `.unref()` so the timer never holds the process open.
+const loginHealth = createLoginHealthMonitor({
+  io: realStoreIo(),
+  stateFile: path.join(MULMOTERMINAL_HOME, "login-health-notified.json"),
+  config: getLoginAlert,
+  notify: async (text) => {
+    const { slack } = getLoginAlert();
+    if (!slack) return;
+    await postSlackMessage({ tokenFile: slack.tokenFile, channel: slack.channel, text });
+  },
+});
+const LOGIN_HEALTH_INTERVAL_MS = 60 * 60_000;
+void loginHealth.run();
+setInterval(() => void loginHealth.run(), LOGIN_HEALTH_INTERVAL_MS).unref();
+mountLoginHealthRoutes(app, loginHealth, isAllowedOrigin);
 
 function spawnScheduledChat(message: string): void {
   const sessionId = randomUUID();

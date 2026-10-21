@@ -24,6 +24,7 @@ import { DEFAULT_PUSH_KINDS, PUSH_KINDS, type PushKind } from "../../common/push
 import { DEFAULT_NOTIFY_KINDS, NOTIFY_KINDS, type NotifyKind } from "../../common/notifyKinds.js";
 import { sanitizeKeymap, type Keymap } from "../../common/keymap.js";
 import { sanitizeCockpitLines, DEFAULT_COCKPIT_LINES, type CockpitLines } from "../../common/cockpitLines.js";
+import { sanitizeLoginAlert, DEFAULT_LOGIN_ALERT, type LoginAlertConfig } from "../../common/loginHealth.js";
 import { DEFAULT_COPY_ON_SELECT, sanitizeCopyOnSelect } from "../../common/copyOnSelect.js";
 import { normalizeFontFamily } from "../../common/terminalFontFamily.js";
 import { readTextFile } from "../infra/read-text-file.js";
@@ -90,6 +91,10 @@ export interface AppConfig {
   // exist is a property of the machine the browser runs on — the same answer for every client
   // of one host. A directory's `.mulmoterminal.json` fontFamily overrides it.
   fontFamily: string | null;
+  // The login-expiry watch (2026-10-21, common/loginHealth): how many days ahead a lapsing
+  // Claude Code login is flagged, and where to post it. Safe to serve: the Slack entry names
+  // the FILE holding the bot token, never the token.
+  loginAlert: LoginAlertConfig;
 }
 
 // `id` becomes an MCP server name + `mcp__<id>` tool prefix, so restrict to a plain
@@ -266,6 +271,7 @@ export const emptyConfig = (): AppConfig => ({
   cockpitLines: { ...DEFAULT_COCKPIT_LINES },
   copyOnSelect: DEFAULT_COPY_ON_SELECT,
   fontFamily: null,
+  loginAlert: { ...DEFAULT_LOGIN_ALERT },
 });
 
 // Drop malformed entries rather than rejecting the whole config: one bad provider must
@@ -303,6 +309,7 @@ function sanitizeAppConfig(raw: unknown): AppConfig {
     prWorkdirFooter: sanitizePrWorkdirFooter(o.prWorkdirFooter),
     cockpitLines: sanitizeCockpitLines(o.cockpitLines),
     copyOnSelect: sanitizeCopyOnSelect(o.copyOnSelect),
+    loginAlert: sanitizeLoginAlert(o.loginAlert),
     fontFamily: normalizeFontFamily(o.fontFamily),
   };
 }
@@ -380,6 +387,7 @@ export function mergeConfigUpdate(base: AppConfig, body: Record<string, unknown>
     prWorkdirFooter: updated("prWorkdirFooter", sanitizePrWorkdirFooter, base.prWorkdirFooter),
     cockpitLines: updated("cockpitLines", sanitizeCockpitLines, base.cockpitLines),
     copyOnSelect: updated("copyOnSelect", sanitizeCopyOnSelect, base.copyOnSelect),
+    loginAlert: updated("loginAlert", sanitizeLoginAlert, base.loginAlert),
   };
 }
 
@@ -408,6 +416,7 @@ export function toPublicAppConfig(config: AppConfig): AppConfig {
     cockpitLines: config.cockpitLines,
     copyOnSelect: config.copyOnSelect,
     fontFamily: config.fontFamily,
+    loginAlert: config.loginAlert,
   };
 }
 

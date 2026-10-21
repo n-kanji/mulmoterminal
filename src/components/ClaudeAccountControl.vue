@@ -17,6 +17,8 @@ import { computed, ref, useTemplateRef } from "vue";
 import { useDropdownMenu } from "../composables/useDropdownMenu";
 import { useClaudeAccount } from "../composables/useClaudeAccount";
 import { applyPageAccount, movePagePanes, usePageAccount } from "../composables/usePageAccount";
+import { useLoginHealth } from "../composables/useLoginHealth";
+import { describeSlot, daysLeftNote, slotLabel } from "../../common/loginHealth";
 
 const {
   current,
@@ -35,6 +37,23 @@ const {
 // Null when no grid is mounted (a full-screen overlay): there is no page to assign, so the
 // menu shows the default login only.
 const { pageAccount } = usePageAccount();
+
+// The login-expiry warning (operator request 2026-10-21): a refresh token lapses ~30 days
+// after the browser login and every pane on it stops — including the phone's launcher — so
+// the warning has to reach the operator while they are at the Mac. It sits BEFORE the chip,
+// outside the dropdown, because a warning inside a menu nobody opens is no warning. One line
+// per lapsing login in the menu says which pane to run /login in; "re-check" clears it right
+// after, without waiting for the hourly scan.
+const { report: loginHealth, alerting: loginAlerts, worst: loginWorst, checking: loginChecking, recheck: recheckLogins } = useLoginHealth();
+const loginDead = computed(() => loginWorst.value?.state === "dead");
+const loginBorder = computed(() => (loginDead.value ? "border-err" : "border-warn"));
+const loginOkSlots = computed(() => loginHealth.value?.slots.filter((s) => s.state === "ok") ?? []);
+const loginWarnText = computed(() => {
+  const w = loginWorst.value;
+  if (!w) return "";
+  return w.state === "dead" ? `ログイン切れ: ${slotLabel(w)}` : `ログイン期限${daysLeftNote(w.daysLeft)}: ${slotLabel(w)}`;
+});
+const loginWarnTitle = computed(() => loginAlerts.value.map(describeSlot).join("\n"));
 
 // Default OFF (operator decision 2026-08-25): a switch must not touch the existing panes
 // unless the operator asks. The fleet restart moves ALL claude panes — detached pages
@@ -102,7 +121,20 @@ async function pickDefault(email: string): Promise<void> {
 </script>
 
 <template>
-  <div ref="root" class="relative flex-none">
+  <div ref="root" class="relative flex flex-none items-center gap-1">
+    <button
+      v-if="loginWorst"
+      type="button"
+      data-testid="login-health-warning"
+      class="inline-flex h-[22px] max-w-[260px] cursor-pointer items-center gap-1 rounded-full border px-2 font-mono text-[11px] leading-none hover:bg-hover"
+      :class="loginDead ? 'border-err text-err' : 'border-warn text-warn'"
+      :title="loginWarnTitle"
+      :aria-label="loginWarnTitle"
+      @click="toggle"
+    >
+      <span class="material-symbols-outlined text-[14px]" aria-hidden="true">{{ loginDead ? "lock_open" : "schedule" }}</span>
+      <span class="min-w-0 truncate">{{ loginWarnText }}</span>
+    </button>
     <button
       type="button"
       data-testid="claude-account-chip"
@@ -141,6 +173,23 @@ async function pickDefault(email: string): Promise<void> {
           </button>
         </div>
         <p class="mt-1 text-muted">確定するまで、アカウントの切替とログアウトは実行されません。</p>
+      </div>
+      <!-- Every login this machine holds and when each lapses (useLoginHealth). Lapsing ones
+           say which pane to run /login in; "re-check" is for right after doing so. -->
+      <div v-if="loginHealth" class="mb-1 rounded border px-2 py-1.5 text-[11px]" :class="loginWorst ? loginBorder : 'border-border'">
+        <p v-for="slot in loginAlerts" :key="`alert-${slot.service}`" class="mb-1 text-fg">{{ describeSlot(slot) }}</p>
+        <p v-for="slot in loginOkSlots" :key="`ok-${slot.service}`" class="font-mono text-muted">
+          {{ describeSlot(slot) }}
+        </p>
+        <p v-if="loginHealth.duplicates.length" class="mt-1 text-err">同じ鍵が複数の保存先にあります。片方の更新がもう片方を無効化します。</p>
+        <button
+          type="button"
+          class="mt-1 cursor-pointer rounded border border-border bg-elevated px-2 py-0.5 text-[11px] text-fg hover:bg-hover"
+          :disabled="loginChecking"
+          @click="recheckLogins()"
+        >
+          {{ loginChecking ? "確認中…" : "/login した後に再確認" }}
+        </button>
       </div>
       <!-- The page's own account: the everyday control now. Absent `pageAccount` means no
            grid is mounted, and then there is no page to point anywhere. -->

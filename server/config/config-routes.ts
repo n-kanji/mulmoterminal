@@ -21,6 +21,7 @@ import { type HeaderConfig } from "./header-config.js";
 import { type Launcher, type Provider, type UserMcpServer } from "./config-schema.js";
 import type { QuickCommand } from "../../common/quickCommands.js";
 import type { PushKind } from "../../common/pushKinds.js";
+import type { LoginAlertConfig } from "../../common/loginHealth.js";
 import { type TerminalSubmitMode } from "../../common/terminalSubmit.js";
 import { launchOptions } from "./launch-options.js";
 import { badArrayField, badNullableArrayField } from "./config-body.js";
@@ -82,6 +83,14 @@ export function getPushKinds(): PushKind[] {
 // scheduler wiring (a restart, currently). Off by default.
 export function getWorklogConfig(): { enabled: boolean; intervalHours: number } {
   return { enabled: config.worklogEnabled, intervalHours: config.worklogIntervalHours };
+}
+
+// The login-expiry watch settings (2026-10-21). Read from DISK like getPrWorkdirFooter and
+// for the same reason: there is no Settings control, a hand edit of config.json is the only
+// way to set a warn window or a Slack target, and served from memory it would wait for a
+// restart. One JSON read per hourly scan costs nothing.
+export function getLoginAlert(): LoginAlertConfig {
+  return loadAppConfig(CONFIG_FILE).loginAlert;
 }
 
 // The Enter-key submit/newline byte mapping — read live so the phone remote-view submit

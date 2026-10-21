@@ -248,6 +248,7 @@ describe("loadAppConfig / saveAppConfig", () => {
     cockpitLines: { ...DEFAULT_COCKPIT_LINES },
     copyOnSelect: true,
     fontFamily: null,
+    loginAlert: { warnDays: 5, slack: null },
   };
   it("round-trips presets + soundFile + prRepos + launchers + userMcpServers through a file", () => {
     const dir = tmp();
@@ -273,6 +274,7 @@ describe("loadAppConfig / saveAppConfig", () => {
       cockpitLines: { summary: 6, prompt: 2, response: 3 }, // a raised clamp must survive it too
       copyOnSelect: false, // like prWorkdirFooter it defaults ON, so only `false` proves it persisted
       fontFamily: "Cica, monospace", // already normalized, so it must come back byte-identical
+      loginAlert: { warnDays: 7, slack: { channel: "C1", tokenFile: "~/secrets.env" } }, // non-default + a Slack target must round-trip
     };
     expect(saveAppConfig(file, cfg)).toBe(true);
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(cfg);
@@ -326,6 +328,7 @@ describe("loadAppConfig / saveAppConfig", () => {
       prWorkdirFooter: true, // absent from the file — every config predating #872 stays enabled
       copyOnSelect: true, // ditto: absent means on, so an upgrading user gets copy-on-select
       fontFamily: null,
+      loginAlert: { warnDays: 5, slack: null },
     });
     rmSync(dir, { recursive: true, force: true });
   });
@@ -429,6 +432,7 @@ describe("#741 corrupt config is not silently wiped by a partial update", () => 
     cockpitLines: { ...DEFAULT_COCKPIT_LINES },
     copyOnSelect: true,
     fontFamily: null,
+    loginAlert: { warnDays: 5, slack: null },
   };
 
   it("a valid base keeps every omitted field through a pushEnabled-only update", () => {
@@ -488,6 +492,7 @@ describe("mergeConfigUpdate", () => {
     cockpitLines: { ...DEFAULT_COCKPIT_LINES },
     copyOnSelect: true,
     fontFamily: null,
+    loginAlert: { warnDays: 5, slack: null },
     ...over,
   });
 
