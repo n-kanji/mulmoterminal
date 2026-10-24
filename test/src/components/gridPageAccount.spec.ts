@@ -10,6 +10,7 @@ import {
   parseGridState,
   realCells,
   restampPanes,
+  pageClaudeSessions,
   setPageAccount,
   setSession,
   stampAccount,
@@ -183,6 +184,19 @@ describe("restampPanes", () => {
     const again = restampPanes(moved.state, [0, 1], null);
     expect(again.state).toBe(moved.state);
     expect(again.sessions).toEqual([]);
+  });
+
+  it("pageClaudeSessions lists every running claude pane among the uids — what a reload restarts when nothing needs moving (2026-10-24)", () => {
+    const state = grid([
+      stamped(0, "s0", "b@orosy.co.jp"),
+      stamped(1, "s1", "b@orosy.co.jp"),
+      stamped(2, null), // no session: nothing to restart
+      stamped(3, "s3", undefined, { agent: "codex" as const }), // not a claude.ai login
+      stamped(4, "s4", "b@orosy.co.jp"), // another page
+    ]);
+    // All stamped already, so the move names nothing — the page-wide list is still these two.
+    expect(restampPanes(state, [0, 1, 2, 3], "b@orosy.co.jp").sessions).toEqual([]);
+    expect(pageClaudeSessions(state, [0, 1, 2, 3])).toEqual(["s0", "s1"]);
   });
 
   it("survives a reload: the new stamp is what comes back from localStorage", () => {

@@ -593,6 +593,16 @@ export function restampPanes(state: GridState, uids: Iterable<number>, email: st
   return { state: { ...state, cells }, sessions };
 }
 
+// The running claude panes among `uids` — every one restampPanes COULD move, whether or not
+// it needs moving. For the case restampPanes returns nothing (operator report 2026-10-24):
+// the page's panes were all stamped board@ already, but the login stored under board@ had
+// been replaced since they started, and a pane holds its token in-process for life. So "all
+// already on board@" is also exactly the list to restart so they pick up the new login.
+export function pageClaudeSessions(state: GridState, uids: Iterable<number>): string[] {
+  const wanted = new Set(uids);
+  return state.cells.filter((c) => wanted.has(c.uid) && !c.hole && c.agent !== "codex" && !!c.session).map((c) => c.session as string);
+}
+
 export function setCwd(state: GridState, uid: number, cwd: string): GridState {
   return { ...state, cells: state.cells.map((c) => (c.uid === uid ? { ...c, cwd } : c)) };
 }

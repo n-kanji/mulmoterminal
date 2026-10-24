@@ -16,7 +16,12 @@ import { isRecord } from "./isRecord.js";
 // or the slot MT's own logout cleared) — that is a normal state, never an alert.
 // `unreadable`: an entry that is not a credentials JSON (one such exists on the operator's
 // machine); reported so it can be seen, never alerted on.
-export type LoginSlotState = "ok" | "expiring" | "dead" | "none" | "unreadable";
+// `mismatch`: the entry is alive but belongs to ANOTHER account than the slot is for — the
+// 2026-09-28 and 2026-10-23 incident: `/login` run in a board@ pane while the browser's
+// claude.ai session was kanji@ stores kanji@'s token under board@'s name, and every pane
+// "on board@" then burns kanji@'s quota. Nothing on disk says so; only asking the token's
+// issuer who it belongs to does, which is what `holder` records.
+export type LoginSlotState = "ok" | "expiring" | "dead" | "none" | "unreadable" | "mismatch";
 
 export interface LoginSlot {
   // The Keychain service name — stable identity for notification dedup.
@@ -34,6 +39,10 @@ export interface LoginSlot {
   // A short fingerprint of the refresh token, so two slots holding the SAME token can be
   // seen: that is how a login dies early (one refresh invalidates the other's copy, #2026-09-28).
   fingerprint: string | null;
+  // Who the token ACTUALLY belongs to, per the OAuth profile endpoint — null when not asked
+  // (no live access token, lookup not wired, or the endpoint did not answer). When it names
+  // a different account than `email`, the state is `mismatch`.
+  holder: string | null;
 }
 
 export interface LoginHealthReport {
@@ -105,6 +114,10 @@ export function describeSlot(slot: LoginSlot): string {
   const who = slotLabel(slot);
   const when = slot.refreshExpiresAt ? formatLocal(slot.refreshExpiresAt) : null;
   switch (slot.state) {
+    case "mismatch":
+      // The fix is a /login in the right pane WITH the browser on the right account — the
+      // browser half is the part that went wrong both times, so it is said first.
+      return `${who} に保存されているログインの中身は ${slot.holder ?? "別のアカウント"} です。ブラウザの claude.ai を ${slot.email ?? "正しいアカウント"} に切り替えてから、${whereToLogin(slot)}`;
     case "dead":
       return `${who} のログインが切れています。${whereToLogin(slot)}`;
     case "expiring":
@@ -126,9 +139,10 @@ export function formatLocal(iso: string): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// The slots worth interrupting someone for, worst first.
+// The slots worth interrupting someone for, worst first. A mismatch outranks a dead login:
+// the dead one has stopped, the mismatched one is quietly spending the wrong quota right now.
 export function alertingSlots(report: LoginHealthReport): LoginSlot[] {
-  const RANK: Partial<Record<LoginSlotState, number>> = { dead: 0, expiring: 1 };
-  const rank = (s: LoginSlot) => RANK[s.state] ?? 2;
-  return report.slots.filter((s) => s.state === "dead" || s.state === "expiring").sort((a, b) => rank(a) - rank(b) || (a.daysLeft ?? 0) - (b.daysLeft ?? 0));
+  const RANK: Partial<Record<LoginSlotState, number>> = { mismatch: 0, dead: 1, expiring: 2 };
+  const rank = (s: LoginSlot) => RANK[s.state] ?? 3;
+  return report.slots.filter((s) => s.state in RANK).sort((a, b) => rank(a) - rank(b) || (a.daysLeft ?? 0) - (b.daysLeft ?? 0));
 }

@@ -112,6 +112,49 @@ describe("scanLoginHealth", () => {
     expect(report.duplicates).toEqual([CLAUDE_KEYCHAIN_SERVICE, keychainServiceForDir(boardDir)]);
     expect(report.warnDays).toBe(5);
   });
+  it("a live token that belongs to another account makes the slot `mismatch`; a lapsed access token or an unanswered lookup leaves it alone", async () => {
+    const boardDir = accountStoreDir("board@x.co", ROOT);
+    const otherDir = accountStoreDir("other@x.co", ROOT);
+    const { io } = fakeIo({
+      keychain: {
+        [CLAUDE_KEYCHAIN_SERVICE]: creds({ refresh: "rt-default" }),
+        // The 2026-10-23 shape: board@'s store, kanji@'s token inside it.
+        [keychainServiceForDir(boardDir)]: creds({ refresh: "rt-board" }),
+        // A store whose access token has lapsed: not asked (MT must not refresh it).
+        [keychainServiceForDir(otherDir)]: creds({ refresh: "rt-other", expiresAt: NOW.getTime() - 1 }),
+      },
+      files: {
+        [CLAUDE_JSON]: claudeJson("kanji@x.io"),
+        [INDEX]: serializeIndex(
+          [
+            { email: "board@x.co", savedAt: "s" },
+            { email: "other@x.co", savedAt: "s" },
+            { email: "kanji@x.io", savedAt: "s" },
+          ],
+          "kanji@x.io",
+        ),
+      },
+      dirs: [boardDir, otherDir],
+    });
+    const asked: string[] = [];
+    const lookup = async (token: string | null, fingerprint: string | null) => {
+      if (!token) return null; // what the real lookup does with a lapsed token: nothing
+      asked.push(fingerprint ?? "?");
+      return "Kanji@x.io"; // the issuer's answer, case and all
+    };
+    const report = await scanLoginHealth(io, NOW, 5, ROOT, lookup);
+    expect(report.slots.map((s) => [s.email, s.state, s.holder])).toEqual([
+      ["kanji@x.io", "ok", "kanji@x.io"],
+      ["board@x.co", "mismatch", "kanji@x.io"],
+      ["other@x.co", "ok", null],
+    ]);
+    expect(asked).toHaveLength(2);
+    // A lookup that cannot answer never alarms — and without one wired, nothing is asked.
+    const quiet = await scanLoginHealth(io, NOW, 5, ROOT, async () => null);
+    expect(quiet.slots.map((s) => s.state)).toEqual(["ok", "ok", "ok"]);
+    const unwired = await scanLoginHealth(io, NOW, 5, ROOT);
+    expect(unwired.slots.every((s) => s.holder === null)).toBe(true);
+  });
   it("a store directory with no Keychain entry is `none`, not dead", async () => {
     const boardDir = accountStoreDir("board@x.co", ROOT);
     const { io } = fakeIo({
@@ -249,6 +292,89 @@ describe("createLoginHealthMonitor", () => {
     expect(report.slots.map((s) => s.state)).toEqual(["ok", "unreadable"]);
   });
 
+  it("asks who a token belongs to once per refresh token, not once per scan, and a mismatch posts like any alert", async () => {
+    const boardDir = accountStoreDir("board@x.co", ROOT);
+    const { io, keychain } = fakeIo({
+      keychain: { [CLAUDE_KEYCHAIN_SERVICE]: creds({ refresh: "rt-default" }), [keychainServiceForDir(boardDir)]: creds({ refresh: "rt-board" }) },
+      files: { [CLAUDE_JSON]: claudeJson("kanji@x.io"), [INDEX]: serializeIndex([{ email: "board@x.co", savedAt: "s" }], "kanji@x.io") },
+      dirs: [boardDir],
+    });
+    let asked = 0;
+    const posts: string[] = [];
+    const monitor = createLoginHealthMonitor({
+      io,
+      stateFile: "/h/state.json",
+      config: () => ({ warnDays: 5, slack: { channel: "C1", tokenFile: "/f" } }),
+      notify: async (t) => void posts.push(t),
+      lookupHolder: async (token) => {
+        if (!token) return null;
+        asked += 1;
+        return "kanji@x.io";
+      },
+      holdersFile: "/h/holders.json",
+      now: () => NOW,
+      host: "mac",
+      storeRoot: ROOT,
+    });
+    await monitor.run();
+    await monitor.run();
+    expect(asked).toBe(2); // two slots, two tokens — the second scan hit the cache
+    expect(monitor.latest()?.slots.map((s) => s.state)).toEqual(["ok", "mismatch"]);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toContain("board@x.co に保存されているログインの中身は kanji@x.io");
+    // The board pane goes idle and its access token lapses: the endpoint cannot be asked, but
+    // the owner is still known from the cache — so the slot stays a mismatch, and nothing
+    // posts (the review finding of 2026-10-24: this used to read as "recovered").
+    keychain.set(keychainServiceForDir(boardDir), creds({ refresh: "rt-board", expiresAt: NOW.getTime() - 1 }));
+    await monitor.run();
+    expect(asked).toBe(2);
+    expect(monitor.latest()?.slots[1]).toMatchObject({ state: "mismatch", holder: "kanji@x.io" });
+    expect(posts).toHaveLength(1);
+    // A server restart with the same lapsed token: the cache comes back from disk.
+    let askedAfterRestart = 0;
+    const restarted = createLoginHealthMonitor({
+      io,
+      stateFile: "/h/state.json",
+      holdersFile: "/h/holders.json",
+      config: () => ({ warnDays: 5, slack: { channel: "C1", tokenFile: "/f" } }),
+      notify: async (t) => void posts.push(t),
+      lookupHolder: async () => {
+        askedAfterRestart += 1;
+        return null;
+      },
+      now: () => NOW,
+      host: "mac",
+      storeRoot: ROOT,
+    });
+    await restarted.run();
+    expect(askedAfterRestart).toBe(0);
+    expect(restarted.latest()?.slots[1].state).toBe("mismatch");
+    expect(posts).toHaveLength(1);
+    // The operator logs in again, properly: a new refresh token is a new question, and the
+    // confirmed owner is what ends the alert — with its own wording, since nothing "came back".
+    keychain.set(keychainServiceForDir(boardDir), creds({ refresh: "rt-board-2" }));
+    let fixed = 0;
+    const fixedMonitor = createLoginHealthMonitor({
+      io,
+      stateFile: "/h/state.json",
+      holdersFile: "/h/holders.json",
+      config: () => ({ warnDays: 5, slack: { channel: "C1", tokenFile: "/f" } }),
+      notify: async (t) => void posts.push(t),
+      lookupHolder: async (token) => {
+        if (!token) return null;
+        fixed += 1;
+        return "board@x.co";
+      },
+      now: () => NOW,
+      host: "mac",
+      storeRoot: ROOT,
+    });
+    await fixedMonitor.run();
+    expect(fixed).toBe(1);
+    expect(fixedMonitor.latest()?.slots[1]).toMatchObject({ state: "ok", holder: "board@x.co" });
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toContain("board@x.co の名義が正しくなりました（中身も board@x.co）");
+  });
   it("a Slack failure does not break the scan, and the report is still served", async () => {
     const { io } = fakeIo({
       keychain: { [CLAUDE_KEYCHAIN_SERVICE]: creds({ refreshExpiresAt: NOW.getTime() + DAY }) },
@@ -286,8 +412,19 @@ describe("wording and config", () => {
             accessExpiresAt: null,
             daysLeft: 2,
             fingerprint: "x",
+            holder: null,
           },
-          { service: "d", kind: "default", email: "k@x", state: "dead", refreshExpiresAt: null, accessExpiresAt: null, daysLeft: null, fingerprint: null },
+          {
+            service: "d",
+            kind: "default",
+            email: "k@x",
+            state: "dead",
+            refreshExpiresAt: null,
+            accessExpiresAt: null,
+            daysLeft: null,
+            fingerprint: null,
+            holder: null,
+          },
         ],
       },
       "mbp",
@@ -306,6 +443,7 @@ describe("wording and config", () => {
         accessExpiresAt: null,
         daysLeft: null,
         fingerprint: null,
+        holder: null,
       }),
     ).toContain("未割り当て");
     expect(
@@ -318,11 +456,28 @@ describe("wording and config", () => {
         accessExpiresAt: null,
         daysLeft: 1,
         fingerprint: "f",
+        holder: null,
       }),
     ).toContain("b@x を割り当てた");
+    // A mismatch names who the token really belongs to and says to fix the BROWSER first —
+    // that is the half that went wrong on 09-28 and 10-23.
+    const mismatch = describeSlot({
+      service: "s",
+      kind: "store",
+      email: "b@x",
+      state: "mismatch",
+      refreshExpiresAt: NOW.toISOString(),
+      accessExpiresAt: null,
+      daysLeft: 20,
+      fingerprint: "f",
+      holder: "k@x",
+    });
+    expect(mismatch).toContain("中身は k@x");
+    expect(mismatch).toContain("ブラウザの claude.ai を b@x に切り替えてから");
+    expect(mismatch).toContain("b@x を割り当てた");
   });
-  it("alertingSlots drops ok/none/unreadable and puts dead first", () => {
-    const mk = (state: "ok" | "dead" | "expiring" | "none" | "unreadable", daysLeft: number | null) => ({
+  it("alertingSlots drops ok/none/unreadable and puts mismatch, then dead, first", () => {
+    const mk = (state: "ok" | "dead" | "expiring" | "none" | "unreadable" | "mismatch", daysLeft: number | null) => ({
       service: state,
       kind: "store" as const,
       email: null,
@@ -331,14 +486,16 @@ describe("wording and config", () => {
       accessExpiresAt: null,
       daysLeft,
       fingerprint: null,
+      holder: null,
     });
     const out = alertingSlots({
       checkedAt: "",
       warnDays: 5,
       duplicates: [],
-      slots: [mk("ok", 20), mk("expiring", 4), mk("none", null), mk("dead", -1), mk("expiring", 1), mk("unreadable", null)],
+      slots: [mk("ok", 20), mk("expiring", 4), mk("none", null), mk("dead", -1), mk("mismatch", 20), mk("expiring", 1), mk("unreadable", null)],
     });
     expect(out.map((s) => [s.state, s.daysLeft])).toEqual([
+      ["mismatch", 20],
       ["dead", -1],
       ["expiring", 1],
       ["expiring", 4],

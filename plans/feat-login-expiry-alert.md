@@ -53,3 +53,21 @@ Surfaces, one wording per condition (`describeSlot`):
   that is the cause.
 - A per-pane `/login` cannot be driven from the phone. Giving the launcher its own store would
   keep the phone entry point alive but not the panes it opens — declined for now.
+
+## 2026-10-24 — the token's owner is checked, not just its expiry
+
+The 09-28 incident repeated on 10-23: the chip said "board@ expires 10/28, /login in a
+board@ pane", the operator did, with the browser's claude.ai session on kanji@ — and
+kanji@'s token was stored under board@'s name. Every "board@" pane then spent kanji@'s
+quota, the Fable limit hit, and "move the running panes to board@" could not help because
+they were already there. The health report said `ok` for 20 hours: it reads expiry and a
+fingerprint, neither of which says WHOSE token it is.
+
+Now each alive slot with a live access token is asked `GET /api/oauth/profile` who it belongs
+to (`profileHolderLookup`, wired in `server/index.ts`; the scan itself defaults to not asking,
+so specs stay offline). The answer lands in `slot.holder`; one that differs from the slot's
+account makes the state `mismatch`, red on the chip, ranked above `dead`, and its line says
+to switch the BROWSER to the right account before the `/login`. Answers are cached per
+refresh-token fingerprint, so this is one request per login per rotation, not one per hour.
+A lapsed access token is never refreshed by MT (that would rotate it under the pane's feet);
+such a slot is simply not asked.

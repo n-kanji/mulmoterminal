@@ -62,15 +62,82 @@ export function assessCredential(raw: string | null, now: Date, warnDays: number
   return { state, refreshExpiresAt, accessExpiresAt, daysLeft, fingerprint };
 }
 
+// The access token inside a credentials JSON, for asking who it belongs to. Null when absent
+// or when it has already lapsed: a lapsed one would be refused, and MT must NOT refresh it —
+// a refresh rotates the token under the running pane's feet (see claude-account-store.ts).
+function liveAccessToken(raw: string | null, now: Date): string | null {
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const oauth = isRecord(parsed) && isRecord(parsed.claudeAiOauth) ? parsed.claudeAiOauth : null;
+    if (!oauth || typeof oauth.accessToken !== "string" || !oauth.accessToken) return null;
+    const expiresAt = typeof oauth.expiresAt === "number" ? oauth.expiresAt : 0;
+    return expiresAt > now.getTime() ? oauth.accessToken : null;
+  } catch {
+    return null;
+  }
+}
+
+// "Whose token is this?" — answered by the OAuth profile endpoint, the only party that knows.
+// `fingerprint` (of the refresh token) is passed so a caller can cache: the answer cannot
+// change while the fingerprint does not. `accessToken` is null when there is no LIVE one
+// (lapsed, ~8h after the pane last refreshed) — then only a cache can answer, and the
+// endpoint must not be asked. Null means "could not tell", never "nobody": the scan then
+// leaves the slot as it was, because a network blip must not raise a false alarm.
+export type HolderLookup = (accessToken: string | null, fingerprint: string | null) => Promise<string | null>;
+export const NO_HOLDER_LOOKUP: HolderLookup = async () => null;
+
+const normalizeOrNull = (email: string | null | undefined): string | null => (email ? normalizeEmail(email) : null);
+
+const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
+// The lookup the server wires in. Specs never reach it: they pass their own (or none).
+export const profileHolderLookup: HolderLookup = async (accessToken) => {
+  if (!accessToken) return null;
+  try {
+    const res = await fetch(PROFILE_URL, {
+      headers: { Authorization: `Bearer ${accessToken}`, "anthropic-beta": "oauth-2025-04-20" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const body: unknown = await res.json();
+    const account = isRecord(body) && isRecord(body.account) ? body.account : null;
+    return normalizeOrNull(account && typeof account.email === "string" ? account.email : null);
+  } catch {
+    // a network blip is "could not tell", not an alarm
+    return null;
+  }
+};
+
 // A Keychain read that throws (locked keychain, "user interaction is not allowed") marks
 // THAT slot unreadable instead of aborting the scan: the other slots' answers are still
 // true, and an aborted scan would leave the chip showing yesterday's report as current.
-async function readSlot(io: AccountStoreIo, service: string, now: Date, warnDays: number): Promise<Assessment> {
+//
+// A slot that is alive and names an account is then asked who its token belongs to; an
+// answer naming someone else turns it into `mismatch`. Asked even without a live access
+// token: the lookup may know the answer from the fingerprint, and a mismatch whose token
+// lapsed overnight must not read as "recovered" (observed in review 2026-10-24).
+type SlotReading = Assessment & { holder: string | null };
+
+async function readSlot(
+  io: AccountStoreIo,
+  service: string,
+  email: string | null,
+  now: Date,
+  warnDays: number,
+  lookupHolder: HolderLookup,
+): Promise<SlotReading> {
+  let raw: string | null;
   try {
-    return assessCredential(await io.readKeychain(service), now, warnDays);
+    raw = await io.readKeychain(service);
   } catch {
-    return UNREADABLE;
+    return { ...UNREADABLE, holder: null };
   }
+  const assessment = assessCredential(raw, now, warnDays);
+  if (assessment.state !== "ok" && assessment.state !== "expiring") return { ...assessment, holder: null };
+  const holder = normalizeOrNull(await lookupHolder(liveAccessToken(raw, now), assessment.fingerprint));
+  const expected = normalizeOrNull(email);
+  if (holder && expected && holder !== expected) return { ...assessment, state: "mismatch", holder };
+  return { ...assessment, holder };
 }
 
 // Services holding the same refresh token as another slot (all of them, so a reader sees
@@ -86,23 +153,26 @@ function duplicateServices(slots: LoginSlot[]): string[] {
   return [...byFingerprint.values()].filter((group) => group.length > 1).flat();
 }
 
-// Every login MT knows about, assessed. `storeRoot` is injectable for the specs only.
+// Every login MT knows about, assessed. `storeRoot` is injectable for the specs only; the
+// holder lookup defaults to "don't ask" so nothing here touches the network unless wired.
 
-export async function scanLoginHealth(io: AccountStoreIo, now: Date, warnDays: number, storeRoot: string = accountStoreRoot()): Promise<LoginHealthReport> {
+export async function scanLoginHealth(
+  io: AccountStoreIo,
+  now: Date,
+  warnDays: number,
+  storeRoot: string = accountStoreRoot(),
+  lookupHolder: HolderLookup = NO_HOLDER_LOOKUP,
+): Promise<LoginHealthReport> {
   // Root-aware (the specs point `storeRoot` elsewhere), otherwise accountHasStore's test.
   const hasStore = (email: string) => io.dirExists(accountStoreDir(normalizeEmail(email), storeRoot));
+  const read = (service: string, email: string | null) => readSlot(io, service, email, now, warnDays, lookupHolder);
   const slots: LoginSlot[] = [];
   const defaultEmail = await resolveDefaultAccount(io, hasStore);
-  slots.push({
-    service: CLAUDE_KEYCHAIN_SERVICE,
-    kind: "default",
-    email: defaultEmail,
-    ...(await readSlot(io, CLAUDE_KEYCHAIN_SERVICE, now, warnDays)),
-  });
+  slots.push({ service: CLAUDE_KEYCHAIN_SERVICE, kind: "default", email: defaultEmail, ...(await read(CLAUDE_KEYCHAIN_SERVICE, defaultEmail)) });
   for (const entry of parseIndex(await io.readFile(io.indexPath))) {
     if (!(await hasStore(entry.email))) continue;
     const service = keychainServiceForDir(accountStoreDir(entry.email, storeRoot));
-    slots.push({ service, kind: "store", email: entry.email, ...(await readSlot(io, service, now, warnDays)) });
+    slots.push({ service, kind: "store", email: entry.email, ...(await read(service, entry.email)) });
   }
   return { checkedAt: now.toISOString(), warnDays, slots, duplicates: duplicateServices(slots) };
 }
@@ -132,6 +202,14 @@ export interface LoginHealthMonitorDeps {
   // Post one message. Rejections are logged and swallowed — the scan and the report the
   // toolbar reads must not depend on Slack being reachable.
   notify: (text: string) => Promise<void>;
+  // Who a token belongs to (profileHolderLookup in the server). Default: never asked, so a
+  // monitor built without it — every spec — stays off the network. Answers are cached per
+  // refresh-token fingerprint, so the hourly scan asks once per login, not once per hour.
+  lookupHolder?: HolderLookup;
+  // Where that cache persists (fingerprint → email, no secrets). This server restarts on
+  // every deploy, and a mismatch whose token has since lapsed can only be re-asserted from
+  // here — without it a restart turns the red chip green until the next refresh.
+  holdersFile?: string;
   now?: () => Date;
   host?: string;
   storeRoot?: string;
@@ -169,11 +247,64 @@ function decide(
     const prev = state[s.service];
     return !prev || prev.state !== s.state || prev.day !== day;
   });
-  const recovered = report.slots.filter((s) => s.state === "ok" && state[s.service] !== undefined && state[s.service].state !== "ok");
+  // Back to `ok` after an alert. After a MISMATCH only a CONFIRMED owner counts: an `ok` with
+  // no answer (lapsed token, endpoint down, restart with no cache) is "could not tell", and
+  // posting "fixed" on that would have the chip flip red/green with every token lapse.
+  const ownerConfirmed = (s: LoginSlot) => s.holder !== null && s.holder === normalizeOrNull(s.email);
+  const recovered = report.slots.filter((s) => {
+    const prev = state[s.service];
+    if (s.state !== "ok" || !prev || prev.state === "ok") return false;
+    return prev.state !== "mismatch" || ownerConfirmed(s);
+  });
   const posts: string[] = [];
   if (alerting.length) posts.push(slackText({ ...report, slots: alerting }, host));
-  for (const s of recovered) posts.push(`[MulmoTerminal ${host}] ${slotLabel(s)} のログインが復活しました。${describeSlot(s)}`);
+  for (const s of recovered) {
+    const what = state[s.service]?.state === "mismatch" ? `の名義が正しくなりました（中身も ${s.holder}）` : "のログインが復活しました";
+    posts.push(`[MulmoTerminal ${host}] ${slotLabel(s)} ${what}。${describeSlot(s)}`);
+  }
   return { alerting, recovered, posts };
+}
+
+// Holder answers by refresh-token fingerprint. A token's owner cannot change while its
+// fingerprint does not, and a fingerprint that is gone (rotated) is never asked about again,
+// so the map is cleared when it grows past a few rotations' worth. The cache is consulted
+// BEFORE the token is looked at: a lapsed token cannot be asked about, but its owner is still
+// known. `holdersFile` (fingerprint → email, no secrets) carries it across server restarts.
+function holderCache(io: AccountStoreIo, holdersFile: string | undefined, lookup: HolderLookup, log: (line: string) => void): HolderLookup {
+  const holders = new Map<string, string>();
+  let loaded = false;
+  async function load(): Promise<void> {
+    loaded = true;
+    if (!holdersFile) return;
+    try {
+      const parsed: unknown = JSON.parse((await io.readFile(holdersFile)) ?? "{}");
+      if (!isRecord(parsed)) return;
+      for (const [fingerprint, email] of Object.entries(parsed)) if (typeof email === "string" && email) holders.set(fingerprint, email);
+    } catch {
+      // unreadable cache: start empty, the next answers rebuild it
+    }
+  }
+  async function save(): Promise<void> {
+    if (!holdersFile) return;
+    try {
+      await io.writeFile(holdersFile, JSON.stringify(Object.fromEntries(holders), null, 2));
+    } catch (e) {
+      log(`[login-health] could not persist the token-owner cache: ${errMsg(e)}`);
+    }
+  }
+  return async (token, fingerprint) => {
+    if (!loaded) await load();
+    const known = fingerprint ? holders.get(fingerprint) : undefined;
+    if (known) return known;
+    if (!token) return null;
+    const holder = await lookup(token, fingerprint);
+    if (holder && fingerprint) {
+      if (holders.size >= 64) holders.clear();
+      holders.set(fingerprint, holder);
+      await save();
+    }
+    return holder;
+  };
 }
 
 export function createLoginHealthMonitor(deps: LoginHealthMonitorDeps): LoginHealthMonitor {
@@ -182,9 +313,11 @@ export function createLoginHealthMonitor(deps: LoginHealthMonitorDeps): LoginHea
   const log = deps.log ?? ((line: string) => console.warn(line));
   let latest: LoginHealthReport | null = null;
 
+  const cachedLookup = holderCache(deps.io, deps.holdersFile, deps.lookupHolder ?? NO_HOLDER_LOOKUP, log);
+
   async function scan(): Promise<LoginHealthReport | null> {
     try {
-      const report = await scanLoginHealth(deps.io, now(), deps.config().warnDays, deps.storeRoot);
+      const report = await scanLoginHealth(deps.io, now(), deps.config().warnDays, deps.storeRoot, cachedLookup);
       for (const s of alertingSlots(report)) log(`[login-health] ${describeSlot(s)}`);
       if (report.duplicates.length) log(`[login-health] one refresh token held by several slots: ${report.duplicates.join(", ")}`);
       return report;

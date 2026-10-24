@@ -14,14 +14,21 @@ export interface PageAccountView {
   pageName: string;
 }
 
+// What a move did: `moved` are the sessions whose stamp just changed (to restart), `staying`
+// the page's other running claude panes — already on the account, so untouched. The chip
+// needs both: when nothing moved, `staying` is what a reload-the-login restart would hit.
+export interface PagePanesMove {
+  moved: string[];
+  staying: string[];
+}
+
 // What the grid does for the chip: point the active page at an account, and — the running
 // panes' move (operator request 2026-09-28) — re-stamp the page's live panes with that account
 // and hand back their session ids for the restart. Two functions, one registration: they
 // belong to the same grid, and a chip that could set a page it cannot move is half a control.
 export interface PageAccountHandler {
   setAccount: (email: string | null) => void;
-  // Returns the sessions whose stamp just changed; empty when every pane is already there.
-  movePanes: () => string[];
+  movePanes: () => PagePanesMove;
 }
 
 const view = ref<PageAccountView | null>(null);
@@ -50,9 +57,10 @@ export function applyPageAccount(email: string | null): void {
 }
 
 // Re-stamp the active page's running panes with the page's account and return the session
-// ids to restart. Without a grid there is nothing to move, and an empty list says so.
-export function movePagePanes(): string[] {
-  return handler?.movePanes() ?? [];
+// ids to restart (plus the ones already there). Without a grid there is nothing to move, and
+// two empty lists say so.
+export function movePagePanes(): PagePanesMove {
+  return handler?.movePanes() ?? { moved: [], staying: [] };
 }
 
 export function usePageAccount() {

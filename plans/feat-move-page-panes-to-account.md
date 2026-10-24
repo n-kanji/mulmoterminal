@@ -96,3 +96,15 @@ the transcript is a local file, `--resume` does not care who is logged in.
 - Live: a throwaway `?ws=` workspace, one pane on the default login, page pointed at
   board@, click the item, check the new claude process's env carries
   `CLAUDE_SECURESTORAGE_CONFIG_DIR=…/board@orosy.co.jp-…` and the pane resumed.
+
+## 2026-10-24 — when every pane is already on the account
+
+The item found nothing to move and said so — and that was a dead end: the panes WERE stamped
+board@, but the login stored under board@ had been redone after they started, and a running
+claude keeps the token it launched with. The stamps were right; the processes were stale.
+The item now distinguishes the two: panes whose stamp changed are restarted as before; when
+none did, the notice says the page's N panes are all on the account and, if the login was
+redone, they need a restart to pick it up — and offers exactly that as a second item
+("再起動して今のログインを掴み直す"), scoped to this page, resuming each conversation.
+Never on the first click: the move stays safe to click twice. `pageClaudeSessions` in
+gridTabs is the list it restarts (every running claude pane among the page's cells).

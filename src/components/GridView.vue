@@ -16,6 +16,7 @@ import {
   MAX_PAGES,
   stampAccount,
   restampPanes,
+  pageClaudeSessions,
   pageAccount,
   pageOfIndex,
   setCwd,
@@ -98,7 +99,7 @@ import type { RunCommand } from "./runCommand";
 import { EMPTY_SESSION_META, isPrPhase, mergeSessionMeta, type PrPhase, type WorkPhase } from "./rosterPhase";
 import { useGridActivity } from "../composables/useGridActivity";
 import { registerNewTerminalHandler, type NewTerminalRequest } from "../composables/useNewTerminal";
-import { registerPageAccountHandler, reportPageAccount } from "../composables/usePageAccount";
+import { registerPageAccountHandler, reportPageAccount, type PagePanesMove } from "../composables/usePageAccount";
 import { registerAgentColumnHandler } from "../composables/useAgentColumn";
 import { registerRevealSessionHandler } from "../composables/useRevealSession";
 import { usePendingScript } from "../composables/usePendingScript";
@@ -754,12 +755,13 @@ onActivated(() => {
     // The running panes' move (2026-09-28): which cells are "on this page" is read off the
     // same laid-out order as pageAccountByUid, so the panes this moves are exactly the ones
     // whose status strip has been saying they differ from the page.
-    movePanes: () => {
+    movePanes: (): PagePanesMove => {
       const page = state.value.page;
       const uids = orderedCells.value.filter((_, at) => pageOfIndex(at) === page).map((c) => c.uid);
-      const moved = restampPanes(state.value, uids, activePageAccount.value);
-      state.value = moved.state;
-      return moved.sessions;
+      const restamped = restampPanes(state.value, uids, activePageAccount.value);
+      state.value = restamped.state;
+      const movedSet = new Set(restamped.sessions);
+      return { moved: restamped.sessions, staying: pageClaudeSessions(state.value, uids).filter((s) => !movedSet.has(s)) };
     },
   });
   publishPageAccount();

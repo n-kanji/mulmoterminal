@@ -96,7 +96,7 @@ import { allowedToolNames } from "./infra/plugins-registry.js";
 import { resumableSessionPredicate } from "./session/resumable-sessions.js";
 import { installProcessGuards } from "./infra/process-guards.js";
 import { pruneOrphanSettings } from "./session/session-settings.js";
-import { createLoginHealthMonitor, mountLoginHealthRoutes } from "./backends/claude-login-health.js";
+import { createLoginHealthMonitor, mountLoginHealthRoutes, profileHolderLookup } from "./backends/claude-login-health.js";
 import { realStoreIo } from "./backends/claude-account-store.js";
 import { postSlackMessage } from "./infra/slack-notify.js";
 
@@ -580,6 +580,11 @@ const loginHealth = createLoginHealthMonitor({
   io: realStoreIo(),
   stateFile: path.join(MULMOTERMINAL_HOME, "login-health-notified.json"),
   config: getLoginAlert,
+  // Ask each live token who it belongs to (2026-10-24): a `/login` done with the browser on
+  // the other account stores that account's token under this one's name, and only the
+  // issuer can tell. Cached per token, so this is one request per login per rotation.
+  lookupHolder: profileHolderLookup,
+  holdersFile: path.join(MULMOTERMINAL_HOME, "login-health-holders.json"),
   notify: async (text) => {
     const { slack } = getLoginAlert();
     if (!slack) return;
