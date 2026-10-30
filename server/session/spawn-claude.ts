@@ -11,6 +11,7 @@ import { resolveAliasedSessionId } from "./session-alias.js";
 import { ptySpawn, sandboxWouldRun, spawnSandboxEntry } from "./pty-spawn.js";
 import { attachDraftInjection } from "./draft-injection.js";
 import { withChannelConsent } from "./channel-consent.js";
+import { withTrustConsent } from "./trust-consent.js";
 import { sendExitAndClose, sendFrame, type TermSize } from "./ws-frames.js";
 import { EMPTY_REPLAY_TAIL, appendReplayTail } from "./terminal-replay.js";
 import { sessionExistsOnDisk } from "./session-reads.js";
@@ -176,7 +177,10 @@ export function createClaudeSpawner(deps: SpawnDeps) {
     // draft scanner is wrapped so an opted-in dev-channels consent chooser (see
     // channel-consent.ts) gets its Enter first; without it a CLAUDE_BIN wrapper that
     // loads a local channel leaves every new cell looking hung.
-    const scanForDraftReady = withChannelConsent(entry, attachDraftInjection(entry, initialPrompt, draft));
+    // Same for the workspace-trust chooser (trust-consent.ts): a first launch in a directory
+    // under the operator's declared roots gets its "Yes, I trust this folder" — otherwise the
+    // draft's Enter lands on "No, exit" and the cell dies seconds after it opened.
+    const scanForDraftReady = withChannelConsent(entry, withTrustConsent(entry, cwd, attachDraftInjection(entry, initialPrompt, draft)));
 
     // PTY -> browser (buffering a bounded tail for reattach).
     entry.term.onData((data) => {

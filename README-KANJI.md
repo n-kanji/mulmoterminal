@@ -78,6 +78,17 @@ tail -f ~/.mulmoterminal/server.log                       # ログ
    - claude はこのプロンプトを単語ごとにカーソル移動で描画するため、
      エスケープ列をスペース化して照合している（詳細はソースコメントと spec 参照）
    - 発火時はサーバーログに `[consent] auto-confirming ...` が残る
+3. **フォルダ信頼確認の自動通過** — `server/session/trust-consent.ts`（新規・2026-10-30）。
+   初めて開くフォルダで claude が出す「Is this a project you created or one you trust?」は
+   既定カーソルが「No, exit」で、spawn 後の draft 注入の Enter がそこに当たって約 7 秒で
+   code=0 終了していた（大阪玩具_Bカートで 3 回再現。ランチャー・peer 通信・worktree など
+   「Claude Code が別の Claude Code を新しいフォルダで開く」経路すべてで起きる）。
+   - オプトイン: 環境変数 `MULMOTERMINAL_AUTOTRUST_ROOTS`（コロン区切りの絶対パス。mterm が
+     `$HOME/Projects:$HOME/Obsidian:$HOME/Documents:$HOME/spaceengine-docs` を設定）配下の
+     cwd（realpath 比較）だけ。Downloads・/tmp・外部の clone は人間の確認待ちのまま
+   - 質問文・両方の選択肢・「Enter to confirm」が揃って画面に出たときだけ発火。カーソルが
+     「No, exit」なら Down→Enter、「Yes」なら Enter。TUI 起動または 30 秒で武装解除
+   - 発火時はサーバーログに `[trust] auto-confirming ...` が残る。spec: `test/server/session/trust-consent.spec.ts`
    - テスト: `test/server/session/channel-consent.spec.ts`
 3. 設定: `~/.mulmoterminal/config.json` にディレクトリプリセット（orosy-v2 ほか）を整備済み。
    見た目・色・通知音などは MulmoTerminal 内の claude セッションで `/mulmoterminal-config`

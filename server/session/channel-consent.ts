@@ -55,10 +55,16 @@ const CSI_OSC_RE = /\x1b\[[0-9;:?<=>]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b
 // eslint-disable-next-line no-control-regex, sonarjs/no-control-regex -- intentional: match two-byte terminal escapes to strip them
 const TWO_BYTE_ESC_RE = /\x1b[()#%][0-9A-Za-z]|\x1b[0-9<=>@-Z\\^_]/g;
 
+// Escape sequences → spaces, whitespace collapsed: the form both consent scanners match on
+// (shared with trust-consent.ts so the two agree on what "on screen" means).
+export function normalizeScan(scan: string): string {
+  return scan.replace(CSI_OSC_RE, " ").replace(TWO_BYTE_ESC_RE, " ").replace(/\s+/g, " ");
+}
+
 // Pure so the match is testable without a PTY: the consent sentence, the Exit row and
 // the exact channel list must all be visible in the (bounded, escape-normalized) window.
 export function consentPromptVisible(scan: string, wantedChannels: string): boolean {
-  const plain = scan.replace(CSI_OSC_RE, " ").replace(TWO_BYTE_ESC_RE, " ").replace(/\s+/g, " ");
+  const plain = normalizeScan(scan);
   return plain.includes(CONSENT_PROMPT_TEXT) && plain.includes(CONSENT_EXIT_ROW) && plain.includes(wantedChannels);
 }
 
