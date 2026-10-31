@@ -64,8 +64,13 @@ export function normalizeScan(scan: string): string {
 // Pure so the match is testable without a PTY: the consent sentence, the Exit row and
 // the exact channel list must all be visible in the (bounded, escape-normalized) window.
 export function consentPromptVisible(scan: string, wantedChannels: string): boolean {
-  const plain = normalizeScan(scan);
-  return plain.includes(CONSENT_PROMPT_TEXT) && plain.includes(CONSENT_EXIT_ROW) && plain.includes(wantedChannels);
+  // Whitespace-free comparison: a cell spawned while no grid tab is visible is laid out a
+  // couple of dozen columns wide, and the channel list (no spaces to break at) wraps
+  // mid-token — "server:c" / "laude-peers" — which a plain substring match never saw
+  // (operator report 2026-10-31: launcher-opened cells stuck at this chooser).
+  const flat = normalizeScan(scan).replace(/\s+/g, "");
+  const want = (s: string) => flat.includes(s.replace(/\s+/g, ""));
+  return want(CONSENT_PROMPT_TEXT) && want(CONSENT_EXIT_ROW) && want(wantedChannels);
 }
 
 // Composes the consent scanner in FRONT of another pty-output scanner, so the call site

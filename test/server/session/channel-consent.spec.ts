@@ -32,6 +32,24 @@ describe("consentPromptVisible", () => {
     expect(consentPromptVisible("the I am using this for local development chooser for server:claude-peers", "server:claude-peers")).toBe(false);
   });
 
+  it("matches when a narrow cell wraps the channel list mid-token", () => {
+    // A column spawned while no grid tab is visible is laid out ~22 columns wide
+    // (measured 2026-10-31); "server:claude-peers" has no space to break at, so the
+    // terminal splits it across two rows and a plain substring match stayed silent while
+    // the launcher's cell sat at the chooser.
+    const narrow = [
+      "  Channels: server:c",
+      "  laude-peers",
+      "  ❯ 1. I am using this",
+      "       for local",
+      "       development",
+      "    2. Exit",
+      "  Enter to confirm ·",
+      "  Esc to cancel",
+    ].join("\n");
+    expect(consentPromptVisible(narrow, "server:claude-peers")).toBe(true);
+  });
+
   it("matches through claude's real word-by-word SGR styling (tmux re-render)", () => {
     // Captured from a live spawn (tmux capture-pane -e): every WORD of the sentence is
     // wrapped in its own color pair, so a contiguous-substring match on the raw stream

@@ -23,6 +23,26 @@ const PROMPT_NO_FIRST = [
   " Enter to confirm · Esc to cancel",
 ].join("\n");
 const PROMPT_YES_FIRST = PROMPT_NO_FIRST.replace(" ❯ No, exit\n   Yes, I trust this folder", " ❯ Yes, I trust this folder\n   No, exit");
+// The project-settings variant (a cwd with .claude/settings.json): different question and
+// "No" row, same "Yes" row. Captured 2026-10-31 at 100 columns.
+const PROMPT_SETTINGS = [
+  "   Bash(ls:*)",
+  " These will apply without asking. Only proceed if you trust this configuration.",
+  " Security guide",
+  " ❯ No, continue without these permissions",
+  "   Yes, I trust this folder",
+  " Enter to confirm · Esc to cancel",
+].join("\n");
+// The same chooser in a 24-column cell (what a column spawned behind a hidden grid tab gets):
+// every row wraps. Captured 2026-10-31.
+const PROMPT_SETTINGS_NARROW = [
+  " ❯ No, continue without",
+  "   these permissions",
+  "   Yes, I trust this",
+  "   folder",
+  " Enter to confirm · Esc",
+  " to cancel",
+].join("\n");
 
 function fakeEntry() {
   const writes: string[] = [];
@@ -38,6 +58,11 @@ describe("trustPromptVisible", () => {
   it("needs the question, both rows and the confirm hint together", () => {
     expect(trustPromptVisible(PROMPT_NO_FIRST)).toBe(true);
     expect(trustPromptVisible(PROMPT_YES_FIRST)).toBe(true);
+    expect(trustPromptVisible(PROMPT_SETTINGS)).toBe(true);
+    expect(trustCursorOnYes(PROMPT_SETTINGS)).toBe(false);
+    // Wrapped at 24 columns: phrases are split across lines, the match must not care where.
+    expect(trustPromptVisible(PROMPT_SETTINGS_NARROW)).toBe(true);
+    expect(trustCursorOnYes(PROMPT_SETTINGS_NARROW)).toBe(false);
     // Prose about the chooser (a doc, this spec, a code review) quotes the question and a
     // row, never the whole menu with its key hint.
     expect(trustPromptVisible("the 'Is this a project you created or one you trust' chooser with Yes, I trust this folder")).toBe(false);

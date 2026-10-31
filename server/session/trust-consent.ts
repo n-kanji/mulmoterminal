@@ -27,9 +27,12 @@ import { claudeAdapter } from "../agents/claude.js";
 import { normalizeScan } from "./channel-consent.js";
 import type { PtyEntry } from "./types.js";
 
-const TRUST_QUESTION = "one you trust";
+// Claude ships (at least) two trust choosers with the same "Yes" row: the workspace one
+// ("Is this a project you created or one you trust?" / "No, exit") and the project-settings
+// one ("Only proceed if you trust this configuration." / "No, continue without these
+// permissions"). Both are the operator's own consent for a cwd under their roots.
 const TRUST_YES_ROW = "Yes, I trust this folder";
-const TRUST_NO_ROW = "No, exit";
+const TRUST_NO_ROWS = ["No, exit", "No, continue without"];
 const TRUST_CONFIRM_HINT = "Enter to confirm";
 const ARM_WINDOW_MS = 30_000;
 const SETTLE_MS = 300;
@@ -40,16 +43,22 @@ const TUI_READY_MARKER = claudeAdapter.draftReadyMarker;
 // Pure: the chooser is on screen when the question, both rows and the confirm hint are all
 // visible in the escape-normalized window. Prose quoting the question never carries both
 // rows AND the key hint together.
+// A cell spawned while no grid tab is visible can be laid out a couple of dozen columns
+// wide (22x51 was measured), so every phrase wraps across lines — at word boundaries, but
+// also mid-token for anything without spaces. Matching on a whitespace-free copy makes the
+// phrases immune to wherever the wrap fell.
+const compact = (s: string) => s.replace(/\s+/g, "");
+
 export function trustPromptVisible(scan: string): boolean {
-  const plain = normalizeScan(scan);
-  return plain.includes(TRUST_QUESTION) && plain.includes(TRUST_YES_ROW) && plain.includes(TRUST_NO_ROW) && plain.includes(TRUST_CONFIRM_HINT);
+  const flat = compact(normalizeScan(scan));
+  return flat.includes(compact(TRUST_YES_ROW)) && TRUST_NO_ROWS.some((row) => flat.includes(compact(row))) && flat.includes(compact(TRUST_CONFIRM_HINT));
 }
 
 // Pure: where the cursor sits. Claude has shipped both orders of the two rows, so the key
 // sequence is derived from the screen rather than assumed: "Yes" under the cursor → Enter;
 // otherwise → Down then Enter. (The rows are adjacent, so one Down always reaches "Yes".)
 export function trustCursorOnYes(scan: string): boolean {
-  return /❯\s*Yes, I trust/.test(normalizeScan(scan));
+  return /❯Yes,Itrust/.test(compact(normalizeScan(scan)));
 }
 
 // Pure: is `cwd` inside one of the declared roots? Both sides are resolved to real paths
