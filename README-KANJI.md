@@ -86,8 +86,14 @@ tail -f ~/.mulmoterminal/server.log                       # ログ
    - オプトイン: 環境変数 `MULMOTERMINAL_AUTOTRUST_ROOTS`（コロン区切りの絶対パス。mterm が
      `$HOME/Projects:$HOME/Obsidian:$HOME/Documents:$HOME/spaceengine-docs` を設定）配下の
      cwd（realpath 比較）だけ。Downloads・/tmp・外部の clone は人間の確認待ちのまま
-   - 質問文・両方の選択肢・「Enter to confirm」が揃って画面に出たときだけ発火。カーソルが
-     「No, exit」なら Down→Enter、「Yes」なら Enter。TUI 起動または 30 秒で武装解除
+   - 「Yes, I trust this folder」「No, exit」「Enter to confirm」が揃って画面に出たときだけ発火。
+     カーソルが「No, exit」なら Down→Enter、「Yes」なら Enter。TUI 起動または 30 秒で武装解除。
+     列の幅が極端に狭い（グリッドが裏にいると 15〜22 列で spawn される）と語が折り返されるため、
+     照合は空白を除いた文字列で行う（channel-consent も同じ修正を入れた）
+   - **自動で通すのはフォルダ本体の信頼確認（既定 No, exit = 死ぬ方）だけ**。`.claude/settings.json`
+     があるフォルダで出る「Only proceed if you trust this configuration / No, continue without these
+     permissions」は人間に残す（Yes にするとそのフォルダの権限・hooks・MCP が有効になる。~/Projects 配下
+     でも他人の clone があり得る）。こちらは既定が「続行」なのでセッションは死なず、設定が効かないだけ
    - 発火時はサーバーログに `[trust] auto-confirming ...` が残る。spec: `test/server/session/trust-consent.spec.ts`
    - テスト: `test/server/session/channel-consent.spec.ts`
 3. 設定: `~/.mulmoterminal/config.json` にディレクトリプリセット（orosy-v2 ほか）を整備済み。

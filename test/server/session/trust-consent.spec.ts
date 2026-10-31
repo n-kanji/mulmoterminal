@@ -58,11 +58,15 @@ describe("trustPromptVisible", () => {
   it("needs the question, both rows and the confirm hint together", () => {
     expect(trustPromptVisible(PROMPT_NO_FIRST)).toBe(true);
     expect(trustPromptVisible(PROMPT_YES_FIRST)).toBe(true);
-    expect(trustPromptVisible(PROMPT_SETTINGS)).toBe(true);
-    expect(trustCursorOnYes(PROMPT_SETTINGS)).toBe(false);
+    // The project-settings chooser is left to a human on purpose: Yes there activates the
+    // folder's own settings/hooks/MCP, and its default ("No, continue without") keeps the
+    // session alive anyway.
+    expect(trustPromptVisible(PROMPT_SETTINGS)).toBe(false);
+    expect(trustPromptVisible(PROMPT_SETTINGS_NARROW)).toBe(false);
     // Wrapped at 24 columns: phrases are split across lines, the match must not care where.
-    expect(trustPromptVisible(PROMPT_SETTINGS_NARROW)).toBe(true);
-    expect(trustCursorOnYes(PROMPT_SETTINGS_NARROW)).toBe(false);
+    const narrowWorkspace = [" ❯ No, exit", "   Yes, I trust this", "   folder", " Enter to confirm · Esc", " to cancel"].join("\n");
+    expect(trustPromptVisible(narrowWorkspace)).toBe(true);
+    expect(trustCursorOnYes(narrowWorkspace)).toBe(false);
     // Prose about the chooser (a doc, this spec, a code review) quotes the question and a
     // row, never the whole menu with its key hint.
     expect(trustPromptVisible("the 'Is this a project you created or one you trust' chooser with Yes, I trust this folder")).toBe(false);

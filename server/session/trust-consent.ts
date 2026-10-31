@@ -27,12 +27,16 @@ import { claudeAdapter } from "../agents/claude.js";
 import { normalizeScan } from "./channel-consent.js";
 import type { PtyEntry } from "./types.js";
 
-// Claude ships (at least) two trust choosers with the same "Yes" row: the workspace one
-// ("Is this a project you created or one you trust?" / "No, exit") and the project-settings
-// one ("Only proceed if you trust this configuration." / "No, continue without these
-// permissions"). Both are the operator's own consent for a cwd under their roots.
+// Claude ships two trust choosers with the same "Yes" row. Only the WORKSPACE one is
+// auto-answered: "Is this a project you created or one you trust?" / "No, exit" — the one
+// whose default kills the spawned cell. The PROJECT-SETTINGS one ("Only proceed if you trust
+// this configuration." / "No, continue without these permissions") is deliberately left to a
+// human: saying Yes there activates the folder's own .claude/settings.json, hooks and MCP
+// servers, and a clone under ~/Projects is not necessarily the operator's own code. Its
+// default ("No, continue without") lets the session live, so nothing is lost by waiting.
 const TRUST_YES_ROW = "Yes, I trust this folder";
-const TRUST_NO_ROWS = ["No, exit", "No, continue without"];
+const TRUST_NO_ROW = "No, exit";
+const SETTINGS_NO_ROW = "No, continue without";
 const TRUST_CONFIRM_HINT = "Enter to confirm";
 const ARM_WINDOW_MS = 30_000;
 const SETTLE_MS = 300;
@@ -51,7 +55,8 @@ const compact = (s: string) => s.replace(/\s+/g, "");
 
 export function trustPromptVisible(scan: string): boolean {
   const flat = compact(normalizeScan(scan));
-  return flat.includes(compact(TRUST_YES_ROW)) && TRUST_NO_ROWS.some((row) => flat.includes(compact(row))) && flat.includes(compact(TRUST_CONFIRM_HINT));
+  if (flat.includes(compact(SETTINGS_NO_ROW))) return false; // project-settings chooser: a human decides
+  return flat.includes(compact(TRUST_YES_ROW)) && flat.includes(compact(TRUST_NO_ROW)) && flat.includes(compact(TRUST_CONFIRM_HINT));
 }
 
 // Pure: where the cursor sits. Claude has shipped both orders of the two rows, so the key
