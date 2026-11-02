@@ -6155,10 +6155,10 @@ node-fetch@^3.3.2:
     fetch-blob "^3.1.4"
     formdata-polyfill "^4.0.10"
 
-node-pty@^1.1.0:
-  version "1.1.0"
-  resolved "https://registry.yarnpkg.com/node-pty/-/node-pty-1.1.0.tgz#161936d45a47751c2e3b694c365e73017417a887"
-  integrity sha512-20JqtutY6JPXTUnL0ij1uad7Qe1baT46lyolh2sSENDd4sTzKZ4nmAFkeAARDKwmlLjPx6XKRlwRUxwjOy+lUg==
+node-pty@1.2.0-beta.18:
+  version "1.2.0-beta.18"
+  resolved "https://registry.yarnpkg.com/node-pty/-/node-pty-1.2.0-beta.18.tgz#c3f2913a7339cf060de6a7b37f25cf703163a0a4"
+  integrity sha512-3Rej3788OnasAwoSmTZhlCeUraJ9CQldtL5b571b9+3Nv47+PaxA5VPIGOOs+16OYQePTrC1Lrs8a9/df5WPRg==
   dependencies:
     node-addon-api "^7.1.0"
 

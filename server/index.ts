@@ -97,6 +97,7 @@ import { resumableSessionPredicate } from "./session/resumable-sessions.js";
 import { installProcessGuards } from "./infra/process-guards.js";
 import { pruneOrphanSettings } from "./session/session-settings.js";
 import { createLoginHealthMonitor, mountLoginHealthRoutes, profileHolderLookup } from "./backends/claude-login-health.js";
+import { countPtyMasterFds, ptyFdLeakWarning } from "./infra/pty-fd-watch.js";
 import { realStoreIo } from "./backends/claude-account-store.js";
 import { postSlackMessage } from "./infra/slack-notify.js";
 
@@ -595,6 +596,18 @@ const LOGIN_HEALTH_INTERVAL_MS = 60 * 60_000;
 void loginHealth.run();
 setInterval(() => void loginHealth.run(), LOGIN_HEALTH_INTERVAL_MS).unref();
 mountLoginHealthRoutes(app, loginHealth, isAllowedOrigin);
+
+// The pty-fd watch (infra/pty-fd-watch, 2026-11-02): once an hour, compare the pseudo-terminal
+// masters this process holds with the sessions it knows about, and warn when the gap says a
+// leak. node-pty 1.1.0 leaked one per spawn and took two days to reach macOS's 511, with no
+// sign of it anywhere until every new pane failed. A warning in server.log, nothing louder.
+const PTY_FD_WATCH_INTERVAL_MS = 60 * 60_000;
+setInterval(() => {
+  const held = countPtyMasterFds();
+  if (held === null) return;
+  const warning = ptyFdLeakWarning(held, ptys.size); // claude, codex and dev-shell panes all register here
+  if (warning) console.warn(warning);
+}, PTY_FD_WATCH_INTERVAL_MS).unref();
 
 function spawnScheduledChat(message: string): void {
   const sessionId = randomUUID();

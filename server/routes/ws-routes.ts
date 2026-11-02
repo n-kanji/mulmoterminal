@@ -185,11 +185,32 @@ function planClaudeConnection(url: URL, requested: string | null, cwd: string): 
 
 // What the terminal is told when a claude spawn throws. The two typed refusals name the actual
 // problem — a directory's provider config (#579), or a fork whose source cannot be resumed
-// (R12) — and the PATH hint is the fallback, not the thing that buries them.
+// (R12) — and everything else goes through spawnFailureMessage with node-pty's own words.
 function claudeSpawnFailure(err: unknown): string {
   if (err instanceof ProviderRefusedError) return err.message;
   if (err instanceof ForkNotResumableError) return FORK_UNAVAILABLE;
-  return "Failed to start Claude. Is the `claude` CLI installed and on your PATH?";
+  return spawnFailureMessage(messageOf(err));
+}
+
+// The untyped spawn failures. "posix_spawnp failed" is node-pty's one message for two
+// conditions that have nothing to do with the CLI's PATH: the machine refusing another
+// pseudo-terminal or process (2026-11-02 — node-pty 1.1.0 leaked one master fd per spawn until
+// macOS's 511 were gone; plans/fix-pty-fd-leak.md), and a spawn-helper without its executable
+// bit (server/fix-pty-perms.js). Until then every failure read "is `claude` on your PATH?",
+// and the operator went looking for a PATH problem that did not exist. The PATH hint stays
+// for the rest, now with the real error beside it.
+const RESOURCE_EXHAUSTION = /posix_spawnp|EAGAIN|EMFILE|ENFILE/i;
+
+export function spawnFailureMessage(detail: string): string {
+  const cause = detail.trim().replace(/\.$/, "");
+  if (RESOURCE_EXHAUSTION.test(cause)) {
+    return (
+      `Failed to start Claude (${cause}). The machine refused to create another pseudo-terminal or process: ` +
+      `restart the MulmoTerminal server, which releases every pseudo-terminal it holds (macOS allows 511 in total). ` +
+      "If a fresh server fails the same way, node-pty's spawn-helper may have lost its executable bit: run `node server/fix-pty-perms.js`."
+    );
+  }
+  return `Failed to start Claude (${cause}). Is the \`claude\` CLI installed and on your PATH?`;
 }
 
 // The params every terminal WebSocket reads: the request URL, the validated
