@@ -75,3 +75,48 @@ seven simultaneous spawns are fine (the same burst at 16:42 after the fix: 5 liv
 - Probe before/after the dependency swap, with the launchd node (25.8.1): 1 leak → 0.
 - New specs 8/8; `typecheck`, `typecheck:server`, `typecheck:test`, eslint clean on the touched files.
 - Live: kickstart 16:42:05 → 5 tmux sessions survived, server holds exactly 5 ptmx.
+
+## Second finding the same evening: the default login was empty, and the switch had done it
+
+With the panes back, the operator asked whether everything now ran on board@. Seven work panes
+did (process env `CLAUDE_SECURESTORAGE_CONFIG_DIR` = the board store; the store's holder
+verified as board@orosy.co.jp via the profile API). But the **default Keychain slot**
+(`Claude Code-credentials`, kanji@, the primary account and the one the phone launcher and the
+Claude Desktop session run on) held `mcpOAuth` only — no `claudeAiOauth` at all.
+
+Timeline from server.log and the Keychain item's own dates:
+
+- 16:24:06 switch default → board@: the live kanji@ login was snapshotted
+  (`MulmoTerminal-claude-account:kanji@…`, refresh token valid to 11-25) — this copy was good.
+- 16:24:20 switch default → kanji@: `handleSwitch` prefers **the account's own store** over its
+  snapshot ("the store holds the live login; the snapshot may be months old"). kanji@ had a
+  per-page store, and that store had been wiped to `mcpOAuth`-only — the shape Claude Code
+  leaves when a refresh token is rejected (the losing copy of a rotated pair). The switch wrote
+  that into the default slot and dropped the store. The item's `mdat` is 16:24:20 and never
+  moved again: nothing rotated or deleted anything afterwards; the slot was written empty.
+- Result: launcher, Desktop session and the three leftover home panes all logged out; the login
+  the operator actually wanted sat untouched in the snapshot.
+
+Repair (done by hand, the same `security add-generic-password -U` the switch uses): write the
+snapshot's `credentials` back into the default slot, then one `claude -p --model haiku` with no
+store env — answered `ok`, token rotated, access now valid to 01:10. Default = kanji@, store =
+board@, as the operator wants it (kanji@ primary, board@ shared with the engineer as the spare).
+
+Code: `storeHoldsNoLogin()` in `backends/claude-account.ts` — a store that parses to an entry
+with no usable refresh token is not preferred; the snapshot is restored instead and the empty
+store is still dropped (its pages would otherwise keep reading nothing). Specs in
+`claude-account.spec.ts` ("when the target's store has been wiped…"). Unparseable store
+contents keep the old store-first rule, so the existing opaque-string specs still hold.
+
+## How to switch when one subscription is full (what the operator asked for)
+
+Default = kanji@. board@ lives in its own store. Nothing about the default slot needs to move:
+
+1. On the page whose panes are stuck at the limit, open the account chip and pick **board@**.
+2. Tick **"move the running panes too"** (restart + `--resume`). The panes come back in the
+   same conversations on board@. (Verified 16:42-16:50: 7 panes, all on the board store.)
+3. When kanji@'s window resets, pick kanji@ on the chip the same way — or leave the page on
+   board@; new panes follow the chip.
+
+Do not use "switch the default login" for this. It moves the one slot the launcher and the
+Desktop app read, and it is where today's second failure came from.

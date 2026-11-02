@@ -432,6 +432,45 @@ const ambiguityMessage = (state: DefaultAccountState): string =>
   `既定のログインが確定できません（MT の記録: ${state.recorded} / ~/.claude.json: ${state.onDisk}）。` +
   `取り違えて別アカウントの資格情報を保存しないよう中止しました。どちらが既定か選んでください。`;
 
+// A per-account store that demonstrably holds no login. Claude Code wipes `claudeAiOauth` from a
+// credential entry whose refresh token was rejected — the losing copy of a rotated pair — and
+// leaves the `mcpOAuth` block behind, so the entry still exists and still parses. On 2026-11-02
+// the switch preferred such a store over a snapshot taken from the live slot seconds earlier,
+// and put a login-less entry in the default slot: every default-slot pane, the launcher among
+// them, was logged out until the snapshot was written back by hand. Only a parsed entry with no
+// usable refresh token counts; anything unparseable is left to the store-first rule.
+function storeHoldsNoLogin(raw: string | null): boolean {
+  if (raw === null) return true; // no store at all is no login either
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return false;
+    const refreshToken = isRecord(parsed.claudeAiOauth) ? parsed.claudeAiOauth.refreshToken : undefined;
+    return typeof refreshToken !== "string" || refreshToken.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+// Where the target's login comes from: its own store when that holds one, else its snapshot.
+// `stored` comes back too, because a store that exists — login or not — is dropped once the
+// slot holds the account.
+async function loginSourceFor(
+  io: ClaudeAccountIo,
+  target: string,
+  readStore: ClaudeAccountRouteOptions["readStore"],
+): Promise<{ stored: string | null; snapshot: Snapshot | null; credentials: string | null }> {
+  const stored = readStore ? await readStore(target) : null;
+  const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(target)));
+  const wiped = stored !== null && storeHoldsNoLogin(stored); // the store exists but logs nobody in
+  const fromStore = wiped ? null : stored;
+  if (wiped) {
+    console.warn(
+      `[claude-account] the store for ${target} holds no login (wiped by a rejected refresh?) — restoring its snapshot from ${snapshot?.savedAt ?? "unknown"} instead`,
+    );
+  }
+  return { stored, snapshot, credentials: fromStore ?? snapshot?.credentials ?? null };
+}
+
 // The switch itself, once the request has passed the guard and named a target.
 async function handleSwitch(io: ClaudeAccountIo, req: Request, res: Response, target: string, options: ClaudeAccountRouteOptions): Promise<void> {
   const { restartPanes, hasStore, readStore, dropStore } = options;
@@ -446,9 +485,7 @@ async function handleSwitch(io: ClaudeAccountIo, req: Request, res: Response, ta
   // An account with a store of its own keeps its LIVE login there — the snapshot beside it may
   // be months old and already rotated away. So the store is the source, and it gives up
   // ownership below rather than leaving the same refresh token in two entries.
-  const fromStore = readStore ? await readStore(target) : null;
-  const snapshot = parseSnapshot(await io.readKeychain(serviceForEmail(target)));
-  const credentials = fromStore ?? snapshot?.credentials ?? null;
+  const { stored, snapshot, credentials } = await loginSourceFor(io, target, readStore);
   if (!credentials) {
     return void res.status(404).json({ error: `No stored login for ${target}. Log in once as that account first.` });
   }
@@ -460,8 +497,9 @@ async function handleSwitch(io: ClaudeAccountIo, req: Request, res: Response, ta
 
   await io.writeKeychain(CLAUDE_KEYCHAIN_SERVICE, credentials);
   // The slot holds it now, so the store may go. Ordered this way on purpose: a failure above
-  // leaves the store intact and the account still reachable from its pages.
-  if (fromStore && dropStore) await dropStore(target);
+  // leaves the store intact and the account still reachable from its pages. A wiped store goes
+  // too — its pages would otherwise keep reading an entry with no login in it.
+  if (stored !== null && dropStore) await dropStore(target);
   // Claude Code renders its identity from `oauthAccount`, not from the token, so the
   // profile block must travel with the credentials (display-only: a race against a live
   // pane rewriting claude.json costs a stale label, never a broken login).

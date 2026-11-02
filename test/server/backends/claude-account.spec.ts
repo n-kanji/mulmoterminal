@@ -386,6 +386,47 @@ describe("switching with per-account stores around", () => {
     expect(store.has("b@x.co")).toBe(false);
   });
 
+  // Claude Code wipes claudeAiOauth from the losing copy of a rotated refresh token and leaves
+  // mcpOAuth behind — the entry exists, parses, and logs nobody in. 2026-11-02: the switch put
+  // exactly that in the default slot while a snapshot of the live login sat beside it.
+  describe("when the target's store has been wiped to a login-less entry", () => {
+    const wiped = JSON.stringify({ mcpOAuth: { "canva|1": {} } });
+    const emptyTokens = JSON.stringify({ mcpOAuth: {}, claudeAiOauth: { accessToken: "", refreshToken: "", expiresAt: 0 } });
+
+    it.each([
+      ["no claudeAiOauth at all", wiped],
+      ["empty tokens", emptyTokens],
+    ])("restores the snapshot instead (%s), and still drops the store", async (_name, entry) => {
+      const store = new Map([["b@x.co", entry]]);
+      const { io, keychain } = fakeIo({
+        files: { [CLAUDE_JSON]: claudeJson("a@x.co") },
+        keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-a", [serviceForEmail("b@x.co")]: snapshotFor("b@x.co", "b-from-snapshot") },
+      });
+      await request(appWithStores(io, store)).post("/api/claude-account/switch").send({ email: "b@x.co" }).expect(200);
+      expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("b-from-snapshot");
+      expect(store.has("b@x.co")).toBe(false);
+    });
+
+    it("404s, and keeps the store, when there is no snapshot to fall back to", async () => {
+      const store = new Map([["b@x.co", wiped]]);
+      const { io, keychain } = fakeIo({ files: { [CLAUDE_JSON]: claudeJson("a@x.co") }, keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-a" } });
+      await request(appWithStores(io, store)).post("/api/claude-account/switch").send({ email: "b@x.co" }).expect(404);
+      expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe("live-a");
+      expect(store.has("b@x.co")).toBe(true);
+    });
+
+    it("still prefers a store that holds a real login over the snapshot", async () => {
+      const live = JSON.stringify({ mcpOAuth: {}, claudeAiOauth: { accessToken: "a", refreshToken: "r".repeat(20), expiresAt: 1 } });
+      const store = new Map([["b@x.co", live]]);
+      const { io, keychain } = fakeIo({
+        files: { [CLAUDE_JSON]: claudeJson("a@x.co") },
+        keychain: { [CLAUDE_KEYCHAIN_SERVICE]: "live-a", [serviceForEmail("b@x.co")]: snapshotFor("b@x.co", "b-stale-snapshot") },
+      });
+      await request(appWithStores(io, store)).post("/api/claude-account/switch").send({ email: "b@x.co" }).expect(200);
+      expect(keychain.get(CLAUDE_KEYCHAIN_SERVICE)).toBe(live);
+    });
+  });
+
   // Neither source can settle who the default slot holds, and guessing costs a credential
   // filed under the wrong account. So nothing moves until the operator says.
   describe("when MT's record and ~/.claude.json disagree about an account that has a store", () => {
