@@ -190,6 +190,15 @@ export function validAnnotationsJson(json: string): boolean {
 //     reader has written the file, the bridge lets the reload through. The reader then
 //     reloads the page (the layer restarts clean from the file it just wrote), and the
 //     bridge puts the scroll position back.
+//   - The revision layer's buttons. A brief written after a previous version carries the
+//     skill's revision-diff layer: two buttons ("変更点 N件", "変更箇所だけ読む") FIXED at the
+//     page's top-left, i.e. over the heading and the first lines — in the way of the reading
+//     they exist for (operator report 2026-11-04). Inside the reader the bridge hides them
+//     and reports the layer's state (`reader:revisions`); the reader shows the same two
+//     actions in its own header, and sends each press back (`reader:revisions-toggle`) as a
+//     click on the page's own hidden button, so the layer's script runs unchanged. The
+//     buttons are hidden, not removed: the page's listeners are bound to them. Every brief
+//     already on disk gets this without being rewritten (plans/reader-view.md).
 //
 // Kept as plain ES5-ish script text so it runs inside any brief regardless of its age.
 export const READER_BRIDGE_SCRIPT = `<script id="reader-bridge">
@@ -198,6 +207,14 @@ export const READER_BRIDGE_SCRIPT = `<script id="reader-bridge">
   try { delete Window.prototype.showOpenFilePicker; } catch (e) {}
   try { delete window.showOpenFilePicker; } catch (e) {}
   var clean = false;
+  // The revision layer's buttons go out of sight before the page's markup is even parsed:
+  // hiding them once the page has loaded would leave them over the heading until every
+  // image and font had arrived. !important, because the layer's own stylesheet comes later
+  // in the document and would otherwise win. The panel hung under the buttons, so it moves
+  // up to where they were. Both rules are inert on a brief without the layer.
+  var revStyle = document.createElement('style');
+  revStyle.textContent = '#rev-fab { display: none !important; } #rev-panel { top: 14px !important; }';
+  (document.head || document.documentElement).appendChild(revStyle);
   var lastBlob = null;
   var createObjectURL = URL.createObjectURL;
   URL.createObjectURL = function (blob) { lastBlob = blob; return createObjectURL.call(URL, blob); };
@@ -226,9 +243,33 @@ export const READER_BRIDGE_SCRIPT = `<script id="reader-bridge">
   var DOC_PREFIX = '/api/reader/doc';
   var ownPath = null;
   try { ownPath = decodeURIComponent(location.pathname.slice(DOC_PREFIX.length)); } catch (e) {}
+  // The revision layer (html-summary's revision-diff-template.html): its ids are the contract.
+  var REV_BUTTONS = { list: 'rev-list-btn', only: 'rev-only-btn' };
+  function revisionsState() {
+    if (!document.getElementById('rev-fab')) return null;
+    var countEl = document.getElementById('rev-count');
+    var panelEl = document.getElementById('rev-panel');
+    return {
+      type: 'reader:revisions',
+      count: countEl ? (Number(countEl.textContent) || 0) : 0,
+      active: document.body.classList.contains('rev-only'),
+      open: !!(panelEl && panelEl.classList.contains('open'))
+    };
+  }
+  function postRevisions() { var s = revisionsState(); if (s) window.parent.postMessage(s, '*'); }
   window.addEventListener('message', function (e) {
     var d = e.data;
-    if (!d || d.type !== 'reader:saved') return;
+    if (!d) return;
+    if (d.type === 'reader:revisions-toggle') {
+      // The page's own handler runs synchronously inside click(), so the state read right
+      // after it is the new one.
+      var id = Object.prototype.hasOwnProperty.call(REV_BUTTONS, d.which) ? REV_BUTTONS[d.which] : null;
+      var btn = id && document.getElementById(id);
+      if (btn) btn.click();
+      postRevisions();
+      return;
+    }
+    if (d.type !== 'reader:saved') return;
     // Addressed: the reader may have moved on to another brief while the save was in
     // flight, and an ack for that one must not clear THIS page's draft and unload guard.
     if (typeof d.path === 'string' && ownPath !== null && d.path !== ownPath) return;
@@ -245,6 +286,11 @@ export const READER_BRIDGE_SCRIPT = `<script id="reader-bridge">
     try { y = sessionStorage.getItem(SCROLL_KEY); sessionStorage.removeItem(SCROLL_KEY); } catch (err) {}
     if (y !== null) window.scrollTo(0, Number(y));
   });
+  // The layer's script sits at the end of <body>, so by DOMContentLoaded it has run and the
+  // count is filled in; that is when the reader learns the state (not 'load', which waits
+  // for images and fonts). A brief without the layer sends nothing — the reader cleared its
+  // header on the 'reader:ready' below.
+  window.addEventListener('DOMContentLoaded', postRevisions);
   window.parent.postMessage({ type: 'reader:ready' }, '*');
 })();
 </script>`;

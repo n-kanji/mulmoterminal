@@ -9,7 +9,7 @@
 // block back through the API — no Finder drag), and a "copy for Claude" (we offer to type
 // it into the pane that owns the folder).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { ReaderDoc, ReaderDocState, ReaderPane } from "../../common/readerApi";
+import type { ReaderDoc, ReaderDocState, ReaderHostMessage, ReaderPane, ReaderRevisions } from "../../common/readerApi";
 import { readerBridgeMessageOf } from "../../common/readerApi";
 import { useReader, readerGoto } from "../composables/useReader";
 import { useEscapeToClose } from "../composables/useEscapeToClose";
@@ -234,6 +234,10 @@ function showToast(text: string, kind: "ok" | "err" = "ok"): void {
 }
 
 // ---- the bridge --------------------------------------------------------------------
+function postToFrame(msg: ReaderHostMessage): void {
+  frame.value?.contentWindow?.postMessage(msg, docOrigin);
+}
+
 const saving = ref(false);
 async function onBridgeSave(html: string): Promise<void> {
   const path = docPath.value;
@@ -252,7 +256,7 @@ async function onBridgeSave(html: string): Promise<void> {
     // (which clears the page's draft and unload guard) and the remount are for the saved
     // page only — never the one on screen now.
     if (docPath.value !== path) return;
-    frame.value?.contentWindow?.postMessage({ type: "reader:saved", path }, docOrigin);
+    postToFrame({ type: "reader:saved", path });
     // Restart the page from the file it just wrote (its own unsaved state is stale now); the
     // bridge has cleared the unload guard and keeps the scroll position across the reload.
     setTimeout(() => (reloads.value += 1), 400);
@@ -267,12 +271,35 @@ function onMessage(e: MessageEvent): void {
   if (!frame.value || e.source !== frame.value.contentWindow) return;
   const msg = readerBridgeMessageOf(e.data);
   if (!msg) return;
-  if (msg.type === "reader:save") void onBridgeSave(msg.html);
-  else if (msg.type === "reader:copy") {
-    sendText.value = msg.text;
-    void openSend();
+  switch (msg.type) {
+    case "reader:save":
+      void onBridgeSave(msg.html);
+      break;
+    case "reader:copy":
+      sendText.value = msg.text;
+      void openSend();
+      break;
+    case "reader:ready":
+      revisions.value = null;
+      break;
+    case "reader:revisions":
+      revisions.value = { count: msg.count, active: msg.active, open: msg.open };
+      break;
   }
 }
+
+// ---- the revision layer ----------------------------------------------------------------
+// The state of the brief's revision-diff layer, whose own two buttons the bridge hides (why,
+// and the wire contract: server/reader/reader-doc.ts). The same two actions live in this
+// header, and each press goes back to the page as a click on its own hidden button. Null for
+// a brief without the layer, and again whenever the frame is remounted (after a save, or for
+// another brief) AND on every `reader:ready` — a link inside a brief navigates the frame to
+// another page under the same contentWindow, and that page's bridge announces itself before
+// it reports (or, having no layer, never reports) its own state. The state belongs to the
+// document that reported it.
+const revisions = ref<ReaderRevisions | null>(null);
+watch([frameSrc, reloads], () => (revisions.value = null));
+const toggleRevisions = (which: "list" | "only"): void => postToFrame({ type: "reader:revisions-toggle", which });
 
 // ---- send to pane --------------------------------------------------------------------
 const sendOpen = ref(false);
@@ -539,6 +566,26 @@ const when = (ms: number): string => {
       <header v-if="docPath" class="flex flex-none items-center gap-2 border-b border-border bg-panel px-3 py-1.5">
         <span class="min-w-0 truncate text-[13px] font-[650] text-fg" :title="docPath">{{ current?.title ?? docPath.split("/").pop() }}</span>
         <span class="hidden min-w-0 truncate font-mono text-[10.5px] text-muted lg:inline" :title="docPath">{{ docPath.replace(/^\/Users\/[^/]+/, "~") }}</span>
+        <template v-if="revisions">
+          <button
+            type="button"
+            class="h-[24px] flex-none cursor-pointer rounded-md border px-2 text-[11px] enabled:hover:bg-hover enabled:hover:text-fg"
+            :class="revisions.open ? 'border-accent bg-accent-bg text-on-accent' : 'border-border bg-base text-secondary'"
+            title="What changed since the previous version; click an entry to jump to it"
+            @click="toggleRevisions('list')"
+          >
+            Changes ({{ revisions.count }})
+          </button>
+          <button
+            type="button"
+            class="h-[24px] flex-none cursor-pointer rounded-md border px-2 text-[11px] enabled:hover:bg-hover enabled:hover:text-fg"
+            :class="revisions.active ? 'border-accent bg-accent-bg text-on-accent' : 'border-border bg-base text-secondary'"
+            title="Dim everything that did not change, so only the changed parts read at full strength"
+            @click="toggleRevisions('only')"
+          >
+            Changes only
+          </button>
+        </template>
         <span class="flex-auto" />
         <span v-if="saving" class="text-[11px] text-secondary">Saving…</span>
         <button

@@ -101,6 +101,33 @@ working unchanged.
 - An opaque-origin iframe (like presentHtml's): the layer's localStorage access throws
   before it renders anything.
 
+## The revision layer's buttons (2026-11-04)
+
+A brief written after a previous version carries the html-summary skill's revision-diff
+layer: "変更点 N件" (the list of changes, click to jump) and "変更箇所だけ読む" (dim what did
+not change). The layer fixes both at the page's top-left, which inside the reader is over the
+heading and the first lines — in the way of the reading they exist for (operator report).
+
+The bridge handles it at serve time, so no brief on disk changes:
+
+- The moment it runs (top of `<body>`, before the layer's markup is parsed) the bridge adds
+  a stylesheet rule hiding `#rev-fab` — hides, not removes: the layer's listeners are bound
+  to those buttons; `!important`, since the layer's own stylesheet comes later and would
+  win — and one nudging `#rev-panel` up to where the buttons were. Hiding on `load` instead
+  would leave the buttons over the heading until every image and font had arrived.
+- On `DOMContentLoaded` (the layer's inline script has run; the count is filled in) it posts
+  `reader:revisions` `{count, active, open}`. A brief without the layer posts nothing.
+- The reader shows "Changes (N)" and "Changes only" in its own header, next to the title,
+  only while it holds that state. A press goes back as `reader:revisions-toggle
+  {which: list|only}`; the bridge clicks the page's own hidden button and answers with the
+  new state. The state is dropped whenever the frame is remounted (another brief, or the
+  reload after a save) and on every `reader:ready`: a link inside a brief navigates the
+  frame to another page under the same contentWindow, and that page's bridge says hello
+  before it reports — or, having no layer, never reports — its own state.
+- The ids (`rev-fab`, `rev-count`, `rev-panel`, `rev-list-btn`, `rev-only-btn`) and the
+  `rev-only` body class are the contract with the template; `test/server/reader/reader-bridge.spec.ts`
+  runs the bridge against that markup.
+
 ## Known gaps
 
 - Per-pane badges in the grid ("N briefs waiting under this cwd") are not built; the

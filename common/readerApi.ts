@@ -59,15 +59,35 @@ export interface ReaderPane {
  *  (viewhtml: /register, then /reader?doc= through the OS opener). The pile-up this was
  *  meant to prevent is the operator's to manage; losing a parked page is not. */
 
+/** The state of a brief's revision-diff layer (the html-summary skill's "what changed since
+ *  the previous version" buttons), as the bridge reports it. `count` is the number of
+ *  changes listed, `open` whether that list is showing, `active` whether the page is dimming
+ *  everything that did not change. Absent from a brief without the layer. */
+export interface ReaderRevisions {
+  count: number;
+  active: boolean;
+  open: boolean;
+}
+
 /** The message the comment layer's bridge posts to the reader (window.postMessage). The
  *  bridge is injected by the server when it serves a doc (server/reader/reader-doc.ts). */
-export type ReaderBridgeMessage = { type: "reader:save"; html: string } | { type: "reader:copy"; text: string } | { type: "reader:ready" };
+export type ReaderBridgeMessage =
+  { type: "reader:save"; html: string } | { type: "reader:copy"; text: string } | { type: "reader:ready" } | ({ type: "reader:revisions" } & ReaderRevisions);
+
+/** The messages the reader posts INTO the brief. `reader:saved` acks a save for one path;
+ *  `reader:revisions-toggle` presses one of the revision layer's own (hidden) buttons —
+ *  `list` shows the change list, `only` dims the unchanged text — and the bridge answers
+ *  with a fresh `reader:revisions`. */
+export type ReaderHostMessage = { type: "reader:saved"; path: string } | { type: "reader:revisions-toggle"; which: "list" | "only" };
 
 export const readerBridgeMessageOf = (data: unknown): ReaderBridgeMessage | null => {
   if (!isRecord(data)) return null;
   if (data.type === "reader:save" && typeof data.html === "string") return { type: "reader:save", html: data.html };
   if (data.type === "reader:copy" && typeof data.text === "string") return { type: "reader:copy", text: data.text };
   if (data.type === "reader:ready") return { type: "reader:ready" };
+  if (data.type === "reader:revisions" && typeof data.count === "number" && typeof data.active === "boolean" && typeof data.open === "boolean") {
+    return { type: "reader:revisions", count: data.count, active: data.active, open: data.open };
+  }
   return null;
 };
 
